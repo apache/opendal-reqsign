@@ -121,7 +121,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         let token = ctx.file_read_as_string(&token_file).await.map_err(|e| {
             Error::config_invalid("failed to read web identity token file")
                 .with_source(e)
-                .with_context(format!("file: {}", token_file))
+                .with_context(format!("file: {token_file}"))
                 .with_context("hint: check if the token file exists and is readable")
         })?;
 
@@ -140,7 +140,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         });
 
         let endpoint = sts_endpoint(region.as_deref(), use_regional)
-            .map_err(|e| e.with_context(format!("role_arn: {}", role_arn)))?;
+            .map_err(|e| e.with_context(format!("role_arn: {role_arn}")))?;
 
         // Get session name from config or environment or use default
         let session_name = self
@@ -163,15 +163,15 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .map_err(|e| {
                 Error::request_invalid("failed to build STS AssumeRoleWithWebIdentity request")
                     .with_source(e)
-                    .with_context(format!("role_arn: {}", role_arn))
-                    .with_context(format!("endpoint: https://{}", endpoint))
+                    .with_context(format!("role_arn: {role_arn}"))
+                    .with_context(format!("endpoint: https://{endpoint}"))
             })?;
 
         let resp = ctx.http_send_as_string(req).await.map_err(|e| {
             Error::unexpected("failed to send AssumeRoleWithWebIdentity request to STS")
                 .with_source(e)
-                .with_context(format!("role_arn: {}", role_arn))
-                .with_context(format!("endpoint: https://{}", endpoint))
+                .with_context(format!("role_arn: {role_arn}"))
+                .with_context(format!("endpoint: https://{endpoint}"))
                 .set_retryable(true)
         })?;
 
@@ -191,9 +191,9 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
                 &content,
                 request_id.as_deref(),
             )
-            .with_context(format!("role_arn: {}", role_arn))
-            .with_context(format!("session_name: {}", session_name))
-            .with_context(format!("token_file: {}", token_file)));
+            .with_context(format!("role_arn: {role_arn}"))
+            .with_context(format!("session_name: {session_name}"))
+            .with_context(format!("token_file: {token_file}")));
         }
 
         let body = resp.into_body();
@@ -201,7 +201,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             Error::unexpected("failed to parse STS AssumeRoleWithWebIdentity response")
                 .with_source(e)
                 .with_context(format!("response_length: {}", body.len()))
-                .with_context(format!("role_arn: {}", role_arn))
+                .with_context(format!("role_arn: {role_arn}"))
         })?;
         let resp_cred = resp.result.credentials;
 
@@ -213,7 +213,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
                 Error::unexpected("failed to parse web identity credential expiration")
                     .with_source(e)
                     .with_context(format!("expiration_value: {}", resp_cred.expiration))
-                    .with_context(format!("role_arn: {}", role_arn))
+                    .with_context(format!("role_arn: {role_arn}"))
             })?),
         };
 

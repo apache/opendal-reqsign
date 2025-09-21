@@ -144,7 +144,7 @@ impl ECSCredentialProvider {
             let token = ctx.file_read(token_file).await.map_err(|e| {
                 Error::config_invalid("failed to read ECS auth token file")
                     .with_source(e)
-                    .with_context(format!("file: {}", token_file))
+                    .with_context(format!("file: {token_file}"))
             })?;
             return Ok(Some(String::from_utf8_lossy(&token).trim().to_string()));
         }
@@ -159,7 +159,7 @@ impl ECSCredentialProvider {
             let token = ctx.file_read(&token_file).await.map_err(|e| {
                 Error::config_invalid("failed to read ECS auth token file")
                     .with_source(e)
-                    .with_context(format!("file: {}", token_file))
+                    .with_context(format!("file: {token_file}"))
             })?;
             return Ok(Some(String::from_utf8_lossy(&token).trim().to_string()));
         }
@@ -230,10 +230,7 @@ impl ProvideCredential for ECSCredentialProvider {
             }
         };
 
-        debug!(
-            "ECS credential provider: fetching credentials from {}",
-            endpoint
-        );
+        debug!("ECS credential provider: fetching credentials from {endpoint}");
 
         let mut req = Request::builder()
             .method(Method::GET)
@@ -242,7 +239,7 @@ impl ProvideCredential for ECSCredentialProvider {
             .map_err(|e| {
                 Error::request_invalid("failed to build ECS credentials request")
                     .with_source(e)
-                    .with_context(format!("endpoint: {}", endpoint))
+                    .with_context(format!("endpoint: {endpoint}"))
             })?;
 
         // Add authorization token if available
@@ -260,7 +257,7 @@ impl ProvideCredential for ECSCredentialProvider {
         let resp = ctx.http_send(req).await.map_err(|e| {
             Error::unexpected("failed to fetch ECS credentials")
                 .with_source(e)
-                .with_context(format!("endpoint: {}", endpoint))
+                .with_context(format!("endpoint: {endpoint}"))
                 .with_context("hint: check if running on ECS/Fargate with proper IAM role")
                 .set_retryable(true)
         })?;
@@ -271,24 +268,22 @@ impl ProvideCredential for ECSCredentialProvider {
 
             let error = match status.as_u16() {
                 401 | 403 => Error::permission_denied(format!(
-                    "ECS task not authorized to fetch credentials: {}",
-                    body
+                    "ECS task not authorized to fetch credentials: {body}"
                 ))
                 .with_context("hint: check if task has proper IAM role attached"),
                 404 => Error::config_invalid("ECS credentials endpoint not found")
-                    .with_context(format!("endpoint: {}", endpoint))
+                    .with_context(format!("endpoint: {endpoint}"))
                     .with_context("hint: verify the container credentials URI"),
-                500..=599 => Error::unexpected(format!("ECS metadata service error: {}", body))
+                500..=599 => Error::unexpected(format!("ECS metadata service error: {body}"))
                     .set_retryable(true),
                 _ => Error::unexpected(format!(
-                    "ECS metadata endpoint returned unexpected status {}: {}",
-                    status, body
+                    "ECS metadata endpoint returned unexpected status {status}: {body}"
                 )),
             };
 
             return Err(error
-                .with_context(format!("http_status: {}", status))
-                .with_context(format!("endpoint: {}", endpoint)));
+                .with_context(format!("http_status: {status}"))
+                .with_context(format!("endpoint: {endpoint}")));
         }
 
         let body = resp.into_body();
@@ -296,7 +291,7 @@ impl ProvideCredential for ECSCredentialProvider {
             Error::unexpected("failed to parse ECS credentials response")
                 .with_source(e)
                 .with_context(format!("response_length: {}", body.len()))
-                .with_context(format!("endpoint: {}", endpoint))
+                .with_context(format!("endpoint: {endpoint}"))
         })?;
 
         let expires_in = creds.expiration.parse().map_err(|e| {

@@ -83,45 +83,45 @@ pub fn parse_sts_error(
         let mut error = match code.as_str() {
             // Permission/Authorization errors
             "AccessDenied" | "UnauthorizedAccess" | "Forbidden" => {
-                Error::permission_denied(format!("{}: {}", code, message))
+                Error::permission_denied(format!("{code}: {message}"))
             }
 
             // Credential errors
             "ExpiredToken" | "TokenRefreshRequired" | "InvalidToken" => {
-                Error::credential_invalid(format!("token expired or invalid: {}", message))
+                Error::credential_invalid(format!("token expired or invalid: {message}"))
             }
 
             // Configuration errors
             "InvalidParameterValue" | "MissingParameter" | "InvalidParameterCombination" => {
-                Error::config_invalid(format!("invalid configuration: {}", message))
+                Error::config_invalid(format!("invalid configuration: {message}"))
             }
 
             // Rate limiting
             "Throttling" | "RequestLimitExceeded" | "TooManyRequestsException" => {
-                Error::rate_limited(format!("AWS API rate limit: {}", message))
+                Error::rate_limited(format!("AWS API rate limit: {message}"))
             }
 
             // Service unavailable (retryable)
             "ServiceUnavailable" | "InternalError" | "InternalFailure" => {
-                Error::unexpected(format!("AWS service error: {}", message)).set_retryable(true)
+                Error::unexpected(format!("AWS service error: {message}")).set_retryable(true)
             }
 
             // Request errors
             "InvalidRequest" | "MalformedQueryString" => {
-                Error::request_invalid(format!("invalid request: {}", message))
+                Error::request_invalid(format!("invalid request: {message}"))
             }
 
             // Default to unexpected
-            _ => Error::unexpected(format!("AWS error [{}]: {}", code, message)),
+            _ => Error::unexpected(format!("AWS error [{code}]: {message}")),
         };
 
         // Add context
         error = error
-            .with_context(format!("operation: {}", operation))
-            .with_context(format!("error_code: {}", code));
+            .with_context(format!("operation: {operation}"))
+            .with_context(format!("error_code: {code}"));
 
         if let Some(id) = request_id {
-            error = error.with_context(format!("request_id: {}", id));
+            error = error.with_context(format!("request_id: {id}"));
         }
 
         error
@@ -129,26 +129,27 @@ pub fn parse_sts_error(
         // Failed to parse error response, return generic error based on status code
         let mut error = match status.as_u16() {
             400..=499 if status == http::StatusCode::FORBIDDEN => {
-                Error::permission_denied(format!("STS request forbidden: {}", body))
+                Error::permission_denied(format!("STS request forbidden: {body}"))
             }
             400..=499 if status == http::StatusCode::UNAUTHORIZED => {
-                Error::credential_invalid(format!("STS authentication failed: {}", body))
+                Error::credential_invalid(format!("STS authentication failed: {body}"))
             }
-            429 => Error::rate_limited(format!("STS rate limit exceeded: {}", body)),
+            429 => Error::rate_limited(format!("STS rate limit exceeded: {body}")),
             400..=499 => {
-                Error::request_invalid(format!("STS request failed with {}: {}", status, body))
+                Error::request_invalid(format!("STS request failed with {status}: {body}"))
             }
-            500..=599 => Error::unexpected(format!("STS server error {}: {}", status, body))
-                .set_retryable(true),
-            _ => Error::unexpected(format!("STS request failed with {}: {}", status, body)),
+            500..=599 => {
+                Error::unexpected(format!("STS server error {status}: {body}")).set_retryable(true)
+            }
+            _ => Error::unexpected(format!("STS request failed with {status}: {body}")),
         };
 
         error = error
-            .with_context(format!("operation: {}", operation))
-            .with_context(format!("http_status: {}", status));
+            .with_context(format!("operation: {operation}"))
+            .with_context(format!("http_status: {status}"));
 
         if let Some(id) = request_id {
-            error = error.with_context(format!("request_id: {}", id));
+            error = error.with_context(format!("request_id: {id}"));
         }
 
         error
@@ -184,23 +185,23 @@ pub fn parse_imds_error(operation: &str, status: http::StatusCode, body: &str) -
             _ => Error::unexpected(format!("IMDS error [{}]: {}", error.code, error.message)),
         };
 
-        err.with_context(format!("operation: {}", operation))
+        err.with_context(format!("operation: {operation}"))
             .with_context(format!("error_code: {}", error.code))
     } else {
         // Generic error based on status
         match status.as_u16() {
-            401 | 403 => Error::permission_denied(format!("IMDS access denied: {}", body))
-                .with_context(format!("operation: {}", operation))
+            401 | 403 => Error::permission_denied(format!("IMDS access denied: {body}"))
+                .with_context(format!("operation: {operation}"))
                 .with_context("hint: check if IMDSv2 is required"),
             404 => Error::config_invalid("instance metadata not found")
-                .with_context(format!("operation: {}", operation))
+                .with_context(format!("operation: {operation}"))
                 .with_context("hint: are you running on EC2?"),
-            500..=599 => Error::unexpected(format!("IMDS server error: {}", body))
-                .with_context(format!("operation: {}", operation))
+            500..=599 => Error::unexpected(format!("IMDS server error: {body}"))
+                .with_context(format!("operation: {operation}"))
                 .set_retryable(true),
-            _ => Error::unexpected(format!("IMDS request failed: {}", body))
-                .with_context(format!("operation: {}", operation))
-                .with_context(format!("http_status: {}", status)),
+            _ => Error::unexpected(format!("IMDS request failed: {body}"))
+                .with_context(format!("operation: {operation}"))
+                .with_context(format!("http_status: {status}")),
         }
     }
 }

@@ -190,7 +190,7 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
                 Error::request_invalid("failed to build STS AssumeRole request")
                     .with_source(e)
                     .with_context(format!("role_arn: {}", self.role_arn))
-                    .with_context(format!("endpoint: https://{}", endpoint))
+                    .with_context(format!("endpoint: https://{endpoint}"))
             })?;
 
         let (mut parts, body) = req.into_parts();
@@ -201,7 +201,7 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
             Error::unexpected("failed to send AssumeRole request to STS")
                 .with_source(e)
                 .with_context(format!("role_arn: {}", self.role_arn))
-                .with_context(format!("endpoint: https://{}", endpoint))
+                .with_context(format!("endpoint: https://{endpoint}"))
                 .set_retryable(true)
         })?;
 

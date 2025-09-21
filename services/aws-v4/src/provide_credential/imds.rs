@@ -74,7 +74,7 @@ impl IMDSv2CredentialProvider {
         }
 
         let endpoint = self.get_endpoint(ctx);
-        let url = format!("{}/latest/api/token", endpoint);
+        let url = format!("{endpoint}/latest/api/token");
         let req = http::Request::builder()
             .uri(&url)
             .method(Method::PUT)
@@ -136,7 +136,7 @@ impl ProvideCredential for IMDSv2CredentialProvider {
 
         // List all credentials that node has.
         let endpoint = self.get_endpoint(ctx);
-        let url = format!("{}/latest/meta-data/iam/security-credentials/", endpoint);
+        let url = format!("{endpoint}/latest/meta-data/iam/security-credentials/");
         let req = http::Request::builder()
             .uri(&url)
             .method(Method::GET)
@@ -175,10 +175,7 @@ impl ProvideCredential for IMDSv2CredentialProvider {
 
         // Get the credentials via role_name.
         let endpoint = self.get_endpoint(ctx);
-        let url = format!(
-            "{}/latest/meta-data/iam/security-credentials/{profile_name}",
-            endpoint
-        );
+        let url = format!("{endpoint}/latest/meta-data/iam/security-credentials/{profile_name}");
         let req = http::Request::builder()
             .uri(url)
             .method(Method::GET)
@@ -188,20 +185,20 @@ impl ProvideCredential for IMDSv2CredentialProvider {
             .map_err(|e| {
                 Error::request_invalid("failed to build IMDS credentials fetch request")
                     .with_source(e)
-                    .with_context(format!("profile: {}", profile_name))
+                    .with_context(format!("profile: {profile_name}"))
             })?;
 
         let resp = ctx.http_send_as_string(req).await.map_err(|e| {
             Error::unexpected("failed to fetch IMDS credentials")
                 .with_source(e)
-                .with_context(format!("profile: {}", profile_name))
+                .with_context(format!("profile: {profile_name}"))
                 .set_retryable(true)
         })?;
 
         if resp.status() != http::StatusCode::OK {
             return Err(
                 parse_imds_error("fetch_credentials", resp.status(), resp.body())
-                    .with_context(format!("profile: {}", profile_name)),
+                    .with_context(format!("profile: {profile_name}")),
             );
         }
 
@@ -211,7 +208,7 @@ impl ProvideCredential for IMDSv2CredentialProvider {
                 Error::unexpected("failed to parse IMDS credentials response")
                     .with_source(e)
                     .with_context(format!("response_length: {}", content.len()))
-                    .with_context(format!("profile: {}", profile_name))
+                    .with_context(format!("profile: {profile_name}"))
             })?;
 
         // Check for specific error codes
@@ -223,7 +220,7 @@ impl ProvideCredential for IMDSv2CredentialProvider {
                     resp.message
                 ))
                 .with_context(format!("error_code: {}", resp.code))
-                .with_context(format!("profile: {}", profile_name))
+                .with_context(format!("profile: {profile_name}"))
                 .with_context("hint: check if the IAM role has a trust relationship with EC2"));
             }
             code if code.contains("Expired") => {
@@ -232,14 +229,14 @@ impl ProvideCredential for IMDSv2CredentialProvider {
                     resp.message
                 ))
                 .with_context(format!("error_code: {}", resp.code))
-                .with_context(format!("profile: {}", profile_name)));
+                .with_context(format!("profile: {profile_name}")));
             }
             _ => {
                 return Err(Error::unexpected(format!(
                     "IMDS returned error: [{}] {}",
                     resp.code, resp.message
                 ))
-                .with_context(format!("profile: {}", profile_name)));
+                .with_context(format!("profile: {profile_name}")));
             }
         }
 
