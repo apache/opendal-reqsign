@@ -275,7 +275,7 @@ impl ProvideCredential for CognitoIdentityCredentialProvider {
 
         // Get or create identity ID
         let identity_id = self.get_identity_id(ctx).await?;
-        debug!("Cognito Identity: using identity ID: {}", identity_id);
+        debug!("Cognito Identity: using identity ID: {identity_id}");
 
         // Get credentials for the identity
         let creds = self.get_credentials_for_identity(ctx, &identity_id).await?;

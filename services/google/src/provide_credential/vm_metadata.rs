@@ -70,10 +70,7 @@ impl ProvideCredential for VmMetadataCredentialProvider {
         // Use "default" service account if not specified
         let service_account = "default";
 
-        debug!(
-            "loading token from VM metadata service for account: {}",
-            service_account
-        );
+        debug!("loading token from VM metadata service for account: {service_account}");
 
         // Allow overriding metadata host for testing
         let metadata_host = self

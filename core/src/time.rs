@@ -107,7 +107,7 @@ pub fn format_rfc3339(t: DateTime) -> String {
 pub fn parse_rfc3339(s: &str) -> crate::Result<DateTime> {
     Ok(chrono::DateTime::parse_from_rfc3339(s)
         .map_err(|err| {
-            Error::unexpected(format!("parse '{}' into rfc3339 failed", s)).with_source(err)
+            Error::unexpected(format!("parse '{s}' into rfc3339 failed")).with_source(err)
         })?
         .with_timezone(&Utc))
 }
