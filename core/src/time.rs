@@ -20,7 +20,7 @@
 use crate::Error;
 use std::str::FromStr;
 
-/// DateTime is the alias for chrono::DateTime<Utc>.
+/// DateTime is the alias for `jiff::Timestamp`.
 pub type DateTime = jiff::Timestamp;
 
 /// Create datetime of now.

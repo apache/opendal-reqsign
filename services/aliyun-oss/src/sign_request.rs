@@ -129,7 +129,7 @@ impl RequestSigner {
         expires: Duration,
     ) -> Result<()> {
         let expiration_time = signing_time
-            + chrono::TimeDelta::from_std(expires).map_err(|e| {
+            + jiff::SignedDuration::try_from(expires).map_err(|e| {
                 reqsign_core::Error::request_invalid(format!("Invalid expiration duration: {e}"))
             })?;
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, Some(expires))?;
@@ -154,7 +154,7 @@ impl RequestSigner {
         query_pairs.push(("OSSAccessKeyId".to_string(), cred.access_key_id.clone()));
         query_pairs.push((
             "Expires".to_string(),
-            expiration_time.timestamp().to_string(),
+            expiration_time.as_second().to_string(),
         ));
         query_pairs.push((
             "Signature".to_string(),
@@ -229,12 +229,12 @@ impl RequestSigner {
         match expires {
             Some(expires_duration) => {
                 let expiration_time = signing_time
-                    + chrono::TimeDelta::from_std(expires_duration).map_err(|e| {
+                    + jiff::SignedDuration::try_from(expires_duration).map_err(|e| {
                         reqsign_core::Error::request_invalid(format!(
                             "Invalid expiration duration: {e}"
                         ))
                     })?;
-                writeln!(&mut s, "{}", expiration_time.timestamp())?;
+                writeln!(&mut s, "{}", expiration_time.as_second())?;
             }
             None => {
                 writeln!(&mut s, "{}", format_http_date(signing_time))?;
