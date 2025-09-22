@@ -105,8 +105,8 @@ impl IMDSv2CredentialProvider {
         }
         let ec2_token = resp.into_body();
         // Set expires_in to 10 minutes to enforce re-read.
-        let expires_in = now() + chrono::TimeDelta::try_seconds(21600).expect("in bounds")
-            - chrono::TimeDelta::try_seconds(600).expect("in bounds");
+        let expires_in =
+            now() + jiff::SignedDuration::from_secs(21600) - jiff::SignedDuration::from_secs(600);
 
         {
             *self.token.lock().expect("lock poisoned") = (ec2_token.clone(), expires_in);

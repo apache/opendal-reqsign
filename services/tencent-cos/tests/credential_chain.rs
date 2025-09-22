@@ -199,9 +199,7 @@ impl ProvideCredential for SecurityTokenProvider {
             secret_id: "temp_id".to_string(),
             secret_key: "temp_key".to_string(),
             security_token: Some("security_token".to_string()),
-            expires_in: Some(
-                reqsign_core::time::now() + chrono::TimeDelta::try_hours(1).expect("in bounds"),
-            ),
+            expires_in: Some(reqsign_core::time::now() + jiff::SignedDuration::from_hours(1)),
         }))
     }
 }

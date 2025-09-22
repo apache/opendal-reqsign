@@ -121,8 +121,8 @@ fn build_signature(
 ) -> String {
     let key_time = format!(
         "{};{}",
-        now.timestamp(),
-        (now + chrono::TimeDelta::from_std(expires).unwrap()).timestamp()
+        now.as_second(),
+        (now + jiff::SignedDuration::try_from(expires).unwrap()).as_second()
     );
 
     let sign_key = hex_hmac_sha1(cred.secret_key.as_bytes(), key_time.as_bytes());

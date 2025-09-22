@@ -17,9 +17,9 @@
 
 use crate::Credential;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ini::Ini;
 use log::debug;
+use reqsign_core::time::DateTime;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 
@@ -213,7 +213,7 @@ impl ProvideCredential for ProcessCredentialProvider {
 
         let expires_in =
             if let Some(exp_str) = &output.expiration {
-                Some(exp_str.parse::<DateTime<Utc>>().map_err(|e| {
+                Some(exp_str.parse::<DateTime>().map_err(|e| {
                     Error::unexpected(format!("failed to parse expiration time: {e}"))
                 })?)
             } else {
