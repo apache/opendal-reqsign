@@ -110,8 +110,8 @@ impl SignRequest for RequestSigner {
                 ctx.query_push("AccessKeyId", &k.access_key_id);
                 ctx.query_push(
                     "Expires",
-                    (now + chrono::TimeDelta::from_std(expire).unwrap())
-                        .timestamp()
+                    (now + jiff::SignedDuration::try_from(expire).unwrap())
+                        .as_second()
                         .to_string(),
                 );
                 ctx.query_push(
@@ -169,7 +169,7 @@ fn string_to_sign(
             writeln!(
                 &mut s,
                 "{}",
-                (now + chrono::TimeDelta::from_std(expires).unwrap()).timestamp()
+                (now + jiff::SignedDuration::try_from(expires).unwrap()).as_second()
             )?;
         }
     }

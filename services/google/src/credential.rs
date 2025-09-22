@@ -204,7 +204,7 @@ impl KeyTrait for Token {
         match self.expires_at {
             Some(expires_at) => {
                 // Consider token invalid if it expires within 2 minutes
-                let buffer = chrono::TimeDelta::try_seconds(2 * 60).expect("in bounds");
+                let buffer = jiff::SignedDuration::from_mins(2);
                 now() < expires_at - buffer
             }
             None => true, // No expiration means always valid
@@ -337,15 +337,15 @@ mod tests {
         assert!(token.is_valid());
 
         // Token with future expiration
-        token.expires_at = Some(now() + chrono::TimeDelta::try_hours(1).unwrap());
+        token.expires_at = Some(now() + jiff::SignedDuration::from_hours(1));
         assert!(token.is_valid());
 
         // Token that expires within 2 minutes
-        token.expires_at = Some(now() + chrono::TimeDelta::try_seconds(30).unwrap());
+        token.expires_at = Some(now() + jiff::SignedDuration::from_secs(30));
         assert!(!token.is_valid());
 
         // Expired token
-        token.expires_at = Some(now() - chrono::TimeDelta::try_hours(1).unwrap());
+        token.expires_at = Some(now() - jiff::SignedDuration::from_hours(1));
         assert!(!token.is_valid());
 
         // Empty access token
@@ -417,7 +417,7 @@ mod tests {
         // Valid token only
         let cred = Credential::with_token(Token {
             access_token: "test".to_string(),
-            expires_at: Some(now() + chrono::TimeDelta::try_hours(1).unwrap()),
+            expires_at: Some(now() + jiff::SignedDuration::from_hours(1)),
         });
         assert!(cred.is_valid());
         assert!(!cred.has_service_account());
@@ -439,7 +439,7 @@ mod tests {
         });
         cred.token = Some(Token {
             access_token: "test".to_string(),
-            expires_at: Some(now() + chrono::TimeDelta::try_hours(1).unwrap()),
+            expires_at: Some(now() + jiff::SignedDuration::from_hours(1)),
         });
         assert!(cred.is_valid());
         assert!(cred.has_service_account());
@@ -452,7 +452,7 @@ mod tests {
         });
         cred.token = Some(Token {
             access_token: "test".to_string(),
-            expires_at: Some(now() - chrono::TimeDelta::try_hours(1).unwrap()),
+            expires_at: Some(now() - jiff::SignedDuration::from_hours(1)),
         });
         assert!(cred.is_valid()); // Still valid because of service account
         assert!(!cred.has_valid_token());

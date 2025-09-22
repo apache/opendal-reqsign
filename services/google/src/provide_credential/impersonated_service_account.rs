@@ -21,9 +21,9 @@ use http::header::CONTENT_TYPE;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use reqsign_core::{time::now, Context, ProvideCredential, Result};
-
 use crate::credential::{Credential, ImpersonatedServiceAccount, Token};
+use reqsign_core::time::parse_rfc3339;
+use reqsign_core::{time::now, Context, ProvideCredential, Result};
 
 /// The maximum impersonated token lifetime allowed, 1 hour.
 const MAX_LIFETIME: Duration = Duration::from_secs(3600);
@@ -135,9 +135,9 @@ impl ImpersonatedServiceAccountCredentialProvider {
                 reqsign_core::Error::unexpected("failed to parse token response").with_source(e)
             })?;
 
-        let expires_at = token_resp.expires_in.map(|expires_in| {
-            now() + chrono::TimeDelta::try_seconds(expires_in as i64).expect("in bounds")
-        });
+        let expires_at = token_resp
+            .expires_in
+            .map(|expires_in| now() + jiff::SignedDuration::from_secs(expires_in as i64));
 
         Ok(Token {
             access_token: token_resp.access_token,
@@ -200,9 +200,7 @@ impl ImpersonatedServiceAccountCredentialProvider {
             })?;
 
         // Parse expire time from RFC3339 format
-        let expires_at = chrono::DateTime::parse_from_rfc3339(&token_resp.expire_time)
-            .ok()
-            .map(|dt| dt.with_timezone(&chrono::Utc));
+        let expires_at = parse_rfc3339(&token_resp.expire_time).ok();
 
         Ok(Token {
             access_token: token_resp.access_token,

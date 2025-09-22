@@ -106,7 +106,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .header(CONTENT_LENGTH, bs.len())
             .header("X-TC-Action", "AssumeRoleWithWebIdentity")
             .header("X-TC-Region", &region)
-            .header("X-TC-Timestamp", now().timestamp())
+            .header("X-TC-Timestamp", now().as_second())
             .header("X-TC-Version", "2018-08-13")
             .body(bs.into())?;
 

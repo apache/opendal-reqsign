@@ -94,9 +94,9 @@ impl ProvideCredential for AuthorizedUserCredentialProvider {
                 reqsign_core::Error::unexpected("failed to parse token response").with_source(e)
             })?;
 
-        let expires_at = token_resp.expires_in.map(|expires_in| {
-            now() + chrono::TimeDelta::try_seconds(expires_in as i64).expect("in bounds")
-        });
+        let expires_at = token_resp
+            .expires_in
+            .map(|expires_in| now() + jiff::SignedDuration::from_secs(expires_in as i64));
 
         let token = Token {
             access_token: token_resp.access_token,
