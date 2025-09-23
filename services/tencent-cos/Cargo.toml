@@ -30,8 +30,8 @@ repository.workspace = true
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-jiff.workspace = true
 http.workspace = true
+jiff.workspace = true
 log.workspace = true
 percent-encoding.workspace = true
 reqsign-core.workspace = true
