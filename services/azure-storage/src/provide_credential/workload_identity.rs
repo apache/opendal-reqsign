@@ -91,10 +91,7 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
                                 .with_source(e)
                         })?
                     }
-                    None => {
-                        reqsign_core::time::now()
-                            + chrono::TimeDelta::try_minutes(10).expect("in bounds")
-                    }
+                    None => reqsign_core::time::now() + jiff::SignedDuration::from_mins(10),
                 };
 
                 Ok(Some(Credential::with_bearer_token(

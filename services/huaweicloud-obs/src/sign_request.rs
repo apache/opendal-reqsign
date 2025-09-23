@@ -303,9 +303,9 @@ static SUBRESOURCES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 mod tests {
     use std::str::FromStr;
 
-    use chrono::Utc;
     use http::header::HeaderName;
     use http::Uri;
+    use reqsign_core::time::parse_rfc2822;
     use reqsign_core::Result;
     use reqsign_core::{Context, OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
@@ -317,11 +317,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder = RequestSigner::new("bucket").with_time(
-            chrono::DateTime::parse_from_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")
-                .unwrap()
-                .with_timezone(&Utc),
-        );
+        let builder =
+            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
@@ -359,11 +356,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign_with_subresource() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder = RequestSigner::new("bucket").with_time(
-            chrono::DateTime::parse_from_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")
-                .unwrap()
-                .with_timezone(&Utc),
-        );
+        let builder =
+            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
@@ -403,11 +397,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign_list_objects() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder = RequestSigner::new("bucket").with_time(
-            chrono::DateTime::parse_from_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")
-                .unwrap()
-                .with_timezone(&Utc),
-        );
+        let builder =
+            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)

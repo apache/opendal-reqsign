@@ -59,7 +59,7 @@ impl SigningCredential for Credential {
         // Take 120s as buffer to avoid edge cases.
         if let Some(valid) = self
             .expires_in
-            .map(|v| v > now() + chrono::TimeDelta::try_minutes(2).expect("in bounds"))
+            .map(|v| v > now() + jiff::SignedDuration::from_mins(2))
         {
             return valid;
         }

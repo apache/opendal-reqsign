@@ -91,8 +91,7 @@ impl ProvideCredential for ClientSecretCredentialProvider {
         match token {
             Some(token_response) => {
                 let expires_on = reqsign_core::time::now()
-                    + chrono::TimeDelta::try_seconds(token_response.expires_in as i64)
-                        .unwrap_or_else(|| chrono::TimeDelta::try_minutes(10).expect("in bounds"));
+                    + jiff::SignedDuration::from_secs(token_response.expires_in as i64);
 
                 Ok(Some(Credential::with_bearer_token(
                     &token_response.access_token,

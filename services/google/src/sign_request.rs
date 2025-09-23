@@ -47,7 +47,7 @@ struct Claims {
 
 impl Claims {
     fn new(client_email: &str, scope: &str) -> Self {
-        let current = now().timestamp() as u64;
+        let current = now().as_second() as u64;
 
         Claims {
             iss: client_email.to_string(),

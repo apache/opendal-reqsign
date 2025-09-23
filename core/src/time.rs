@@ -68,6 +68,19 @@ pub fn parse_rfc3339(s: &str) -> crate::Result<DateTime> {
     })
 }
 
+/// Parse time from RFC2822.
+///
+/// All of them are valid time:
+///
+/// - `Sat, 13 Jul 2024 15:09:59 -0400`
+/// - `Mon, 15 Aug 2022 16:50:12 GMT`
+pub fn parse_rfc2822(s: &str) -> crate::Result<DateTime> {
+    let zoned = jiff::fmt::rfc2822::parse(s).map_err(|err| {
+        Error::unexpected(format!("parse '{s}' into rfc2822 failed")).with_source(err)
+    })?;
+    Ok(zoned.timestamp())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

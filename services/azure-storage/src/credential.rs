@@ -82,7 +82,7 @@ impl SigningCredential for Credential {
                 }
                 // Check expiration for bearer tokens (take 20s as buffer to avoid edge cases)
                 if let Some(expires) = expires_in {
-                    *expires > now() + chrono::TimeDelta::try_seconds(20).expect("in bounds")
+                    *expires > now() + jiff::SignedDuration::from_secs(20)
                 } else {
                     true
                 }

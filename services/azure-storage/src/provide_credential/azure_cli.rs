@@ -96,12 +96,12 @@ impl ProvideCredential for AzureCliCredentialProvider {
 
         // Calculate expiration time
         let expires_on = if let Some(timestamp) = token.expires_on_timestamp {
-            Some(chrono::DateTime::from_timestamp(timestamp, 0).unwrap())
+            Some(jiff::Timestamp::new(timestamp, 0).unwrap())
         } else if let Some(expires_str) = token.expires_on {
             // Parse the string format "2023-10-31 21:59:10.000000"
-            chrono::NaiveDateTime::parse_from_str(&expires_str, "%Y-%m-%d %H:%M:%S%.f")
+            jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S%.f", &expires_str)
+                .and_then(|dt| jiff::tz::TimeZone::UTC.to_timestamp(dt))
                 .ok()
-                .map(|dt| chrono::DateTime::from_naive_utc_and_offset(dt, chrono::Utc))
         } else {
             None
         };

@@ -174,7 +174,7 @@ impl S3ExpressSessionProvider {
             access_key_id: creds.access_key_id,
             secret_access_key: creds.secret_access_key,
             session_token: Some(creds.session_token),
-            expires_in: Some(expiration.into()),
+            expires_in: Some(expiration),
         })
     }
 

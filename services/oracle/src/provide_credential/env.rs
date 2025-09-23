@@ -65,8 +65,7 @@ impl ProvideCredential for EnvCredentialProvider {
                     key_file: expanded_key_file,
                     fingerprint: fingerprint.clone(),
                     expires_in: Some(
-                        reqsign_core::time::now()
-                            + chrono::TimeDelta::try_minutes(10).expect("in bounds"),
+                        reqsign_core::time::now() + jiff::SignedDuration::from_mins(10),
                     ),
                 }))
             }

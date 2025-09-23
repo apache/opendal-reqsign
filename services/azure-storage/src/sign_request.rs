@@ -134,7 +134,7 @@ impl SignRequest for RequestSigner {
                             account_name.clone(),
                             account_key.clone(),
                             now()
-                                + chrono::TimeDelta::from_std(d).map_err(|e| {
+                                + jiff::SignedDuration::try_from(d).map_err(|e| {
                                     reqsign_core::Error::unexpected("failed to convert duration")
                                         .with_source(e)
                                 })?,
@@ -455,7 +455,7 @@ mod tests {
             .with_env(OsEnv);
         let cred = Credential::with_bearer_token(
             "token",
-            Some(now() + chrono::TimeDelta::try_hours(1).unwrap()),
+            Some(now() + jiff::SignedDuration::from_hours(1)),
         );
         let builder = RequestSigner::new();
 

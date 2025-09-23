@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn test_can_generate_sas_token() {
         let key = hash::base64_encode("key".as_bytes());
-        let expiry = test_time() + chrono::TimeDelta::try_minutes(5).expect("in bounds");
+        let expiry = test_time() + jiff::SignedDuration::from_mins(5);
         let sign = AccountSharedAccessSignature::new("account".to_string(), key, expiry);
         let token_content = sign.token().expect("token decode failed");
         let token = token_content
