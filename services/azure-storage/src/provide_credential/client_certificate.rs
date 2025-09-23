@@ -33,8 +33,8 @@ use crate::credential::Credential;
 /// Generate a unique JWT ID using timestamp and a pseudo-random component
 fn generate_jti(now: u64) -> String {
     // Use timestamp in nanoseconds + a hash of the timestamp for uniqueness
-    let nano_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let nano_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
 
@@ -315,13 +315,8 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
             .await?;
 
         // Calculate expiration time
-        let expires_on = SystemTime::now()
-            .checked_add(Duration::from_secs(token_response.expires_in))
-            .and_then(|t| {
-                t.duration_since(UNIX_EPOCH)
-                    .ok()
-                    .map(|d| jiff::Timestamp::new(d.as_secs() as i64, 0).unwrap())
-            });
+        let expires_in = Duration::from_secs(token_response.expires_in);
+        let expires_on = jiff::Timestamp::now().checked_add(expires_in).ok();
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,
