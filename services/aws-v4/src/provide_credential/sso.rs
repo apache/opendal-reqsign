@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use http::{Method, Request, StatusCode};
 use ini::Ini;
 use log::{debug, warn};
-use reqsign_core::time::{now, DateTime};
+use reqsign_core::time::{now, Timestamp};
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 
@@ -218,7 +218,7 @@ impl SSOCredentialProvider {
                 })?;
 
                 // Check if token is expired
-                let expires_at = token.expires_at.parse::<DateTime>().map_err(|e| {
+                let expires_at = token.expires_at.parse::<Timestamp>().map_err(|e| {
                     Error::unexpected(format!("failed to parse expiration time: {e}"))
                 })?;
 
@@ -286,7 +286,7 @@ impl SSOCredentialProvider {
             .map_err(|e| Error::unexpected(format!("failed to parse SSO credentials: {e}")))?;
 
         let role_creds = creds.role_credentials;
-        let expires_in = DateTime::from_millisecond(role_creds.expiration)
+        let expires_in = Timestamp::from_millisecond(role_creds.expiration)
             .map_err(|e| Error::unexpected(format!("invalid expiration timestamp: {e}")))?;
 
         Ok(Credential {

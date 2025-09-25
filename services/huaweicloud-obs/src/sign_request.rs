@@ -34,7 +34,7 @@ use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::format_http_date;
 use reqsign_core::time::now;
-use reqsign_core::time::DateTime;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
 
 /// RequestSigner that implement Huawei Cloud Object Storage Service Authorization.
@@ -43,7 +43,7 @@ use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
-    time: Option<DateTime>,
+    time: Option<Timestamp>,
 }
 
 impl RequestSigner {
@@ -62,7 +62,7 @@ impl RequestSigner {
     /// We should always take current time to sign requests.
     /// Only use this function for testing.
     #[cfg(test)]
-    pub fn with_time(mut self, time: DateTime) -> Self {
+    pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
     }
@@ -144,7 +144,7 @@ impl SignRequest for RequestSigner {
 fn string_to_sign(
     ctx: &mut SigningRequest,
     cred: &Credential,
-    now: DateTime,
+    now: Timestamp,
     method: SigningMethod,
     bucket: &str,
 ) -> Result<String> {

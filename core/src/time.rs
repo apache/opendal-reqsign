@@ -18,23 +18,22 @@
 //! Time related utils.
 
 use crate::Error;
-use std::str::FromStr;
 
 /// DateTime is the alias for `jiff::Timestamp`.
-pub type DateTime = jiff::Timestamp;
+pub type Timestamp = jiff::Timestamp;
 
 /// Create datetime of now.
-pub fn now() -> DateTime {
-    jiff::Timestamp::now()
+pub fn now() -> Timestamp {
+    Timestamp::now()
 }
 
 /// Format time into date: `20220301`
-pub fn format_date(t: DateTime) -> String {
+pub fn format_date(t: Timestamp) -> String {
     t.strftime("%Y%m%d").to_string()
 }
 
 /// Format time into ISO8601: `20220313T072004Z`
-pub fn format_iso8601(t: DateTime) -> String {
+pub fn format_iso8601(t: Timestamp) -> String {
     t.strftime("%Y%m%dT%H%M%SZ").to_string()
 }
 
@@ -46,12 +45,12 @@ pub fn format_iso8601(t: DateTime) -> String {
 ///
 /// - Timezone is fixed to GMT.
 /// - Day must be 2 digit.
-pub fn format_http_date(t: DateTime) -> String {
+pub fn format_http_date(t: Timestamp) -> String {
     t.strftime("%a, %d %b %Y %T GMT").to_string()
 }
 
 /// Format time into RFC3339: `2022-03-13T07:20:04Z`
-pub fn format_rfc3339(t: DateTime) -> String {
+pub fn format_rfc3339(t: Timestamp) -> String {
     t.strftime("%FT%TZ").to_string()
 }
 
@@ -62,8 +61,8 @@ pub fn format_rfc3339(t: DateTime) -> String {
 /// - `2022-03-13T07:20:04Z`
 /// - `2022-03-01T08:12:34+00:00`
 /// - `2022-03-01T08:12:34.00+00:00`
-pub fn parse_rfc3339(s: &str) -> crate::Result<DateTime> {
-    FromStr::from_str(s).map_err(|err| {
+pub fn parse_rfc3339(s: &str) -> crate::Result<Timestamp> {
+    s.parse().map_err(|err| {
         Error::unexpected(format!("parse '{s}' into rfc3339 failed")).with_source(err)
     })
 }
@@ -74,7 +73,7 @@ pub fn parse_rfc3339(s: &str) -> crate::Result<DateTime> {
 ///
 /// - `Sat, 13 Jul 2024 15:09:59 -0400`
 /// - `Mon, 15 Aug 2022 16:50:12 GMT`
-pub fn parse_rfc2822(s: &str) -> crate::Result<DateTime> {
+pub fn parse_rfc2822(s: &str) -> crate::Result<Timestamp> {
     let zoned = jiff::fmt::rfc2822::parse(s).map_err(|err| {
         Error::unexpected(format!("parse '{s}' into rfc2822 failed")).with_source(err)
     })?;
@@ -85,7 +84,7 @@ pub fn parse_rfc2822(s: &str) -> crate::Result<DateTime> {
 mod tests {
     use super::*;
 
-    fn test_time() -> DateTime {
+    fn test_time() -> Timestamp {
         "2022-03-01T08:12:34Z".parse().unwrap()
     }
 

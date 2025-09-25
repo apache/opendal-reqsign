@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::header::CONTENT_LENGTH;
 use http::Method;
-use reqsign_core::time::{now, parse_rfc3339, DateTime};
+use reqsign_core::time::{now, parse_rfc3339, Timestamp};
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
@@ -29,14 +29,14 @@ use std::sync::{Arc, Mutex};
 #[derive(Debug, Clone)]
 pub struct IMDSv2CredentialProvider {
     endpoint: Option<String>,
-    token: Arc<Mutex<(String, DateTime)>>,
+    token: Arc<Mutex<(String, Timestamp)>>,
 }
 
 impl Default for IMDSv2CredentialProvider {
     fn default() -> Self {
         Self {
             endpoint: None,
-            token: Arc::new(Mutex::new((String::new(), DateTime::default()))),
+            token: Arc::new(Mutex::new((String::new(), Timestamp::default()))),
         }
     }
 }

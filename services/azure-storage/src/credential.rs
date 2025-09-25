@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use reqsign_core::time::{now, DateTime};
+use reqsign_core::time::{now, Timestamp};
 use reqsign_core::utils::Redact;
 use reqsign_core::SigningCredential;
 use std::fmt::{Debug, Formatter};
@@ -40,7 +40,7 @@ pub enum Credential {
         /// Bearer token.
         token: String,
         /// Expiration time for this credential.
-        expires_in: Option<DateTime>,
+        expires_in: Option<Timestamp>,
     },
 }
 
@@ -108,7 +108,7 @@ impl Credential {
     }
 
     /// Create a new credential with bearer token authentication.
-    pub fn with_bearer_token(bearer_token: &str, expires_in: Option<DateTime>) -> Self {
+    pub fn with_bearer_token(bearer_token: &str, expires_in: Option<Timestamp>) -> Self {
         Self::BearerToken {
             token: bearer_token.to_string(),
             expires_in,

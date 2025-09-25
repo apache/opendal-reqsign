@@ -16,7 +16,7 @@
 // under the License.
 
 use reqsign_core::{
-    time::now, time::DateTime, utils::Redact, Result, SigningCredential as KeyTrait,
+    time::now, time::Timestamp, utils::Redact, Result, SigningCredential as KeyTrait,
 };
 use std::fmt::{self, Debug};
 
@@ -183,7 +183,7 @@ pub struct Token {
     /// The access token.
     pub access_token: String,
     /// The expiration time of the token.
-    pub expires_at: Option<DateTime>,
+    pub expires_at: Option<Timestamp>,
 }
 
 impl Debug for Token {

@@ -17,6 +17,7 @@
 
 use crate::Credential;
 use async_trait::async_trait;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 
 /// Load credential from Azure Instance Metadata Service (IMDS).
@@ -58,7 +59,7 @@ impl ProvideCredential for ImdsCredentialProvider {
                 reqsign_core::Error::unexpected("failed to parse expires_on timestamp")
                     .with_source(e)
             })?;
-            jiff::Timestamp::new(timestamp, 0).map_err(|e| {
+            Timestamp::from_second(timestamp).map_err(|e| {
                 reqsign_core::Error::unexpected(format!("invalid expires_on timestamp: {e}"))
             })?
         };

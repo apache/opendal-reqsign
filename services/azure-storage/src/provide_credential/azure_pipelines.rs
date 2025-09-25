@@ -17,11 +17,11 @@
 
 use std::collections::HashMap;
 
+use crate::credential::Credential;
 use async_trait::async_trait;
+use reqsign_core::time::now;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
-
-use crate::credential::Credential;
 
 /// AzurePipelinesCredentialProvider provides credentials using Azure Pipelines workload identity
 ///
@@ -234,7 +234,7 @@ impl ProvideCredential for AzurePipelinesCredentialProvider {
 
         // Calculate expiration time
         let expires_in = std::time::Duration::from_secs(token_response.expires_in);
-        let expires_on = jiff::Timestamp::now().checked_add(expires_in).ok();
+        let expires_on = now().checked_add(expires_in).ok();
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,

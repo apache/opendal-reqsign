@@ -23,7 +23,7 @@ use http::{header, HeaderValue};
 use log::debug;
 use percent_encoding::percent_encode;
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
-use reqsign_core::time::{format_http_date, now, DateTime};
+use reqsign_core::time::{format_http_date, now, Timestamp};
 use reqsign_core::{Context, Result, SignRequest, SigningMethod, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
@@ -33,7 +33,7 @@ use std::time::Duration;
 /// - [Authorize with Shared Key](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key)
 #[derive(Debug)]
 pub struct RequestSigner {
-    time: Option<DateTime>,
+    time: Option<Timestamp>,
 }
 
 impl RequestSigner {
@@ -49,7 +49,7 @@ impl RequestSigner {
     /// We should always take current time to sign requests.
     /// Only use this function for testing.
     #[cfg(test)]
-    pub fn with_time(mut self, time: DateTime) -> Self {
+    pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
     }
@@ -214,7 +214,7 @@ impl SignRequest for RequestSigner {
 fn string_to_sign(
     ctx: &mut SigningRequest,
     account_name: &str,
-    now_time: DateTime,
+    now_time: Timestamp,
 ) -> Result<String> {
     let mut s = String::with_capacity(128);
 
@@ -374,7 +374,7 @@ fn string_to_sign(
 /// ## Reference
 ///
 /// - [Constructing the canonicalized headers string](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-headers-string)
-fn canonicalize_header(ctx: &mut SigningRequest, now_time: DateTime) -> Result<String> {
+fn canonicalize_header(ctx: &mut SigningRequest, now_time: Timestamp) -> Result<String> {
     ctx.headers.insert(
         X_MS_DATE,
         format_http_date(now_time).parse().map_err(|e| {

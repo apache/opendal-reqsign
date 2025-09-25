@@ -26,7 +26,7 @@ use http::{header, HeaderValue};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
-use reqsign_core::time::{format_date, format_iso8601, now, DateTime};
+use reqsign_core::time::{format_date, format_iso8601, now, Timestamp};
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
@@ -39,7 +39,7 @@ pub struct RequestSigner {
     service: String,
     region: String,
 
-    time: Option<DateTime>,
+    time: Option<Timestamp>,
 }
 
 impl RequestSigner {
@@ -60,7 +60,7 @@ impl RequestSigner {
     /// We should always take current time to sign requests.
     /// Only use this function for testing.
     #[cfg(test)]
-    pub fn with_time(mut self, time: DateTime) -> Self {
+    pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
     }
@@ -233,7 +233,7 @@ fn canonicalize_header(
     ctx: &mut SigningRequest,
     cred: &Credential,
     expires_in: Option<Duration>,
-    now: DateTime,
+    now: Timestamp,
 ) -> Result<()> {
     // Header names and values need to be normalized according to Step 4 of https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
     for (_, value) in ctx.headers.iter_mut() {
@@ -298,7 +298,7 @@ fn canonicalize_query(
     ctx: &mut SigningRequest,
     cred: &Credential,
     expires_in: Option<Duration>,
-    now: DateTime,
+    now: Timestamp,
     service: &str,
     region: &str,
 ) -> Result<()> {
@@ -351,7 +351,7 @@ fn canonicalize_query(
     Ok(())
 }
 
-fn generate_signing_key(secret: &str, time: DateTime, region: &str, service: &str) -> Vec<u8> {
+fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &str) -> Vec<u8> {
     // Sign secret
     let secret = format!("AWS4{secret}");
     // Sign date

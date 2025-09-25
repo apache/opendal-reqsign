@@ -373,7 +373,7 @@ fn canonicalize_query(
     req: &mut SigningRequest,
     method: SigningMethod,
     cred: &ServiceAccount,
-    now: DateTime,
+    now: Timestamp,
     service: &str,
     region: &str,
 ) -> Result<()> {
