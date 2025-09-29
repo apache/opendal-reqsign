@@ -34,7 +34,7 @@ use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::format_http_date;
 use reqsign_core::time::now;
-use reqsign_core::time::DateTime;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
 
 /// RequestSigner that implement Huawei Cloud Object Storage Service Authorization.
@@ -43,7 +43,7 @@ use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
-    time: Option<DateTime>,
+    time: Option<Timestamp>,
 }
 
 impl RequestSigner {
@@ -62,7 +62,7 @@ impl RequestSigner {
     /// We should always take current time to sign requests.
     /// Only use this function for testing.
     #[cfg(test)]
-    pub fn with_time(mut self, time: DateTime) -> Self {
+    pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
     }
@@ -110,8 +110,8 @@ impl SignRequest for RequestSigner {
                 ctx.query_push("AccessKeyId", &k.access_key_id);
                 ctx.query_push(
                     "Expires",
-                    (now + chrono::TimeDelta::from_std(expire).unwrap())
-                        .timestamp()
+                    (now + jiff::SignedDuration::try_from(expire).unwrap())
+                        .as_second()
                         .to_string(),
                 );
                 ctx.query_push(
@@ -144,7 +144,7 @@ impl SignRequest for RequestSigner {
 fn string_to_sign(
     ctx: &mut SigningRequest,
     cred: &Credential,
-    now: DateTime,
+    now: Timestamp,
     method: SigningMethod,
     bucket: &str,
 ) -> Result<String> {
@@ -169,7 +169,7 @@ fn string_to_sign(
             writeln!(
                 &mut s,
                 "{}",
-                (now + chrono::TimeDelta::from_std(expires).unwrap()).timestamp()
+                (now + jiff::SignedDuration::try_from(expires).unwrap()).as_second()
             )?;
         }
     }
@@ -303,9 +303,9 @@ static SUBRESOURCES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 mod tests {
     use std::str::FromStr;
 
-    use chrono::Utc;
     use http::header::HeaderName;
     use http::Uri;
+    use reqsign_core::time::parse_rfc2822;
     use reqsign_core::Result;
     use reqsign_core::{Context, OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
@@ -317,11 +317,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder = RequestSigner::new("bucket").with_time(
-            chrono::DateTime::parse_from_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")
-                .unwrap()
-                .with_timezone(&Utc),
-        );
+        let builder =
+            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
@@ -359,11 +356,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign_with_subresource() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder = RequestSigner::new("bucket").with_time(
-            chrono::DateTime::parse_from_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")
-                .unwrap()
-                .with_timezone(&Utc),
-        );
+        let builder =
+            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
@@ -403,11 +397,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign_list_objects() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder = RequestSigner::new("bucket").with_time(
-            chrono::DateTime::parse_from_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")
-                .unwrap()
-                .with_timezone(&Utc),
-        );
+        let builder =
+            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)

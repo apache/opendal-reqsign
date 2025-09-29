@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::{header, Method, Request};
 use log::debug;
+use reqsign_core::time::parse_rfc3339;
 use reqsign_core::{Context, Error, ProvideCredential, Result, SignRequest};
 use serde::Deserialize;
 
@@ -160,13 +161,12 @@ impl S3ExpressSessionProvider {
 
         // Parse expiration time from ISO8601 format
         let expiration =
-            chrono::DateTime::parse_from_rfc3339(&create_session_resp.credentials.expiration)
-                .map_err(|e| {
-                    Error::unexpected(format!(
-                        "Failed to parse expiration time '{}': {e}",
-                        create_session_resp.credentials.expiration
-                    ))
-                })?;
+            parse_rfc3339(&create_session_resp.credentials.expiration).map_err(|e| {
+                Error::unexpected(format!(
+                    "Failed to parse expiration time '{}': {e}",
+                    create_session_resp.credentials.expiration
+                ))
+            })?;
 
         // Convert to Credential with expiration time
         let creds = create_session_resp.credentials;
@@ -174,7 +174,7 @@ impl S3ExpressSessionProvider {
             access_key_id: creds.access_key_id,
             secret_access_key: creds.secret_access_key,
             session_token: Some(creds.session_token),
-            expires_in: Some(expiration.into()),
+            expires_in: Some(expiration),
         })
     }
 

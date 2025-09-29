@@ -18,23 +18,23 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::credential::Credential;
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
+use reqsign_core::time::now;
 use reqsign_core::{Context, ProvideCredential};
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::RsaPrivateKey;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-use crate::credential::Credential;
-
 /// Generate a unique JWT ID using timestamp and a pseudo-random component
 fn generate_jti(now: u64) -> String {
     // Use timestamp in nanoseconds + a hash of the timestamp for uniqueness
-    let nano_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let nano_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
 
@@ -315,13 +315,8 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
             .await?;
 
         // Calculate expiration time
-        let expires_on = SystemTime::now()
-            .checked_add(Duration::from_secs(token_response.expires_in))
-            .and_then(|t| {
-                t.duration_since(UNIX_EPOCH)
-                    .ok()
-                    .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0).unwrap())
-            });
+        let expires_in = Duration::from_secs(token_response.expires_in);
+        let expires_on = now().checked_add(expires_in).ok();
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use reqsign_core::time::{now, DateTime};
+use reqsign_core::time::{now, Timestamp};
 use reqsign_core::utils::Redact;
 use reqsign_core::SigningCredential;
 use std::fmt::{Debug, Formatter};
@@ -30,7 +30,7 @@ pub struct Credential {
     /// Security token for temporary credentials
     pub security_token: Option<String>,
     /// Expiration time for this credential
-    pub expires_in: Option<DateTime>,
+    pub expires_in: Option<Timestamp>,
 }
 
 impl Debug for Credential {
@@ -52,7 +52,7 @@ impl SigningCredential for Credential {
         // Take 120s as buffer to avoid edge cases.
         if let Some(valid) = self
             .expires_in
-            .map(|v| v > now() + chrono::TimeDelta::try_minutes(2).expect("in bounds"))
+            .map(|v| v > now() + jiff::SignedDuration::from_mins(2))
         {
             return valid;
         }

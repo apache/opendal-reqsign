@@ -47,7 +47,7 @@ struct Claims {
 
 impl Claims {
     fn new(client_email: &str, scope: &str) -> Self {
-        let current = now().timestamp() as u64;
+        let current = now().as_second() as u64;
 
         Claims {
             iss: client_email.to_string(),
@@ -155,9 +155,9 @@ impl RequestSigner {
             reqsign_core::Error::unexpected("failed to parse token response").with_source(e)
         })?;
 
-        let expires_at = token_resp.expires_in.map(|expires_in| {
-            now() + chrono::TimeDelta::try_seconds(expires_in as i64).expect("in bounds")
-        });
+        let expires_at = token_resp
+            .expires_in
+            .map(|expires_in| now() + jiff::SignedDuration::from_secs(expires_in as i64));
 
         Ok(Token {
             access_token: token_resp.access_token,
@@ -373,7 +373,7 @@ fn canonicalize_query(
     req: &mut SigningRequest,
     method: SigningMethod,
     cred: &ServiceAccount,
-    now: DateTime,
+    now: Timestamp,
     service: &str,
     region: &str,
 ) -> Result<()> {

@@ -23,7 +23,7 @@ use http::request::Parts;
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha1, hex_sha1};
-use reqsign_core::time::{format_http_date, now, DateTime};
+use reqsign_core::time::{format_http_date, now, Timestamp};
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
 use std::time::Duration;
 
@@ -32,7 +32,7 @@ use std::time::Duration;
 /// - [Tencent COS Signature](https://cloud.tencent.com/document/product/436/7778)
 #[derive(Debug, Default)]
 pub struct RequestSigner {
-    time: Option<DateTime>,
+    time: Option<Timestamp>,
 }
 
 impl RequestSigner {
@@ -48,7 +48,7 @@ impl RequestSigner {
     /// We should always take current time to sign requests.
     /// Only use this function for testing.
     #[cfg(test)]
-    pub fn with_time(mut self, time: DateTime) -> Self {
+    pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
     }
@@ -116,13 +116,13 @@ impl SignRequest for RequestSigner {
 fn build_signature(
     ctx: &mut SigningRequest,
     cred: &Credential,
-    now: DateTime,
+    now: Timestamp,
     expires: Duration,
 ) -> String {
     let key_time = format!(
         "{};{}",
-        now.timestamp(),
-        (now + chrono::TimeDelta::from_std(expires).unwrap()).timestamp()
+        now.as_second(),
+        (now + jiff::SignedDuration::try_from(expires).unwrap()).as_second()
     );
 
     let sign_key = hex_hmac_sha1(cred.secret_key.as_bytes(), key_time.as_bytes());

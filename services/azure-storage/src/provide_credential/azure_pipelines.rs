@@ -17,11 +17,11 @@
 
 use std::collections::HashMap;
 
+use crate::credential::Credential;
 use async_trait::async_trait;
+use reqsign_core::time::now;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
-
-use crate::credential::Credential;
 
 /// AzurePipelinesCredentialProvider provides credentials using Azure Pipelines workload identity
 ///
@@ -233,13 +233,8 @@ impl ProvideCredential for AzurePipelinesCredentialProvider {
             .await?;
 
         // Calculate expiration time
-        let expires_on = std::time::SystemTime::now()
-            .checked_add(std::time::Duration::from_secs(token_response.expires_in))
-            .and_then(|t| {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .ok()
-                    .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0).unwrap())
-            });
+        let expires_in = std::time::Duration::from_secs(token_response.expires_in);
+        let expires_on = now().checked_add(expires_in).ok();
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,
@@ -271,7 +266,7 @@ mod tests {
     async fn test_provide_credential_no_environment() {
         // When not in Azure Pipelines environment, should return None
         let provider = AzurePipelinesCredentialProvider::new();
-        let ctx = reqsign_core::Context::new()
+        let ctx = Context::new()
             .with_file_read(reqsign_file_read_tokio::TokioFileRead)
             .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default());
 

@@ -22,7 +22,7 @@ use http::HeaderValue;
 use once_cell::sync::Lazy;
 use percent_encoding::utf8_percent_encode;
 use reqsign_core::hash::base64_hmac_sha1;
-use reqsign_core::time::{format_http_date, now, DateTime};
+use reqsign_core::time::{format_http_date, now, Timestamp};
 use reqsign_core::Result;
 use reqsign_core::{Context, SignRequest};
 use std::collections::HashSet;
@@ -35,7 +35,7 @@ const CONTENT_MD5: &str = "content-md5";
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
-    time: Option<DateTime>,
+    time: Option<Timestamp>,
 }
 
 impl RequestSigner {
@@ -54,12 +54,12 @@ impl RequestSigner {
     /// We should always take current time to sign requests.
     /// Only use this function for testing.
     #[cfg(test)]
-    pub fn with_time(mut self, time: DateTime) -> Self {
+    pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
     }
 
-    fn get_time(&self) -> DateTime {
+    fn get_time(&self) -> Timestamp {
         self.time.unwrap_or_else(now)
     }
 }
@@ -97,7 +97,7 @@ impl RequestSigner {
         &self,
         req: &mut http::request::Parts,
         cred: &Credential,
-        signing_time: DateTime,
+        signing_time: Timestamp,
     ) -> Result<()> {
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, None)?;
         let signature =
@@ -125,11 +125,11 @@ impl RequestSigner {
         &self,
         req: &mut http::request::Parts,
         cred: &Credential,
-        signing_time: DateTime,
+        signing_time: Timestamp,
         expires: Duration,
     ) -> Result<()> {
         let expiration_time = signing_time
-            + chrono::TimeDelta::from_std(expires).map_err(|e| {
+            + jiff::SignedDuration::try_from(expires).map_err(|e| {
                 reqsign_core::Error::request_invalid(format!("Invalid expiration duration: {e}"))
             })?;
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, Some(expires))?;
@@ -154,7 +154,7 @@ impl RequestSigner {
         query_pairs.push(("OSSAccessKeyId".to_string(), cred.access_key_id.clone()));
         query_pairs.push((
             "Expires".to_string(),
-            expiration_time.timestamp().to_string(),
+            expiration_time.as_second().to_string(),
         ));
         query_pairs.push((
             "Signature".to_string(),
@@ -200,7 +200,7 @@ impl RequestSigner {
         &self,
         req: &http::request::Parts,
         cred: &Credential,
-        signing_time: DateTime,
+        signing_time: Timestamp,
         expires: Option<Duration>,
     ) -> Result<String> {
         let mut s = String::new();
@@ -229,12 +229,12 @@ impl RequestSigner {
         match expires {
             Some(expires_duration) => {
                 let expiration_time = signing_time
-                    + chrono::TimeDelta::from_std(expires_duration).map_err(|e| {
+                    + jiff::SignedDuration::try_from(expires_duration).map_err(|e| {
                         reqsign_core::Error::request_invalid(format!(
                             "Invalid expiration duration: {e}"
                         ))
                     })?;
-                writeln!(&mut s, "{}", expiration_time.timestamp())?;
+                writeln!(&mut s, "{}", expiration_time.as_second())?;
             }
             None => {
                 writeln!(&mut s, "{}", format_http_date(signing_time))?;

@@ -106,8 +106,7 @@ impl ProvideCredential for VmMetadataCredentialProvider {
                     .with_source(e)
             })?;
 
-        let expires_at = now()
-            + chrono::TimeDelta::try_seconds(token_resp.expires_in as i64).expect("in bounds");
+        let expires_at = now() + jiff::SignedDuration::from_secs(token_resp.expires_in as i64);
 
         let token = Token {
             access_token: token_resp.access_token,

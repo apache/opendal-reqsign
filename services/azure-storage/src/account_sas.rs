@@ -19,7 +19,7 @@ use reqsign_core::Result;
 
 use reqsign_core::hash;
 use reqsign_core::time;
-use reqsign_core::time::DateTime;
+use reqsign_core::time::Timestamp;
 
 /// The default parameters that make up a SAS token
 /// https://learn.microsoft.com/en-us/rest/api/storageservices/create-account-sas#specify-the-account-sas-parameters
@@ -35,15 +35,15 @@ pub struct AccountSharedAccessSignature {
     resource: String,
     resource_type: String,
     permissions: String,
-    expiry: DateTime,
-    start: Option<DateTime>,
+    expiry: Timestamp,
+    start: Option<Timestamp>,
     ip: Option<String>,
     protocol: Option<String>,
 }
 
 impl AccountSharedAccessSignature {
     /// Create a SAS token signer with default parameters
-    pub fn new(account: String, key: String, expiry: DateTime) -> Self {
+    pub fn new(account: String, key: String, expiry: Timestamp) -> Self {
         Self {
             account,
             key,
@@ -125,14 +125,14 @@ mod tests {
 
     use super::*;
 
-    fn test_time() -> DateTime {
-        DateTime::from_str("2022-03-01T08:12:34Z").unwrap()
+    fn test_time() -> Timestamp {
+        Timestamp::from_str("2022-03-01T08:12:34Z").unwrap()
     }
 
     #[test]
     fn test_can_generate_sas_token() {
         let key = hash::base64_encode("key".as_bytes());
-        let expiry = test_time() + chrono::TimeDelta::try_minutes(5).expect("in bounds");
+        let expiry = test_time() + jiff::SignedDuration::from_mins(5);
         let sign = AccountSharedAccessSignature::new("account".to_string(), key, expiry);
         let token_content = sign.token().expect("token decode failed");
         let token = token_content

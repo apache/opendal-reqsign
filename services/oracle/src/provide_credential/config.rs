@@ -63,8 +63,7 @@ impl ProvideCredential for ConfigCredentialProvider {
                     fingerprint: fingerprint.clone(),
                     // Set expires_in to 10 minutes to enforce re-read
                     expires_in: Some(
-                        reqsign_core::time::now()
-                            + chrono::TimeDelta::try_minutes(10).expect("in bounds"),
+                        reqsign_core::time::now() + jiff::SignedDuration::from_mins(10),
                     ),
                 }))
             }

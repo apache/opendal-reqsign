@@ -17,9 +17,9 @@
 
 use crate::Credential;
 use async_trait::async_trait;
-use chrono::DateTime;
 use http::{Method, Request, StatusCode};
 use log::debug;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 use serde_json::json;
@@ -224,8 +224,8 @@ impl CognitoIdentityCredentialProvider {
             .map_err(|e| Error::unexpected(format!("failed to parse credentials response: {e}")))?;
 
         let creds = result.credentials;
-        let expires_in = DateTime::from_timestamp(creds.expiration, 0)
-            .ok_or_else(|| Error::unexpected("invalid expiration timestamp".to_string()))?;
+        let expires_in = Timestamp::from_second(creds.expiration)
+            .map_err(|e| Error::unexpected(format!("invalid expiration date: {e}")))?;
 
         Ok(Credential {
             access_key_id: creds.access_key_id,

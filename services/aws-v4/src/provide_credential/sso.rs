@@ -17,10 +17,10 @@
 
 use crate::Credential;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use http::{Method, Request, StatusCode};
 use ini::Ini;
 use log::{debug, warn};
+use reqsign_core::time::{now, Timestamp};
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 
@@ -218,11 +218,11 @@ impl SSOCredentialProvider {
                 })?;
 
                 // Check if token is expired
-                let expires_at: DateTime<Utc> = token.expires_at.parse().map_err(|e| {
+                let expires_at = token.expires_at.parse::<Timestamp>().map_err(|e| {
                     Error::unexpected(format!("failed to parse expiration time: {e}"))
                 })?;
 
-                if expires_at <= Utc::now() {
+                if expires_at <= now() {
                     warn!("SSO token is expired");
                     return Ok(None);
                 }
@@ -286,8 +286,8 @@ impl SSOCredentialProvider {
             .map_err(|e| Error::unexpected(format!("failed to parse SSO credentials: {e}")))?;
 
         let role_creds = creds.role_credentials;
-        let expires_in = DateTime::from_timestamp_millis(role_creds.expiration)
-            .ok_or_else(|| Error::unexpected("invalid expiration timestamp".to_string()))?;
+        let expires_in = Timestamp::from_millisecond(role_creds.expiration)
+            .map_err(|e| Error::unexpected(format!("invalid expiration timestamp: {e}")))?;
 
         Ok(Credential {
             access_key_id: role_creds.access_key_id,
