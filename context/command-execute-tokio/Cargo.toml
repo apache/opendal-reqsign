@@ -19,7 +19,7 @@
 authors = ["Xuanwo <github@xuanwo.io>"]
 categories = ["asynchronous"]
 description = "Tokio-based command execution implementation for reqsign"
-edition = "2021"
+edition = "2024"
 keywords = ["command", "tokio", "reqsign", "async"]
 license = "Apache-2.0"
 name = "reqsign-command-execute-tokio"
