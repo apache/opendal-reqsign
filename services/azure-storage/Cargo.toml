@@ -43,7 +43,7 @@ sha1.workspace = true
 sha2.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-jsonwebtoken = "9.2"
+jsonwebtoken = "10.0"
 pem = "3.0"
 rsa.workspace = true
 
