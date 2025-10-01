@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::Credential;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::constants::*;
-use crate::Credential;
 use async_trait::async_trait;
 #[cfg(not(target_arch = "wasm32"))]
 use ini::Ini;

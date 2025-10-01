@@ -141,6 +141,9 @@ mod tests {
             .collect::<Vec<String>>()
             .join("&");
 
-        assert_eq!(token, "sv=2018-11-09&ss=bqtf&srt=sco&se=2022-03-01T08%3A17%3A34Z&sp=rwdlacu&sig=jgK9nDUT0ntH%2Fp28LPs0jzwxsk91W6hePLPlfrElv4k%3D");
+        assert_eq!(
+            token,
+            "sv=2018-11-09&ss=bqtf&srt=sco&se=2022-03-01T08%3A17%3A34Z&sp=rwdlacu&sig=jgK9nDUT0ntH%2Fp28LPs0jzwxsk91W6hePLPlfrElv4k%3D"
+        );
     }
 }

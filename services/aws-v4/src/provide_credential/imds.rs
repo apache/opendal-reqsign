@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::provide_credential::utils::parse_imds_error;
 use crate::Credential;
+use crate::provide_credential::utils::parse_imds_error;
 use async_trait::async_trait;
 use bytes::Bytes;
-use http::header::CONTENT_LENGTH;
 use http::Method;
-use reqsign_core::time::{now, parse_rfc3339, Timestamp};
+use http::header::CONTENT_LENGTH;
+use reqsign_core::time::{Timestamp, now, parse_rfc3339};
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};

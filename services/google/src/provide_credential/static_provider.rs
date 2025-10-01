@@ -17,7 +17,7 @@
 
 use log::debug;
 
-use reqsign_core::{hash::base64_decode, Context, ProvideCredential, Result};
+use reqsign_core::{Context, ProvideCredential, Result, hash::base64_decode};
 
 use crate::credential::{Credential, CredentialFile};
 

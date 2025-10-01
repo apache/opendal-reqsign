@@ -20,13 +20,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::credential::Credential;
 use async_trait::async_trait;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use reqsign_core::time::now;
 use reqsign_core::{Context, ProvideCredential};
-use rsa::pkcs8::DecodePrivateKey;
 use rsa::RsaPrivateKey;
+use rsa::pkcs8::DecodePrivateKey;
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 

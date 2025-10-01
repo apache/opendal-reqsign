@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{constants::*, Credential};
+use crate::{Credential, constants::*};
 use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, Result};
 

@@ -169,7 +169,7 @@ impl Context {
         self.env.var(key)
     }
 
-    /// Returns an hashmap of (variable, value) pairs of strings, for all the
+    /// Returns a hashmap of (variable, value) pairs of strings, for all the
     /// environment variables of the current process.
     #[inline]
     pub fn env_vars(&self) -> HashMap<String, String> {
@@ -211,7 +211,7 @@ pub trait Env: Debug + Send + Sync + 'static {
     /// - Returns `None` if the environment variable is not found or value is invalid.
     fn var(&self, key: &str) -> Option<String>;
 
-    /// Returns an hashmap of (variable, value) pairs of strings, for all the
+    /// Returns a hashmap of (variable, value) pairs of strings, for all the
     /// environment variables of the current process.
     fn vars(&self) -> HashMap<String, String>;
 
@@ -382,7 +382,7 @@ mod windows {
     use windows_sys::Win32::Foundation::S_OK;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
     use windows_sys::Win32::UI::Shell::{
-        FOLDERID_Profile, SHGetKnownFolderPath, KF_FLAG_DONT_VERIFY,
+        FOLDERID_Profile, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
     };
 
     pub fn home_dir_inner() -> Option<PathBuf> {
@@ -422,8 +422,8 @@ mod windows {
         None
     }
 
-    extern "C" {
-        fn wcslen(buf: *const u16) -> usize;
+    unsafe extern "C" {
+        unsafe fn wcslen(buf: *const u16) -> usize;
     }
 
     #[cfg(not(target_vendor = "uwp"))]
@@ -437,18 +437,18 @@ mod windows {
         #[test]
         fn test_with_without() {
             let olduserprofile = env::var_os("USERPROFILE").unwrap();
-
-            env::remove_var("HOME");
-            env::remove_var("USERPROFILE");
-
+            unsafe {
+                env::remove_var("HOME");
+                env::remove_var("USERPROFILE");
+            }
             assert_eq!(home_dir_inner(), Some(PathBuf::from(olduserprofile)));
 
             let home = Path::new(r"C:\Users\foo tar baz");
-
-            env::set_var("HOME", home.as_os_str());
+            unsafe {
+                env::set_var("HOME", home.as_os_str());
+                env::set_var("USERPROFILE", home.as_os_str());
+            }
             assert_ne!(home_dir_inner().as_ref().map(Deref::deref), Some(home));
-
-            env::set_var("USERPROFILE", home.as_os_str());
             assert_eq!(home_dir_inner().as_ref().map(Deref::deref), Some(home));
         }
     }

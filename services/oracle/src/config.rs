@@ -19,9 +19,9 @@
 
 use crate::constants::*;
 use ini::Ini;
-use reqsign_core::utils::Redact;
 use reqsign_core::Context;
 use reqsign_core::Result;
+use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
 
 /// Config for Oracle Cloud Infrastructure services.

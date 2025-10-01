@@ -24,7 +24,7 @@
 pub use reqsign_oracle::*;
 
 #[cfg(feature = "default-context")]
-use crate::{default_context, Signer};
+use crate::{Signer, default_context};
 
 /// Default Oracle Cloud Signer type with commonly used components
 #[cfg(feature = "default-context")]

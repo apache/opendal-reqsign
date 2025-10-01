@@ -24,7 +24,7 @@
 pub use reqsign_aws_v4::*;
 
 #[cfg(feature = "default-context")]
-use crate::{default_context, Signer};
+use crate::{Signer, default_context};
 
 /// Default AWS Signer type with commonly used components
 #[cfg(feature = "default-context")]

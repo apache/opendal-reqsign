@@ -17,29 +17,26 @@
 
 [package]
 name = "reqsign-huaweicloud-obs"
-version = "1.0.0"
+version = "1.1.0"
 
-categories.workspace = true
-description.workspace = true
-documentation.workspace = true
+description = "Huawei Cloud OBS signing implementation for reqsign."
+
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-async-trait.workspace = true
-http.workspace = true
-jiff.workspace = true
-log.workspace = true
-once_cell.workspace = true
-percent-encoding.workspace = true
-reqsign-core.workspace = true
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+http = { workspace = true }
+jiff = { workspace = true }
+log = { workspace = true }
+percent-encoding = { workspace = true }
+reqsign-core = { workspace = true }
 
 [dev-dependencies]
-env_logger.workspace = true
-once_cell.workspace = true
-reqsign-file-read-tokio.workspace = true
-reqsign-http-send-reqwest.workspace = true
-temp-env.workspace = true
+env_logger = { workspace = true }
+reqsign-file-read-tokio = { workspace = true }
+reqsign-http-send-reqwest = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

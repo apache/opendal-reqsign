@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::constants::*;
 use crate::Credential;
+use crate::constants::*;
 use async_trait::async_trait;
 use http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use log::debug;
-use reqsign_core::time::{now, parse_rfc3339};
 use reqsign_core::Result;
+use reqsign_core::time::{now, parse_rfc3339};
 use reqsign_core::{Context, ProvideCredential};
 use serde::{Deserialize, Serialize};
 
@@ -59,30 +59,34 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .or_else(|| ctx.env_var(TKE_ROLE_SESSSION_NAME))
             .unwrap_or_else(|| "reqsign".to_string());
 
-        let (region, token_file, role_arn, provider_id) =
-            match (region, token_file, role_arn, provider_id) {
-                (Some(region), Some(token_file), Some(role_arn), Some(provider_id)) => {
-                    (region, token_file, role_arn, provider_id)
-                }
-                (region, token_file, role_arn, provider_id) => {
-                    let missing = [
-                        ("region", region.is_none()),
-                        ("web_identity_token_file", token_file.is_none()),
-                        ("role_arn", role_arn.is_none()),
-                        ("provider_id", provider_id.is_none()),
-                    ]
-                    .iter()
-                    .filter_map(|&(k, v)| if v { Some(k) } else { None })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+        let (region, token_file, role_arn, provider_id) = match (
+            region,
+            token_file,
+            role_arn,
+            provider_id,
+        ) {
+            (Some(region), Some(token_file), Some(role_arn), Some(provider_id)) => {
+                (region, token_file, role_arn, provider_id)
+            }
+            (region, token_file, role_arn, provider_id) => {
+                let missing = [
+                    ("region", region.is_none()),
+                    ("web_identity_token_file", token_file.is_none()),
+                    ("role_arn", role_arn.is_none()),
+                    ("provider_id", provider_id.is_none()),
+                ]
+                .iter()
+                .filter_map(|&(k, v)| if v { Some(k) } else { None })
+                .collect::<Vec<_>>()
+                .join(", ");
 
-                    debug!(
+                debug!(
                     "assume_role_with_web_identity is not configured fully: [{missing}] is missing"
                 );
 
-                    return Ok(None);
-                }
-            };
+                return Ok(None);
+            }
+        };
 
         let token = ctx.file_read_as_string(&token_file).await?;
 

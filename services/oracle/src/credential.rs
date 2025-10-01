@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use reqsign_core::time::{now, Timestamp};
-use reqsign_core::utils::Redact;
 use reqsign_core::SigningCredential;
+use reqsign_core::time::{Timestamp, now};
+use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
 
 /// Credential that holds the API private key information.

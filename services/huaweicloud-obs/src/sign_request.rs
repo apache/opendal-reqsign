@@ -18,23 +18,23 @@
 //! Huawei Cloud Object Storage Service (OBS) builder
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::sync::LazyLock;
 use std::time::Duration;
 
+use http::HeaderValue;
 use http::header::AUTHORIZATION;
 use http::header::CONTENT_TYPE;
 use http::header::DATE;
-use http::HeaderValue;
 use log::debug;
-use once_cell::sync::Lazy;
 use percent_encoding::utf8_percent_encode;
 use reqsign_core::Result;
 
 use super::constants::*;
 use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
+use reqsign_core::time::Timestamp;
 use reqsign_core::time::format_http_date;
 use reqsign_core::time::now;
-use reqsign_core::time::Timestamp;
 use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
 
 /// RequestSigner that implement Huawei Cloud Object Storage Service Authorization.
@@ -244,8 +244,8 @@ fn is_sub_resource(param: &str) -> bool {
     SUBRESOURCES.contains(param)
 }
 
-// Please attention: the subsources are case sensitive.
-static SUBRESOURCES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+// Please attention: the subresources are case-sensitive.
+static SUBRESOURCES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     HashSet::from([
         "CDNNotifyConfiguration",
         "acl",
@@ -303,10 +303,10 @@ static SUBRESOURCES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 mod tests {
     use std::str::FromStr;
 
-    use http::header::HeaderName;
     use http::Uri;
-    use reqsign_core::time::parse_rfc2822;
+    use http::header::HeaderName;
     use reqsign_core::Result;
+    use reqsign_core::time::parse_rfc2822;
     use reqsign_core::{Context, OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;

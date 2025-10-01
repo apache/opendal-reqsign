@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::provide_credential::{ConfigFileCredentialProvider, EnvCredentialProvider};
 use crate::Credential;
+use crate::provide_credential::{ConfigFileCredentialProvider, EnvCredentialProvider};
 use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 

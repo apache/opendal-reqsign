@@ -17,7 +17,7 @@
 
 use std::fmt::{Debug, Formatter};
 
-use reqsign_core::{utils::Redact, SigningCredential};
+use reqsign_core::{SigningCredential, utils::Redact};
 
 /// Credential for obs.
 #[derive(Clone)]

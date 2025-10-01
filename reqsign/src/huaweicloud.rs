@@ -24,7 +24,7 @@
 pub use reqsign_huaweicloud_obs::*;
 
 #[cfg(feature = "default-context")]
-use crate::{default_context, Signer};
+use crate::{Signer, default_context};
 
 /// Default Huawei Cloud OBS Signer type with commonly used components
 #[cfg(feature = "default-context")]

@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::Credential;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::provide_credential::{AzureCliCredentialProvider, ClientCertificateCredentialProvider};
 use crate::provide_credential::{
     AzurePipelinesCredentialProvider, ClientSecretCredentialProvider, EnvCredentialProvider,
     ImdsCredentialProvider, WorkloadIdentityCredentialProvider,
 };
-use crate::Credential;
 use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 

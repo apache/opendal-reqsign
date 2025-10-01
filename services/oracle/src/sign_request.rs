@@ -17,20 +17,20 @@
 
 use crate::Credential;
 use async_trait::async_trait;
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use http::request::Parts;
 use http::{
-    header::{AUTHORIZATION, DATE},
     HeaderValue,
+    header::{AUTHORIZATION, DATE},
 };
 use log::debug;
-use reqsign_core::time::{format_http_date, now};
 use reqsign_core::Result;
+use reqsign_core::time::{format_http_date, now};
 use reqsign_core::{Context, SignRequest, SigningRequest};
 use rsa::pkcs1v15::SigningKey;
 use rsa::sha2::Sha256;
 use rsa::signature::{SignatureEncoding, Signer};
-use rsa::{pkcs8::DecodePrivateKey, RsaPrivateKey};
+use rsa::{RsaPrivateKey, pkcs8::DecodePrivateKey};
 use std::fmt::Write;
 use std::time::Duration;
 

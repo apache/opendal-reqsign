@@ -21,9 +21,9 @@ use http::header::{ACCEPT, CONTENT_TYPE};
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use crate::credential::{external_account, Credential, ExternalAccount, Token};
+use crate::credential::{Credential, ExternalAccount, Token, external_account};
 use reqsign_core::time::parse_rfc3339;
-use reqsign_core::{time::now, Context, ProvideCredential, Result};
+use reqsign_core::{Context, ProvideCredential, Result, time::now};
 
 /// The maximum impersonated token lifetime allowed, 1 hour.
 const MAX_LIFETIME: Duration = Duration::from_secs(3600);

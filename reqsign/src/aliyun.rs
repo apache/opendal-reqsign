@@ -24,7 +24,7 @@
 pub use reqsign_aliyun_oss::*;
 
 #[cfg(feature = "default-context")]
-use crate::{default_context, Signer};
+use crate::{Signer, default_context};
 
 /// Default Aliyun OSS Signer type with commonly used components
 #[cfg(feature = "default-context")]

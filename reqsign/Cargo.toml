@@ -17,22 +17,24 @@
 
 [package]
 name = "reqsign"
-version = "0.17.0"
+version = "0.17.1"
+
+categories = ["authentication", "web-programming::http-client"]
+description = "Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services"
+documentation = "https://docs.rs/reqsign"
+keywords = ["http", "requests", "signing", "aws", "azure"]
 
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-
-categories = ["authentication", "web-programming::http-client"]
-description = "Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services"
-keywords = ["http", "requests", "signing", "aws", "azure"]
+rust-version.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
 # Core functionality (always included)
-reqsign-core.workspace = true
+reqsign-core = { workspace = true }
 
 # Service implementations (optional)
 reqsign-aliyun-oss = { workspace = true, optional = true }
@@ -73,7 +75,6 @@ anyhow = "1"
 bytes = "1"
 env_logger = "0.11"
 http = "1"
-tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 
 [[example]]

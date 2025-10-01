@@ -24,7 +24,7 @@
 pub use reqsign_google::*;
 
 #[cfg(feature = "default-context")]
-use crate::{default_context, Signer};
+use crate::{Signer, default_context};
 
 /// Default Google Cloud Signer type with commonly used components
 #[cfg(feature = "default-context")]

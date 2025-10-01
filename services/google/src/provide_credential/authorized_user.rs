@@ -19,7 +19,7 @@ use http::header::CONTENT_TYPE;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use reqsign_core::{time::now, Context, ProvideCredential, Result};
+use reqsign_core::{Context, ProvideCredential, Result, time::now};
 
 use crate::credential::{Credential, OAuth2Credentials, Token};
 

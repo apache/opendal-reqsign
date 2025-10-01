@@ -49,7 +49,9 @@ async fn test_ecs_credential_provider() {
             envs.insert("AWS_CONTAINER_AUTHORIZATION_TOKEN".to_string(), token);
         }
     } else {
-        panic!("Either AWS_CONTAINER_CREDENTIALS_RELATIVE_URI or AWS_CONTAINER_CREDENTIALS_FULL_URI must be set");
+        panic!(
+            "Either AWS_CONTAINER_CREDENTIALS_RELATIVE_URI or AWS_CONTAINER_CREDENTIALS_FULL_URI must be set"
+        );
     }
 
     let ctx = create_test_context_with_env(envs);

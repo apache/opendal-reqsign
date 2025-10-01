@@ -15,18 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::Credential;
 use crate::constants::{
     AWS_QUERY_ENCODE_SET, X_AMZ_CONTENT_SHA_256, X_AMZ_DATE, X_AMZ_S3_SESSION_TOKEN,
     X_AMZ_SECURITY_TOKEN,
 };
-use crate::Credential;
 use async_trait::async_trait;
 use http::request::Parts;
-use http::{header, HeaderValue};
+use http::{HeaderValue, header};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
-use reqsign_core::time::{format_date, format_iso8601, now, Timestamp};
+use reqsign_core::time::{Timestamp, format_date, format_iso8601, now};
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
@@ -361,9 +361,8 @@ fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &s
     // Sign service
     let sign_service = hmac_sha256(sign_region.as_slice(), service.as_bytes());
     // Sign request
-    let sign_request = hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes());
 
-    sign_request
+    hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
 }
 
 #[cfg(test)]
@@ -381,8 +380,8 @@ mod tests {
     use aws_sigv4::http_request::SignatureLocation;
     use aws_sigv4::http_request::SigningSettings;
     use aws_sigv4::sign::v4;
-    use http::header;
     use http::Request;
+    use http::header;
     use reqsign_core::ProvideCredential;
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;

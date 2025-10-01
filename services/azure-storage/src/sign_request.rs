@@ -15,15 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::constants::*;
 use crate::Credential;
+use crate::constants::*;
 use async_trait::async_trait;
 use http::request::Parts;
-use http::{header, HeaderValue};
+use http::{HeaderValue, header};
 use log::debug;
 use percent_encoding::percent_encode;
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
-use reqsign_core::time::{format_http_date, now, Timestamp};
+use reqsign_core::time::{Timestamp, format_http_date, now};
 use reqsign_core::{Context, Result, SignRequest, SigningMethod, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
@@ -428,7 +428,9 @@ mod tests {
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
-        let cred = Credential::with_sas_token("sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx&se=2022-01-01T11:00:14Z&st=2022-01-02T03:00:14Z&spr=https&sig=KEllk4N8f7rJfLjQCmikL2fRVt%2B%2Bl73UBkbgH%2FK3VGE%3D");
+        let cred = Credential::with_sas_token(
+            "sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx&se=2022-01-01T11:00:14Z&st=2022-01-02T03:00:14Z&spr=https&sig=KEllk4N8f7rJfLjQCmikL2fRVt%2B%2Bl73UBkbgH%2FK3VGE%3D",
+        );
 
         let builder = RequestSigner::new();
 
@@ -440,11 +442,16 @@ mod tests {
         let (mut parts, _) = req.into_parts();
 
         // Test query signing
-        assert!(builder
-            .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(1)))
-            .await
-            .is_ok());
-        assert_eq!(parts.uri, "https://test.blob.core.windows.net/testbucket/testblob?sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx&se=2022-01-01T11:00:14Z&st=2022-01-02T03:00:14Z&spr=https&sig=KEllk4N8f7rJfLjQCmikL2fRVt%2B%2Bl73UBkbgH%2FK3VGE%3D")
+        assert!(
+            builder
+                .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(1)))
+                .await
+                .is_ok()
+        );
+        assert_eq!(
+            parts.uri,
+            "https://test.blob.core.windows.net/testbucket/testblob?sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx&se=2022-01-01T11:00:14Z&st=2022-01-02T03:00:14Z&spr=https&sig=KEllk4N8f7rJfLjQCmikL2fRVt%2B%2Bl73UBkbgH%2FK3VGE%3D"
+        )
     }
 
     #[tokio::test]
@@ -466,10 +473,12 @@ mod tests {
         let (mut parts, _) = req.into_parts();
 
         // Can effectively sign request with header method
-        assert!(builder
-            .sign_request(&ctx, &mut parts, Some(&cred), None)
-            .await
-            .is_ok());
+        assert!(
+            builder
+                .sign_request(&ctx, &mut parts, Some(&cred), None)
+                .await
+                .is_ok()
+        );
         let authorization = parts
             .headers
             .get("Authorization")
@@ -484,9 +493,11 @@ mod tests {
             .body(())
             .unwrap();
         let (mut parts, _) = req.into_parts();
-        assert!(builder
-            .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(1)))
-            .await
-            .is_err());
+        assert!(
+            builder
+                .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(1)))
+                .await
+                .is_err()
+        );
     }
 }

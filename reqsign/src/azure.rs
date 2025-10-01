@@ -24,7 +24,7 @@
 pub use reqsign_azure_storage::*;
 
 #[cfg(feature = "default-context")]
-use crate::{default_context, Signer};
+use crate::{Signer, default_context};
 
 /// Default Azure Storage Signer type with commonly used components
 #[cfg(feature = "default-context")]

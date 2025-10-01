@@ -15,15 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::constants::TENCENT_URI_ENCODE_SET;
 use crate::Credential;
+use crate::constants::TENCENT_URI_ENCODE_SET;
 use async_trait::async_trait;
 use http::header::{AUTHORIZATION, DATE};
 use http::request::Parts;
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha1, hex_sha1};
-use reqsign_core::time::{format_http_date, now, Timestamp};
+use reqsign_core::time::{Timestamp, format_http_date, now};
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
 use std::time::Duration;
 
@@ -200,5 +200,8 @@ fn build_signature(
 
     let signature = hex_hmac_sha1(sign_key.as_bytes(), string_to_sign.as_bytes());
 
-    format!("q-sign-algorithm=sha1&q-ak={}&q-sign-time={}&q-key-time={}&q-header-list={}&q-url-param-list={}&q-signature={}", cred.secret_id, key_time, key_time, header_list, param_list, signature)
+    format!(
+        "q-sign-algorithm=sha1&q-ak={}&q-sign-time={}&q-key-time={}&q-header-list={}&q-url-param-list={}&q-signature={}",
+        cred.secret_id, key_time, key_time, header_list, param_list, signature
+    )
 }

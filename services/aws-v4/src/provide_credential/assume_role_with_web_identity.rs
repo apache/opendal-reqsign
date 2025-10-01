@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
 use crate::Credential;
+use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
 use async_trait::async_trait;
 use bytes::Bytes;
 use quick_xml::de;
 use reqsign_core::time::parse_rfc3339;
-use reqsign_core::{utils::Redact, Context, Error, ProvideCredential, Result};
+use reqsign_core::{Context, Error, ProvideCredential, Result, utils::Redact};
 use serde::Deserialize;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
@@ -151,7 +151,9 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .unwrap_or_else(|| "reqsign".to_string());
 
         // Construct request to AWS STS Service.
-        let url = format!("https://{endpoint}/?Action=AssumeRoleWithWebIdentity&RoleArn={role_arn}&WebIdentityToken={token}&Version=2011-06-15&RoleSessionName={session_name}");
+        let url = format!(
+            "https://{endpoint}/?Action=AssumeRoleWithWebIdentity&RoleArn={role_arn}&WebIdentityToken={token}&Version=2011-06-15&RoleSessionName={session_name}"
+        );
         let req = http::request::Request::builder()
             .method("GET")
             .uri(url)

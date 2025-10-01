@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::sync::LazyLock;
 use std::time::SystemTime;
 
 use aws_sigv4::http_request::PayloadChecksumKind;
@@ -23,10 +24,9 @@ use aws_sigv4::http_request::SignableBody;
 use aws_sigv4::http_request::SignableRequest;
 use aws_sigv4::http_request::SigningSettings;
 use aws_sigv4::sign::v4::SigningParams;
+use criterion::Criterion;
 use criterion::criterion_group;
 use criterion::criterion_main;
-use criterion::Criterion;
-use once_cell::sync::Lazy;
 use reqsign_aws_v4::Credential as AwsCredential;
 use reqsign_aws_v4::RequestSigner as AwsV4RequestSigner;
 use reqsign_core::{Context, SignRequest};
@@ -36,7 +36,7 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 criterion_group!(benches, bench);
 criterion_main!(benches);
 
-static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .enable_all()

@@ -18,14 +18,14 @@
 use std::env;
 use std::time::Duration;
 
-use http::header::AUTHORIZATION;
-use http::header::CONTENT_LENGTH;
 use http::Request;
 use http::StatusCode;
+use http::header::AUTHORIZATION;
+use http::header::CONTENT_LENGTH;
 use log::debug;
 use log::warn;
-use percent_encoding::utf8_percent_encode;
 use percent_encoding::NON_ALPHANUMERIC;
+use percent_encoding::utf8_percent_encode;
 use reqsign_core::Result;
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
