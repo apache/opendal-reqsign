@@ -40,10 +40,8 @@ serde_json = { workspace = true }
 [dev-dependencies]
 dotenv = { workspace = true }
 env_logger = { workspace = true }
-once_cell = { workspace = true }
 reqsign-core = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
-temp-env = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

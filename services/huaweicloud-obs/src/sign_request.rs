@@ -18,6 +18,7 @@
 //! Huawei Cloud Object Storage Service (OBS) builder
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use http::HeaderValue;
@@ -25,7 +26,6 @@ use http::header::AUTHORIZATION;
 use http::header::CONTENT_TYPE;
 use http::header::DATE;
 use log::debug;
-use once_cell::sync::Lazy;
 use percent_encoding::utf8_percent_encode;
 use reqsign_core::Result;
 
@@ -244,8 +244,8 @@ fn is_sub_resource(param: &str) -> bool {
     SUBRESOURCES.contains(param)
 }
 
-// Please attention: the subsources are case sensitive.
-static SUBRESOURCES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+// Please attention: the subresources are case-sensitive.
+static SUBRESOURCES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     HashSet::from([
         "CDNNotifyConfiguration",
         "acl",

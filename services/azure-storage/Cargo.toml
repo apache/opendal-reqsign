@@ -40,7 +40,6 @@ reqsign-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }
-sha2 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 jsonwebtoken = "9.2"
@@ -49,7 +48,6 @@ rsa = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
-dotenv = { workspace = true }
 env_logger = { workspace = true }
 reqsign-command-execute-tokio = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }

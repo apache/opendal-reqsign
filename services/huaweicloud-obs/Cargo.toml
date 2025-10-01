@@ -32,14 +32,11 @@ async-trait = { workspace = true }
 http = { workspace = true }
 jiff = { workspace = true }
 log = { workspace = true }
-once_cell = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }
-once_cell = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
-temp-env = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

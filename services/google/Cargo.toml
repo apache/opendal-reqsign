@@ -44,10 +44,8 @@ sha2 = { workspace = true }
 [dev-dependencies]
 dotenv = { workspace = true }
 env_logger = { workspace = true }
-pretty_assertions = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
 sha2 = { workspace = true }
-temp-env = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

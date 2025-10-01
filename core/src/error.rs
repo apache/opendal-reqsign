@@ -16,11 +16,8 @@
 // under the License.
 
 use std::fmt;
-use thiserror::Error;
 
 /// The error type for reqsign operations
-#[derive(Error)]
-#[error("{message}")]
 pub struct Error {
     /// The category of error that occurred
     kind: ErrorKind,
@@ -29,7 +26,6 @@ pub struct Error {
     message: String,
 
     /// The underlying error source
-    #[source]
     source: Option<anyhow::Error>,
 
     /// Additional context information for debugging
@@ -153,6 +149,12 @@ impl Error {
     }
 }
 
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
 // Custom Debug implementation for better error display
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -170,6 +172,12 @@ impl fmt::Debug for Error {
 
         debug.field("retryable", &self.retryable);
         debug.finish()
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|e| e.as_ref())
     }
 }
 
@@ -196,8 +204,8 @@ impl From<anyhow::Error> for Error {
     }
 }
 
-impl From<std::fmt::Error> for Error {
-    fn from(err: std::fmt::Error) -> Self {
+impl From<fmt::Error> for Error {
+    fn from(err: fmt::Error) -> Self {
         Self::unexpected(err.to_string()).with_source(err)
     }
 }

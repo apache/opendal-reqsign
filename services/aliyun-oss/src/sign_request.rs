@@ -19,7 +19,6 @@ use crate::credential::Credential;
 use async_trait::async_trait;
 use http::HeaderValue;
 use http::header::{AUTHORIZATION, CONTENT_TYPE, DATE};
-use once_cell::sync::Lazy;
 use percent_encoding::utf8_percent_encode;
 use reqsign_core::Result;
 use reqsign_core::hash::base64_hmac_sha1;
@@ -27,6 +26,7 @@ use reqsign_core::time::{Timestamp, format_http_date, now};
 use reqsign_core::{Context, SignRequest};
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 const CONTENT_MD5: &str = "content-md5";
@@ -351,11 +351,11 @@ impl RequestSigner {
 }
 
 fn is_sub_resource(key: &str) -> bool {
-    SUB_RESOURCES.contains(key)
+    SUBRESOURCES.contains(key)
 }
 
-/// This list is copied from <https://github.com/aliyun/aliyun-oss-go-sdk/blob/master/oss/conn.go>
-static SUB_RESOURCES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
+// This list is copied from https://github.com/aliyun/aliyun-oss-go-sdk/blob/b6e0a2ae/oss/conn.go#L31-L54
+static SUBRESOURCES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     HashSet::from([
         "acl",
         "uploads",

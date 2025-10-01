@@ -361,7 +361,6 @@ fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &s
     // Sign service
     let sign_service = hmac_sha256(sign_region.as_slice(), service.as_bytes());
     // Sign request
-    
 
     hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
 }
