@@ -1,7 +1,9 @@
-# reqsign &emsp; [![Build Status]][actions] [![Latest Version]][crates.io] [![Crate Downloads]][crates.io]
+# Apache OpenDAL Reqsign
 
-[Build Status]: https://img.shields.io/github/actions/workflow/status/Xuanwo/reqsign/ci.yml?branch=main
-[actions]: https://github.com/Xuanwo/reqsign/actions?query=branch%3Amain
+[![Build Status]][actions] [![Latest Version]][crates.io] [![Crate Downloads]][crates.io]
+
+[Build Status]: https://img.shields.io/github/actions/workflow/status/apache/opendal-reqsign/ci.yml?branch=main
+[actions]: https://github.com/apache/opendal-reqsign/actions?query=branch%3Amain
 [Latest Version]: https://img.shields.io/crates/v/reqsign.svg
 [crates.io]: https://crates.io/crates/reqsign
 [Crate Downloads]: https://img.shields.io/crates/d/reqsign.svg
@@ -162,11 +164,11 @@ let signer = aliyun::default_signer();
 
 ## Contributing
 
-Check out the [CONTRIBUTING.md](./CONTRIBUTING.md) guide for more details on getting started with contributing to this project.
+Check out the [CONTRIBUTING.md](CONTRIBUTING.md) guide for more details on getting started with contributing to this project.
 
 ## Getting help
 
-Submit [issues](https://github.com/Xuanwo/reqsign/issues/new/choose) for bug report or asking questions in [discussion](https://github.com/Xuanwo/reqsign/discussions/new?category=q-a).
+Submit [issues](https://github.com/apache/opendal-reqsign/issues/new/choose) for bug report or asking questions in [discussion](https://github.com/apache/opendal-reqsign/discussions/new?category=q-a).
 
 ## Acknowledge
 
@@ -175,8 +177,6 @@ Inspired a lot from:
 - [aws-sigv4](https://crates.io/crates/aws-sigv4) for AWS SigV4 support.
 - [azure_storage_blobs](https://crates.io/crates/azure_storage_blobs) for Azure Storage support.
 
-#### License
+## License
 
-<sup>
-Licensed under <a href="./LICENSE">Apache License, Version 2.0</a>.
-</sup>
+Licensed under [Apache License, Version 2.0](LICENSE).
