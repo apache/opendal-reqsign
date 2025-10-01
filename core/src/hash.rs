@@ -18,8 +18,8 @@
 //! Hash related utils.
 
 use crate::Error;
-use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use hmac::Hmac;
 use hmac::Mac;
 use sha1::Sha1;

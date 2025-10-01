@@ -18,7 +18,7 @@
 use log::debug;
 use serde::Deserialize;
 
-use reqsign_core::{time::now, Context, ProvideCredential, Result};
+use reqsign_core::{Context, ProvideCredential, Result, time::now};
 
 use crate::credential::{Credential, Token};
 

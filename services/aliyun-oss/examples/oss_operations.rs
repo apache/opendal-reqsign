@@ -49,7 +49,9 @@ async fn main() -> Result<()> {
     // Create the signer
     let signer = if demo_mode {
         println!("No Aliyun credentials found, using demo mode");
-        println!("To use real credentials, set ALIBABA_CLOUD_ACCESS_KEY_ID and ALIBABA_CLOUD_ACCESS_KEY_SECRET");
+        println!(
+            "To use real credentials, set ALIBABA_CLOUD_ACCESS_KEY_ID and ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+        );
         println!();
 
         // Use demo credentials

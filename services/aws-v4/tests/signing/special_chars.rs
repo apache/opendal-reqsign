@@ -19,7 +19,7 @@ use super::{init_signing_test, load_static_credential, send_signed_request};
 use anyhow::Result;
 use http::{Method, Request, StatusCode};
 use log::warn;
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use std::str::FromStr;
 
 #[tokio::test]

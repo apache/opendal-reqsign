@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::Credential;
 use crate::provide_credential::{
     AssumeRoleWithWebIdentityCredentialProvider, ECSCredentialProvider, EnvCredentialProvider,
     IMDSv2CredentialProvider, ProfileCredentialProvider,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::provide_credential::{ProcessCredentialProvider, SSOCredentialProvider};
-use crate::Credential;
 use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 

@@ -17,37 +17,37 @@
 
 [package]
 name = "reqsign-google"
-version = "1.0.0"
+version = "1.1.0"
 
-categories.workspace = true
-description.workspace = true
-documentation.workspace = true
+description = "Goole Cloud Platform signing implementation for reqsign."
+
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 
 [dependencies]
-async-trait.workspace = true
-http.workspace = true
-jiff.workspace = true
+async-trait = { workspace = true }
+http = { workspace = true }
+jiff = { workspace = true }
 jsonwebtoken = "9.2"
-log.workspace = true
-percent-encoding.workspace = true
-rand.workspace = true
-reqsign-core.workspace = true
-reqwest.workspace = true
-rsa.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
+log = { workspace = true }
+percent-encoding = { workspace = true }
+rand = { workspace = true }
+reqsign-core = { workspace = true }
+reqwest = { workspace = true }
+rsa = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
-dotenv.workspace = true
-env_logger.workspace = true
-pretty_assertions.workspace = true
-reqsign-file-read-tokio.workspace = true
-reqsign-http-send-reqwest.workspace = true
+dotenv = { workspace = true }
+env_logger = { workspace = true }
+pretty_assertions = { workspace = true }
+reqsign-file-read-tokio = { workspace = true }
+reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
-sha2.workspace = true
-temp-env.workspace = true
+sha2 = { workspace = true }
+temp-env = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

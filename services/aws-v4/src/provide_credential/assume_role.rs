@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::EMPTY_STRING_SHA256;
 use crate::constants::X_AMZ_CONTENT_SHA_256;
 use crate::credential::Credential;
 use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
-use crate::EMPTY_STRING_SHA256;
 use async_trait::async_trait;
 use bytes::Bytes;
 use quick_xml::de;
@@ -148,7 +148,10 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
             .map_err(|e| e.with_context(format!("role_arn: {}", self.role_arn)))?;
 
         // Construct request to AWS STS Service.
-        let mut url = format!("https://{endpoint}/?Action=AssumeRole&RoleArn={}&Version=2011-06-15&RoleSessionName={}", self.role_arn, self.role_session_name);
+        let mut url = format!(
+            "https://{endpoint}/?Action=AssumeRole&RoleArn={}&Version=2011-06-15&RoleSessionName={}",
+            self.role_arn, self.role_session_name
+        );
         if let Some(external_id) = &self.external_id {
             write!(url, "&ExternalId={external_id}")
                 .map_err(|e| Error::unexpected("failed to format URL").with_source(e))?;

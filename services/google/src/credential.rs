@@ -16,7 +16,7 @@
 // under the License.
 
 use reqsign_core::{
-    time::now, time::Timestamp, utils::Redact, Result, SigningCredential as KeyTrait,
+    Result, SigningCredential as KeyTrait, time::Timestamp, time::now, utils::Redact,
 };
 use std::fmt::{self, Debug};
 

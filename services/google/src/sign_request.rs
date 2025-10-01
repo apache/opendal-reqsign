@@ -28,11 +28,11 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use reqsign_core::{
-    hash::hex_sha256, time::*, Context, Result, SignRequest, SigningCredential, SigningMethod,
-    SigningRequest,
+    Context, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
+    hash::hex_sha256, time::*,
 };
 
-use crate::constants::{DEFAULT_SCOPE, GOOGLE_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET};
+use crate::constants::{DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE};
 use crate::credential::{Credential, ServiceAccount, Token};
 
 /// Claims is used to build JWT for Google Cloud.

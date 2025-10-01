@@ -20,14 +20,14 @@ use std::mem;
 use std::time::Duration;
 
 use crate::{Error, Result};
-use http::header::HeaderName;
-use http::uri::Authority;
-use http::uri::PathAndQuery;
-use http::uri::Scheme;
 use http::HeaderMap;
 use http::HeaderValue;
 use http::Method;
 use http::Uri;
+use http::header::HeaderName;
+use http::uri::Authority;
+use http::uri::PathAndQuery;
+use http::uri::Scheme;
 use std::str::FromStr;
 
 /// Signing context for request.

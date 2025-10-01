@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{constants::*, Credential};
+use crate::{Credential, constants::*};
 use async_trait::async_trait;
-use reqsign_core::time::{format_rfc3339, now, parse_rfc3339};
 use reqsign_core::Result;
+use reqsign_core::time::{format_rfc3339, now, parse_rfc3339};
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
 

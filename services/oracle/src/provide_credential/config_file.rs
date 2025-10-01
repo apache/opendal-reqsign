@@ -15,10 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::Credential;
 use crate::constants::{
     ORACLE_CONFIG_FILE, ORACLE_CONFIG_PATH, ORACLE_DEFAULT_PROFILE, ORACLE_PROFILE,
 };
-use crate::Credential;
 use async_trait::async_trait;
 use log::debug;
 use reqsign_core::{Context, ProvideCredential, Result};

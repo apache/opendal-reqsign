@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use http::{Method, Request, StatusCode};
 use ini::Ini;
 use log::{debug, warn};
-use reqsign_core::time::{now, Timestamp};
+use reqsign_core::time::{Timestamp, now};
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 

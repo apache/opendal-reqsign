@@ -18,7 +18,7 @@
 use crate::Credential;
 use async_trait::async_trait;
 use bytes::Bytes;
-use http::{header, Method, Request};
+use http::{Method, Request, header};
 use log::debug;
 use reqsign_core::time::parse_rfc3339;
 use reqsign_core::{Context, Error, ProvideCredential, Result, SignRequest};

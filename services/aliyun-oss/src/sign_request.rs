@@ -17,13 +17,13 @@
 
 use crate::credential::Credential;
 use async_trait::async_trait;
-use http::header::{AUTHORIZATION, CONTENT_TYPE, DATE};
 use http::HeaderValue;
+use http::header::{AUTHORIZATION, CONTENT_TYPE, DATE};
 use once_cell::sync::Lazy;
 use percent_encoding::utf8_percent_encode;
-use reqsign_core::hash::base64_hmac_sha1;
-use reqsign_core::time::{format_http_date, now, Timestamp};
 use reqsign_core::Result;
+use reqsign_core::hash::base64_hmac_sha1;
+use reqsign_core::time::{Timestamp, format_http_date, now};
 use reqsign_core::{Context, SignRequest};
 use std::collections::HashSet;
 use std::fmt::Write;

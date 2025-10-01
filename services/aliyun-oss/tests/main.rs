@@ -19,11 +19,11 @@ use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 
-use http::header::CONTENT_LENGTH;
 use http::Request;
 use http::StatusCode;
+use http::header::CONTENT_LENGTH;
 use log::{debug, warn};
-use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqsign_aliyun_oss::{RequestSigner, StaticCredentialProvider};
 use reqsign_core::Result;
 use reqsign_core::{Context, OsEnv, Signer};

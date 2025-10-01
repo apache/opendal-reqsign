@@ -17,52 +17,52 @@
 
 [package]
 name = "reqsign-aws-v4"
-version = "1.0.0"
+version = "1.1.0"
 
-categories.workspace = true
-description.workspace = true
-documentation.workspace = true
+description = "AWS SigV4 signing implementation for reqsign."
+
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 
 [[bench]]
 harness = false
 name = "aws"
 
 [dependencies]
-anyhow.workspace = true
-async-trait.workspace = true
+anyhow = { workspace = true }
+async-trait = { workspace = true }
 bytes = "1.7.2"
-form_urlencoded.workspace = true
-http.workspace = true
-jiff.workspace = true
-log.workspace = true
-percent-encoding.workspace = true
-quick-xml.workspace = true
-reqsign-core.workspace = true
-rust-ini.workspace = true
-serde.workspace = true
-serde_json.workspace = true
+form_urlencoded = { workspace = true }
+http = { workspace = true }
+jiff = { workspace = true }
+log = { workspace = true }
+percent-encoding = { workspace = true }
+quick-xml = { workspace = true }
+reqsign-core = { workspace = true }
+rust-ini = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 serde_urlencoded = "0.7"
 sha1 = "0.10"
 
 [dev-dependencies]
 aws-credential-types = "1.1.8"
 aws-sigv4 = "1.2.0"
-criterion.workspace = true
-dotenv.workspace = true
-env_logger.workspace = true
-hex.workspace = true
-macro_rules_attribute.workspace = true
-once_cell.workspace = true
-pretty_assertions.workspace = true
-reqsign-http-send-reqwest.workspace = true
+criterion = { workspace = true }
+dotenv = { workspace = true }
+env_logger = { workspace = true }
+hex = { workspace = true }
+macro_rules_attribute = { workspace = true }
+once_cell = { workspace = true }
+pretty_assertions = { workspace = true }
+reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["rustls-tls"] }
-sha2.workspace = true
-temp-env.workspace = true
-tempfile.workspace = true
-test-case.workspace = true
+sha2 = { workspace = true }
+temp-env = { workspace = true }
+tempfile = { workspace = true }
+test-case = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
