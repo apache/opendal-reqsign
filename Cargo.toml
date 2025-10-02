@@ -27,17 +27,17 @@ rust-version = "1.85.0"
 
 [workspace.dependencies]
 # Workspace dependencies
-reqsign-aliyun-oss = { version = "1.1.0", path = "services/aliyun-oss" }
-reqsign-aws-v4 = { version = "1.1.0", path = "services/aws-v4" }
-reqsign-azure-storage = { version = "1.1.0", path = "services/azure-storage" }
-reqsign-command-execute-tokio = { version = "1.1.0", path = "context/command-execute-tokio" }
-reqsign-core = { version = "1.1.0", path = "core" }
-reqsign-file-read-tokio = { version = "1.1.0", path = "context/file-read-tokio" }
-reqsign-google = { version = "1.1.0", path = "services/google" }
-reqsign-http-send-reqwest = { version = "1.1.0", path = "context/http-send-reqwest" }
-reqsign-huaweicloud-obs = { version = "1.1.0", path = "services/huaweicloud-obs" }
-reqsign-oracle = { version = "1.1.0", path = "services/oracle" }
-reqsign-tencent-cos = { version = "1.1.0", path = "services/tencent-cos" }
+reqsign-aliyun-oss = { version = "2.0.0", path = "services/aliyun-oss" }
+reqsign-aws-v4 = { version = "2.0.0", path = "services/aws-v4" }
+reqsign-azure-storage = { version = "2.0.0", path = "services/azure-storage" }
+reqsign-command-execute-tokio = { version = "2.0.0", path = "context/command-execute-tokio" }
+reqsign-core = { version = "2.0.0", path = "core" }
+reqsign-file-read-tokio = { version = "2.0.0", path = "context/file-read-tokio" }
+reqsign-google = { version = "2.0.0", path = "services/google" }
+reqsign-http-send-reqwest = { version = "2.0.0", path = "context/http-send-reqwest" }
+reqsign-huaweicloud-obs = { version = "2.0.0", path = "services/huaweicloud-obs" }
+reqsign-oracle = { version = "2.0.0", path = "services/oracle" }
+reqsign-tencent-cos = { version = "2.0.0", path = "services/tencent-cos" }
 
 # Crates.io dependencies
 anyhow = "1"

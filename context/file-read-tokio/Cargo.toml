@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-file-read-tokio"
-version = "1.1.0"
+version = "2.0.0"
 
 categories = ["asynchronous"]
 description = "Tokio-based file reader implementation for reqsign"

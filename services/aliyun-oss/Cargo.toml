@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-aliyun-oss"
-version = "1.1.0"
+version = "2.0.0"
 
 description = "Aliyun OSS signing implementation for reqsign."
 

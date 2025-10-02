@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-huaweicloud-obs"
-version = "1.1.0"
+version = "2.0.0"
 
 description = "Huawei Cloud OBS signing implementation for reqsign."
 

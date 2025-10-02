@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-command-execute-tokio"
-version = "1.1.0"
+version = "2.0.0"
 
 categories = ["asynchronous"]
 description = "Tokio-based command execution implementation for reqsign"
