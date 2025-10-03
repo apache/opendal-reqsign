@@ -140,7 +140,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             secret_id: resp_cred.tmp_secret_id,
             secret_key: resp_cred.tmp_secret_key,
             security_token: Some(resp_cred.token),
-            expires_in: Some(Timestamp::parse_timestamp(&resp_expiration)?),
+            expires_in: Some(resp_expiration.parse()?),
         };
 
         Ok(Some(cred))

@@ -30,6 +30,16 @@ pub struct Timestamp(jiff::Timestamp);
 impl FromStr for Timestamp {
     type Err = Error;
 
+    /// Parse a timestamp by the default [`DateTimeParser`].
+    ///
+    /// All of them are valid time:
+    ///
+    /// - `2022-03-13T07:20:04Z`
+    /// - `2022-03-01T08:12:34+00:00`
+    /// - `2022-03-01T08:12:34.00+00:00`
+    /// - `2022-07-08T02:14:07+02:00[Europe/Paris]`
+    ///
+    /// [`DateTimeParser`]: jiff::fmt::temporal::DateTimeParser
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.parse() {
             Ok(t) => Ok(Timestamp(t)),
@@ -130,25 +140,6 @@ impl Timestamp {
                 "convert '{second}' seconds into timestamp failed"
             ))
             .with_source(err)),
-        }
-    }
-
-    /// Parse a timestamp by the default [`DateTimeParser`].
-    ///
-    /// All of them are valid time:
-    ///
-    /// - `2022-03-13T07:20:04Z`
-    /// - `2022-03-01T08:12:34+00:00`
-    /// - `2022-03-01T08:12:34.00+00:00`
-    /// - `2024-06-15T07-04[America/New_York]`
-    ///
-    /// [`DateTimeParser`]: jiff::fmt::temporal::DateTimeParser
-    pub fn parse_timestamp(s: &str) -> crate::Result<Timestamp> {
-        match s.parse() {
-            Ok(t) => Ok(Timestamp(t)),
-            Err(err) => Err(
-                Error::unexpected(format!("parse '{s}' into timestamp failed")).with_source(err),
-            ),
         }
     }
 
@@ -260,10 +251,7 @@ mod tests {
             "2022-03-01T08:12:34+00:00",
             "2022-03-01T08:12:34.00+00:00",
         ] {
-            assert_eq!(
-                t,
-                Timestamp::parse_timestamp(v).expect("must be valid time")
-            );
+            assert_eq!(t, v.parse().expect("must be valid time"));
         }
     }
 }

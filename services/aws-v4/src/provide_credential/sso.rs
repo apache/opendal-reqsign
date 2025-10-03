@@ -218,7 +218,7 @@ impl SSOCredentialProvider {
                 })?;
 
                 // Check if token is expired
-                let expires_at = Timestamp::parse_timestamp(&token.expires_at)?;
+                let expires_at = token.expires_at.parse::<Timestamp>()?;
                 if expires_at <= Timestamp::now() {
                     warn!("SSO token is expired");
                     return Ok(None);

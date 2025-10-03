@@ -20,7 +20,6 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, header};
 use log::debug;
-use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result, SignRequest};
 use serde::Deserialize;
 
@@ -160,7 +159,10 @@ impl S3ExpressSessionProvider {
             })?;
 
         // Parse expiration time from ISO8601 format
-        let expiration = Timestamp::parse_timestamp(&create_session_resp.credentials.expiration)
+        let expiration = create_session_resp
+            .credentials
+            .expiration
+            .parse()
             .map_err(|e| {
                 Error::unexpected(format!(
                     "failed to parse expiration time '{}': {e}",

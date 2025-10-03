@@ -244,7 +244,7 @@ impl ProvideCredential for IMDSv2CredentialProvider {
             access_key_id: resp.access_key_id,
             secret_access_key: resp.secret_access_key,
             session_token: Some(resp.token),
-            expires_in: Some(Timestamp::parse_timestamp(&resp.expiration).map_err(|e| {
+            expires_in: Some(resp.expiration.parse().map_err(|e| {
                 Error::unexpected("failed to parse IMDS credential expiration time")
                     .with_source(e)
                     .with_context(format!("expiration_value: {}", resp.expiration))

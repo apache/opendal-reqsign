@@ -19,7 +19,6 @@ use crate::Credential;
 use async_trait::async_trait;
 use http::{HeaderValue, Method, Request, StatusCode};
 use log::debug;
-use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 
@@ -295,7 +294,7 @@ impl ProvideCredential for ECSCredentialProvider {
                 .with_context(format!("endpoint: {endpoint}"))
         })?;
 
-        let expires_in = Timestamp::parse_timestamp(&creds.expiration).map_err(|e| {
+        let expires_in = creds.expiration.parse().map_err(|e| {
             Error::unexpected("failed to parse ECS credential expiration")
                 .with_source(e)
                 .with_context(format!("expiration_value: {}", creds.expiration))

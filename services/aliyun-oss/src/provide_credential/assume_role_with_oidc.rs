@@ -119,7 +119,7 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
             access_key_id: resp_cred.access_key_id,
             access_key_secret: resp_cred.access_key_secret,
             security_token: Some(resp_cred.security_token),
-            expires_in: Some(Timestamp::parse_timestamp(&resp_cred.expiration)?),
+            expires_in: Some(resp_cred.expiration.parse()?),
         };
 
         Ok(Some(cred))

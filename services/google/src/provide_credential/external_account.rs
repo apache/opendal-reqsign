@@ -247,11 +247,9 @@ impl ExternalAccountCredentialProvider {
             })?;
 
         // Parse expire time from RFC3339 format
-        let expires_at = Timestamp::parse_timestamp(&token_resp.expire_time).ok();
-
         Ok(Some(Token {
             access_token: token_resp.access_token,
-            expires_at,
+            expires_at: token_resp.expire_time.parse().ok(),
         }))
     }
 }

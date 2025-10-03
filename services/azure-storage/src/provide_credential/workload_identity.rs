@@ -87,7 +87,7 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
         match token {
             Some(token_response) => {
                 let expires_on = match token_response.expires_on {
-                    Some(expires_on) => Timestamp::parse_timestamp(&expires_on).map_err(|e| {
+                    Some(expires_on) => expires_on.parse().map_err(|e| {
                         reqsign_core::Error::unexpected("failed to parse expires_on time")
                             .with_source(e)
                     })?,
