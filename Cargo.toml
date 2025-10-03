@@ -22,7 +22,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/Xuanwo/reqsign"
+repository = "https://github.com/apache/opendal-reqsign"
 rust-version = "1.85.0"
 
 [workspace.dependencies]
