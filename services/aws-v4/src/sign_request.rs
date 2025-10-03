@@ -26,7 +26,7 @@ use http::{HeaderValue, header};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
-use reqsign_core::time::{Timestamp, format_date, format_iso8601, now};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
@@ -77,7 +77,7 @@ impl SignRequest for RequestSigner {
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let now = self.time.unwrap_or_else(now);
+        let now = self.time.unwrap_or_else(Timestamp::now);
         let mut signed_req = SigningRequest::build(req)?;
 
         let Some(cred) = credential else {
@@ -102,7 +102,7 @@ impl SignRequest for RequestSigner {
         // Scope: "20220313/<region>/<service>/aws4_request"
         let scope = format!(
             "{}/{}/{}/aws4_request",
-            format_date(now),
+            now.format_date(),
             self.region,
             self.service
         );
@@ -119,7 +119,7 @@ impl SignRequest for RequestSigner {
             writeln!(f, "AWS4-HMAC-SHA256").map_err(|e| {
                 reqsign_core::Error::unexpected(format!("failed to write algorithm: {e}"))
             })?;
-            writeln!(f, "{}", format_iso8601(now)).map_err(|e| {
+            writeln!(f, "{}", now.format_iso8601()).map_err(|e| {
                 reqsign_core::Error::unexpected(format!("failed to write timestamp: {e}"))
             })?;
             writeln!(f, "{}", &scope).map_err(|e| {
@@ -255,7 +255,7 @@ fn canonicalize_header(
     if expires_in.is_none() {
         // Insert DATE header if not present.
         if ctx.headers.get(X_AMZ_DATE).is_none() {
-            let date_header = HeaderValue::try_from(format_iso8601(now)).map_err(|e| {
+            let date_header = HeaderValue::try_from(now.format_iso8601()).map_err(|e| {
                 reqsign_core::Error::unexpected(format!("failed to create date header: {e}"))
             })?;
             ctx.headers.insert(X_AMZ_DATE, date_header);
@@ -310,12 +310,12 @@ fn canonicalize_query(
             format!(
                 "{}/{}/{}/{}/aws4_request",
                 cred.access_key_id,
-                format_date(now),
+                now.format_date(),
                 region,
                 service
             ),
         ));
-        ctx.query.push(("X-Amz-Date".into(), format_iso8601(now)));
+        ctx.query.push(("X-Amz-Date".into(), now.format_iso8601()));
         ctx.query
             .push(("X-Amz-Expires".into(), expire.as_secs().to_string()));
         ctx.query.push((
@@ -355,20 +355,17 @@ fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &s
     // Sign secret
     let secret = format!("AWS4{secret}");
     // Sign date
-    let sign_date = hmac_sha256(secret.as_bytes(), format_date(time).as_bytes());
+    let sign_date = hmac_sha256(secret.as_bytes(), time.format_date().as_bytes());
     // Sign region
     let sign_region = hmac_sha256(sign_date.as_slice(), region.as_bytes());
     // Sign service
     let sign_service = hmac_sha256(sign_region.as_slice(), service.as_bytes());
     // Sign request
-
     hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::SystemTime;
-
     use super::*;
     use crate::provide_credential::StaticCredentialProvider;
     use anyhow::Result;
@@ -487,7 +484,7 @@ mod tests {
             .expect("url must be valid");
 
         req.headers_mut().insert(
-            http::header::CONTENT_LENGTH,
+            header::CONTENT_LENGTH,
             HeaderValue::from_str(&content.len().to_string()).expect("must be valid"),
         );
 
@@ -599,7 +596,7 @@ mod tests {
             req.uri().path(),
             req.uri().query(),
         );
-        let now = now();
+        let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
         ss.percent_encoding_mode = PercentEncodingMode::Double;
@@ -616,7 +613,7 @@ mod tests {
             .identity(&id)
             .region("test")
             .name("s3")
-            .time(SystemTime::from(now))
+            .time(now.as_system_time())
             .settings(ss)
             .build()
             .expect("signing params must be valid");
@@ -674,13 +671,13 @@ mod tests {
             req.uri().path(),
             req.uri().query(),
         );
-        let now = now();
+        let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
         ss.percent_encoding_mode = PercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         ss.signature_location = SignatureLocation::QueryParams;
-        ss.expires_in = Some(std::time::Duration::from_secs(3600));
+        ss.expires_in = Some(Duration::from_secs(3600));
         let id = Credentials::new(
             "access_key_id",
             "secret_access_key",
@@ -693,7 +690,7 @@ mod tests {
             .identity(&id)
             .region("test")
             .name("s3")
-            .time(SystemTime::from(now))
+            .time(now.as_system_time())
             .settings(ss)
             .build()
             .expect("signing params must be valid");
@@ -756,7 +753,7 @@ mod tests {
             req.uri().path(),
             req.uri().query(),
         );
-        let now = now();
+        let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
         ss.percent_encoding_mode = PercentEncodingMode::Double;
@@ -773,7 +770,7 @@ mod tests {
             .identity(&id)
             .region("test")
             .name("s3")
-            .time(SystemTime::from(now))
+            .time(now.as_system_time())
             .settings(ss)
             .build()
             .expect("signing params must be valid");
@@ -834,13 +831,13 @@ mod tests {
             req.uri().path(),
             req.uri().query(),
         );
-        let now = now();
+        let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
         ss.percent_encoding_mode = PercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         ss.signature_location = SignatureLocation::QueryParams;
-        ss.expires_in = Some(std::time::Duration::from_secs(3600));
+        ss.expires_in = Some(Duration::from_secs(3600));
         let id = Credentials::new(
             "access_key_id",
             "secret_access_key",
@@ -854,7 +851,7 @@ mod tests {
             .region("test")
             // .security_token("security_token")
             .name("s3")
-            .time(SystemTime::from(now))
+            .time(now.as_system_time())
             .settings(ss)
             .build()
             .expect("signing params must be valid");

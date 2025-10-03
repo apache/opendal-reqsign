@@ -17,7 +17,9 @@
 
 use crate::{Credential, constants::*};
 use async_trait::async_trait;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
+use std::time::Duration;
 
 /// EnvCredentialProvider loads Oracle Cloud credentials from environment variables.
 ///
@@ -64,9 +66,7 @@ impl ProvideCredential for EnvCredentialProvider {
                     tenancy: tenancy.clone(),
                     key_file: expanded_key_file,
                     fingerprint: fingerprint.clone(),
-                    expires_in: Some(
-                        reqsign_core::time::now() + jiff::SignedDuration::from_mins(10),
-                    ),
+                    expires_in: Some(Timestamp::now() + Duration::from_secs(600)),
                 }))
             }
             _ => Ok(None),

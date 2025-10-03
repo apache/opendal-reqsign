@@ -23,7 +23,7 @@ use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use reqsign_core::time::now;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use rsa::RsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
@@ -315,12 +315,11 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
             .await?;
 
         // Calculate expiration time
-        let expires_in = Duration::from_secs(token_response.expires_in);
-        let expires_on = now().checked_add(expires_in).ok();
+        let expires_on = Timestamp::now() + Duration::from_secs(token_response.expires_in);
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,
-            expires_on,
+            Some(expires_on),
         )))
     }
 }

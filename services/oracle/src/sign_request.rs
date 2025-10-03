@@ -18,14 +18,11 @@
 use crate::Credential;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
+use http::header::{AUTHORIZATION, DATE};
 use http::request::Parts;
-use http::{
-    HeaderValue,
-    header::{AUTHORIZATION, DATE},
-};
 use log::debug;
 use reqsign_core::Result;
-use reqsign_core::time::{format_http_date, now};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, SignRequest, SigningRequest};
 use rsa::pkcs1v15::SigningKey;
 use rsa::sha2::Sha256;
@@ -68,13 +65,13 @@ impl SignRequest for RequestSigner {
             return Ok(());
         };
 
-        let now = now();
+        let now = Timestamp::now();
         let mut signing_req = SigningRequest::build(req)?;
 
         // Construct string to sign
         let string_to_sign = {
             let mut f = String::new();
-            writeln!(f, "date: {}", format_http_date(now))?;
+            writeln!(f, "date: {}", now.format_http_date())?;
             writeln!(
                 f,
                 "(request-target): {} {}",
@@ -103,7 +100,7 @@ impl SignRequest for RequestSigner {
         // Set headers
         signing_req
             .headers
-            .insert(DATE, HeaderValue::from_str(&format_http_date(now))?);
+            .insert(DATE, now.format_http_date().parse()?);
 
         // Build authorization header
         let mut auth_value = String::new();
@@ -119,7 +116,7 @@ impl SignRequest for RequestSigner {
 
         signing_req
             .headers
-            .insert(AUTHORIZATION, HeaderValue::from_str(&auth_value)?);
+            .insert(AUTHORIZATION, auth_value.parse()?);
 
         signing_req.apply(req)
     }

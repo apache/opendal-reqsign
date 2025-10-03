@@ -21,7 +21,9 @@ use crate::constants::{
 };
 use async_trait::async_trait;
 use log::debug;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
+use std::time::Duration;
 
 /// ConfigFileCredentialProvider loads credentials from Oracle config file (~/.oci/config).
 ///
@@ -108,9 +110,7 @@ impl ProvideCredential for ConfigFileCredentialProvider {
                     user: user.to_string(),
                     key_file: expanded_key_file,
                     fingerprint: fingerprint.to_string(),
-                    expires_in: Some(
-                        reqsign_core::time::now() + jiff::SignedDuration::from_mins(10),
-                    ),
+                    expires_in: Some(Timestamp::now() + Duration::from_secs(600)),
                 }))
             }
             _ => {

@@ -18,7 +18,7 @@
 use crate::{Credential, constants::*};
 use async_trait::async_trait;
 use reqsign_core::Result;
-use reqsign_core::time::{format_rfc3339, now, parse_rfc3339};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
 
@@ -87,7 +87,7 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
             provider_arn,
             role_arn,
             role_session_name,
-            format_rfc3339(now()),
+            Timestamp::now().format_rfc3339_zulu(),
             token
         );
 
@@ -119,7 +119,7 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
             access_key_id: resp_cred.access_key_id,
             access_key_secret: resp_cred.access_key_secret,
             security_token: Some(resp_cred.security_token),
-            expires_in: Some(parse_rfc3339(&resp_cred.expiration)?),
+            expires_in: Some(resp_cred.expiration.parse()?),
         };
 
         Ok(Some(cred))

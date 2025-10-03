@@ -17,7 +17,9 @@
 
 use crate::Credential;
 use async_trait::async_trait;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
+use std::time::Duration;
 
 /// Load credential from Azure Client Secret.
 ///
@@ -90,9 +92,7 @@ impl ProvideCredential for ClientSecretCredentialProvider {
 
         match token {
             Some(token_response) => {
-                let expires_on = reqsign_core::time::now()
-                    + jiff::SignedDuration::from_secs(token_response.expires_in as i64);
-
+                let expires_on = Timestamp::now() + Duration::from_secs(token_response.expires_in);
                 Ok(Some(Credential::with_bearer_token(
                     &token_response.access_token,
                     Some(expires_on),

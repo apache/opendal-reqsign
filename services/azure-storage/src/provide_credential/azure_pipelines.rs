@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::collections::HashMap;
-
 use crate::credential::Credential;
 use async_trait::async_trait;
-use reqsign_core::time::now;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::time::Duration;
 
 /// AzurePipelinesCredentialProvider provides credentials using Azure Pipelines workload identity
 ///
@@ -233,12 +233,12 @@ impl ProvideCredential for AzurePipelinesCredentialProvider {
             .await?;
 
         // Calculate expiration time
-        let expires_in = std::time::Duration::from_secs(token_response.expires_in);
-        let expires_on = now().checked_add(expires_in).ok();
+        let expires_in = Duration::from_secs(token_response.expires_in);
+        let expires_on = Timestamp::now() + expires_in;
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,
-            expires_on,
+            Some(expires_on),
         )))
     }
 }

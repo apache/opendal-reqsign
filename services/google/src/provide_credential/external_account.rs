@@ -22,8 +22,8 @@ use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
 use crate::credential::{Credential, ExternalAccount, Token, external_account};
-use reqsign_core::time::parse_rfc3339;
-use reqsign_core::{Context, ProvideCredential, Result, time::now};
+use reqsign_core::time::Timestamp;
+use reqsign_core::{Context, ProvideCredential, Result};
 
 /// The maximum impersonated token lifetime allowed, 1 hour.
 const MAX_LIFETIME: Duration = Duration::from_secs(3600);
@@ -178,7 +178,7 @@ impl ExternalAccountCredentialProvider {
 
         let expires_at = token_resp
             .expires_in
-            .map(|expires_in| now() + jiff::SignedDuration::from_secs(expires_in as i64));
+            .map(|expires_in| Timestamp::now() + Duration::from_secs(expires_in));
 
         Ok(Token {
             access_token: token_resp.access_token,
@@ -247,11 +247,9 @@ impl ExternalAccountCredentialProvider {
             })?;
 
         // Parse expire time from RFC3339 format
-        let expires_at = parse_rfc3339(&token_resp.expire_time).ok();
-
         Ok(Some(Token {
             access_token: token_resp.access_token,
-            expires_at,
+            expires_at: token_resp.expire_time.parse().ok(),
         }))
     }
 }

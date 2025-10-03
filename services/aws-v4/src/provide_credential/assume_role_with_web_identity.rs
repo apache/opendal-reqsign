@@ -20,7 +20,6 @@ use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
 use async_trait::async_trait;
 use bytes::Bytes;
 use quick_xml::de;
-use reqsign_core::time::parse_rfc3339;
 use reqsign_core::{Context, Error, ProvideCredential, Result, utils::Redact};
 use serde::Deserialize;
 use std::fmt::{Debug, Formatter};
@@ -211,7 +210,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             access_key_id: resp_cred.access_key_id,
             secret_access_key: resp_cred.secret_access_key,
             session_token: Some(resp_cred.session_token),
-            expires_in: Some(parse_rfc3339(&resp_cred.expiration).map_err(|e| {
+            expires_in: Some(resp_cred.expiration.parse().map_err(|e| {
                 Error::unexpected("failed to parse web identity credential expiration")
                     .with_source(e)
                     .with_context(format!("expiration_value: {}", resp_cred.expiration))

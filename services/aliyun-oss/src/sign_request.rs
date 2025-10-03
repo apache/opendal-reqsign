@@ -22,7 +22,7 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE, DATE};
 use percent_encoding::utf8_percent_encode;
 use reqsign_core::Result;
 use reqsign_core::hash::base64_hmac_sha1;
-use reqsign_core::time::{Timestamp, format_http_date, now};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, SignRequest};
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -60,7 +60,7 @@ impl RequestSigner {
     }
 
     fn get_time(&self) -> Timestamp {
-        self.time.unwrap_or_else(now)
+        self.time.unwrap_or_else(Timestamp::now)
     }
 }
 
@@ -105,7 +105,7 @@ impl RequestSigner {
 
         // Add date header
         req.headers
-            .insert(DATE, format_http_date(signing_time).parse()?);
+            .insert(DATE, Timestamp::format_http_date(signing_time).parse()?);
 
         // Add security token if present
         if let Some(token) = &cred.security_token {
@@ -128,10 +128,7 @@ impl RequestSigner {
         signing_time: Timestamp,
         expires: Duration,
     ) -> Result<()> {
-        let expiration_time = signing_time
-            + jiff::SignedDuration::try_from(expires).map_err(|e| {
-                reqsign_core::Error::request_invalid(format!("Invalid expiration duration: {e}"))
-            })?;
+        let expiration_time = signing_time + expires;
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, Some(expires))?;
         let signature =
             base64_hmac_sha1(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
@@ -228,16 +225,11 @@ impl RequestSigner {
         // Date or Expires
         match expires {
             Some(expires_duration) => {
-                let expiration_time = signing_time
-                    + jiff::SignedDuration::try_from(expires_duration).map_err(|e| {
-                        reqsign_core::Error::request_invalid(format!(
-                            "Invalid expiration duration: {e}"
-                        ))
-                    })?;
+                let expiration_time = signing_time + expires_duration;
                 writeln!(&mut s, "{}", expiration_time.as_second())?;
             }
             None => {
-                writeln!(&mut s, "{}", format_http_date(signing_time))?;
+                writeln!(&mut s, "{}", signing_time.format_http_date())?;
             }
         }
 

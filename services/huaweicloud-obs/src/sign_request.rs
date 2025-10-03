@@ -33,8 +33,6 @@ use super::constants::*;
 use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::Timestamp;
-use reqsign_core::time::format_http_date;
-use reqsign_core::time::now;
 use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
 
 /// RequestSigner that implement Huawei Cloud Object Storage Service Authorization.
@@ -81,7 +79,7 @@ impl SignRequest for RequestSigner {
     ) -> Result<()> {
         let k = credential
             .ok_or_else(|| reqsign_core::Error::credential_invalid("missing credential"))?;
-        let now = self.time.unwrap_or_else(now);
+        let now = self.time.unwrap_or_else(Timestamp::now);
 
         let method = if let Some(expires_in) = expires_in {
             SigningMethod::Query(expires_in)
@@ -96,7 +94,7 @@ impl SignRequest for RequestSigner {
 
         match method {
             SigningMethod::Header => {
-                ctx.headers.insert(DATE, format_http_date(now).parse()?);
+                ctx.headers.insert(DATE, now.format_http_date().parse()?);
                 ctx.headers.insert(AUTHORIZATION, {
                     let mut value: HeaderValue =
                         format!("OBS {}:{}", k.access_key_id, signature).parse()?;
@@ -106,14 +104,9 @@ impl SignRequest for RequestSigner {
                 });
             }
             SigningMethod::Query(expire) => {
-                ctx.headers.insert(DATE, format_http_date(now).parse()?);
+                ctx.headers.insert(DATE, now.format_http_date().parse()?);
                 ctx.query_push("AccessKeyId", &k.access_key_id);
-                ctx.query_push(
-                    "Expires",
-                    (now + jiff::SignedDuration::try_from(expire).unwrap())
-                        .as_second()
-                        .to_string(),
-                );
+                ctx.query_push("Expires", (now + expire).as_second().to_string());
                 ctx.query_push(
                     "Signature",
                     utf8_percent_encode(&signature, percent_encoding::NON_ALPHANUMERIC).to_string(),
@@ -163,14 +156,10 @@ fn string_to_sign(
     s.write_str("\n")?;
     match method {
         SigningMethod::Header => {
-            writeln!(&mut s, "{}", format_http_date(now))?;
+            writeln!(&mut s, "{}", now.format_http_date())?;
         }
         SigningMethod::Query(expires) => {
-            writeln!(
-                &mut s,
-                "{}",
-                (now + jiff::SignedDuration::try_from(expires).unwrap()).as_second()
-            )?;
+            writeln!(&mut s, "{}", (now + expires).as_second())?;
         }
     }
 
@@ -306,7 +295,6 @@ mod tests {
     use http::Uri;
     use http::header::HeaderName;
     use reqsign_core::Result;
-    use reqsign_core::time::parse_rfc2822;
     use reqsign_core::{Context, OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -317,8 +305,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder =
-            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
+        let builder = RequestSigner::new("bucket")
+            .with_time(Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
@@ -356,8 +344,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign_with_subresource() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder =
-            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
+        let builder = RequestSigner::new("bucket")
+            .with_time(Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
@@ -397,8 +385,8 @@ mod tests {
     #[tokio::test]
     async fn test_sign_list_objects() -> Result<()> {
         let loader = StaticCredentialProvider::new("access_key", "123456");
-        let builder =
-            RequestSigner::new("bucket").with_time(parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
+        let builder = RequestSigner::new("bucket")
+            .with_time(Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
         let ctx = Context::new()
             .with_file_read(TokioFileRead)

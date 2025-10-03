@@ -47,7 +47,7 @@ struct Claims {
 
 impl Claims {
     fn new(client_email: &str, scope: &str) -> Self {
-        let current = now().as_second() as u64;
+        let current = Timestamp::now().as_second() as u64;
 
         Claims {
             iss: client_email.to_string(),
@@ -157,7 +157,7 @@ impl RequestSigner {
 
         let expires_at = token_resp
             .expires_in
-            .map(|expires_in| now() + jiff::SignedDuration::from_secs(expires_in as i64));
+            .map(|expires_in| Timestamp::now() + Duration::from_secs(expires_in));
 
         Ok(Token {
             access_token: token_resp.access_token,
@@ -193,7 +193,7 @@ impl RequestSigner {
         expires_in: Duration,
     ) -> Result<SigningRequest> {
         let mut req = SigningRequest::build(parts)?;
-        let now = now();
+        let now = Timestamp::now();
 
         // Canonicalize headers
         canonicalize_header(&mut req)?;
@@ -215,7 +215,7 @@ impl RequestSigner {
         // Build scope
         let scope = format!(
             "{}/{}/{}/goog4_request",
-            format_date(now),
+            now.format_date(),
             self.region,
             self.service
         );
@@ -226,7 +226,7 @@ impl RequestSigner {
             let mut f = String::new();
             f.push_str("GOOG4-RSA-SHA256");
             f.push('\n');
-            f.push_str(&format_iso8601(now));
+            f.push_str(&now.format_iso8601());
             f.push('\n');
             f.push_str(&scope);
             f.push('\n');
@@ -282,7 +282,7 @@ impl SignRequest for RequestSigner {
                     if token.is_valid() {
                         self.build_token_auth(req, token)?
                     } else if let Some(sa) = &cred.service_account {
-                        // Token expired but we have SA, exchange for new token
+                        // Token expired, but we have SA, exchange for new token
                         debug!("token expired, exchanging service account for new token");
                         let new_token = self.exchange_token(ctx, sa).await?;
                         self.build_token_auth(req, &new_token)?
@@ -385,12 +385,12 @@ fn canonicalize_query(
             format!(
                 "{}/{}/{}/{}/goog4_request",
                 &cred.client_email,
-                format_date(now),
+                now.format_date(),
                 region,
                 service
             ),
         ));
-        req.query.push(("X-Goog-Date".into(), format_iso8601(now)));
+        req.query.push(("X-Goog-Date".into(), now.format_iso8601()));
         req.query
             .push(("X-Goog-Expires".into(), expire.as_secs().to_string()));
         req.query.push((

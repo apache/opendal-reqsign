@@ -17,7 +17,9 @@
 
 use crate::Credential;
 use async_trait::async_trait;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
+use std::time::Duration;
 
 /// Load credential from Azure Workload Identity.
 ///
@@ -85,13 +87,11 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
         match token {
             Some(token_response) => {
                 let expires_on = match token_response.expires_on {
-                    Some(expires_on) => {
-                        reqsign_core::time::parse_rfc3339(&expires_on).map_err(|e| {
-                            reqsign_core::Error::unexpected("failed to parse expires_on time")
-                                .with_source(e)
-                        })?
-                    }
-                    None => reqsign_core::time::now() + jiff::SignedDuration::from_mins(10),
+                    Some(expires_on) => expires_on.parse().map_err(|e| {
+                        reqsign_core::Error::unexpected("failed to parse expires_on time")
+                            .with_source(e)
+                    })?,
+                    None => Timestamp::now() + Duration::from_secs(600),
                 };
 
                 Ok(Some(Credential::with_bearer_token(

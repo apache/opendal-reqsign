@@ -16,9 +16,10 @@
 // under the License.
 
 use reqsign_core::SigningCredential;
-use reqsign_core::time::{Timestamp, now};
+use reqsign_core::time::Timestamp;
 use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
+use std::time::Duration;
 
 /// Credential enum for different Azure Storage authentication methods.
 #[derive(Clone)]
@@ -82,7 +83,7 @@ impl SigningCredential for Credential {
                 }
                 // Check expiration for bearer tokens (take 20s as buffer to avoid edge cases)
                 if let Some(expires) = expires_in {
-                    *expires > now() + jiff::SignedDuration::from_secs(20)
+                    *expires > Timestamp::now() + Duration::from_secs(20)
                 } else {
                     true
                 }

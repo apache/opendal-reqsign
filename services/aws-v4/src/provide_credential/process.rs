@@ -19,7 +19,6 @@ use crate::Credential;
 use async_trait::async_trait;
 use ini::Ini;
 use log::debug;
-use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 
@@ -210,16 +209,9 @@ impl ProvideCredential for ProcessCredentialProvider {
         };
 
         let output = self.execute_process(ctx, &command).await?;
-
-        let expires_in =
-            if let Some(exp_str) = &output.expiration {
-                Some(exp_str.parse::<Timestamp>().map_err(|e| {
-                    Error::unexpected(format!("failed to parse expiration time: {e}"))
-                })?)
-            } else {
-                None
-            };
-
+        let expires_in = output
+            .expiration
+            .and_then(|expires_in| expires_in.parse().ok());
         Ok(Some(Credential {
             access_key_id: output.access_key_id,
             secret_access_key: output.secret_access_key,

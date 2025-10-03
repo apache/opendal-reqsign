@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-azure-storage"
-version = "1.1.0"
+version = "2.0.0"
 
 description = "Azure Storage signing implementation for reqsign."
 
@@ -33,7 +33,6 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true }
 http = { workspace = true }
-jiff = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }
