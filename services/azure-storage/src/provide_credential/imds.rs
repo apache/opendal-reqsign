@@ -19,6 +19,7 @@ use crate::Credential;
 use async_trait::async_trait;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
+use std::time::Duration;
 
 /// Load credential from Azure Instance Metadata Service (IMDS).
 ///
@@ -52,7 +53,7 @@ impl ProvideCredential for ImdsCredentialProvider {
         let token = get_access_token("https://storage.azure.com/", ctx).await?;
 
         let expires_on = if token.expires_on.is_empty() {
-            reqsign_core::time::now() + jiff::SignedDuration::from_mins(10)
+            Timestamp::now() + Duration::from_secs(600)
         } else {
             // Azure IMDS returns expires_on as Unix timestamp (seconds since epoch)
             let timestamp = token.expires_on.parse::<i64>().map_err(|e| {

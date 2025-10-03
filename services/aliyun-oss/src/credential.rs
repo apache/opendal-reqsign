@@ -16,9 +16,10 @@
 // under the License.
 
 use reqsign_core::SigningCredential;
-use reqsign_core::time::{Timestamp, now};
+use reqsign_core::time::Timestamp;
 use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
+use std::time::Duration;
 
 /// Credential that holds the access_key and secret_key.
 #[derive(Default, Clone)]
@@ -54,7 +55,7 @@ impl SigningCredential for Credential {
         // Take 120s as buffer to avoid edge cases.
         if let Some(valid) = self
             .expires_in
-            .map(|v| v > now() + jiff::SignedDuration::from_mins(2))
+            .map(|v| v > Timestamp::now() + Duration::from_secs(120))
         {
             return valid;
         }

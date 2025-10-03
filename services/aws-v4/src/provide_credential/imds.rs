@@ -21,10 +21,11 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::Method;
 use http::header::CONTENT_LENGTH;
-use reqsign_core::time::{Timestamp, now, parse_rfc3339};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub struct IMDSv2CredentialProvider {
@@ -68,7 +69,7 @@ impl IMDSv2CredentialProvider {
     async fn load_ec2_metadata_token(&self, ctx: &Context) -> Result<String> {
         {
             let (token, expires_in) = self.token.lock().expect("lock poisoned").clone();
-            if expires_in > now() {
+            if expires_in > Timestamp::now() {
                 return Ok(token);
             }
         }
@@ -105,8 +106,7 @@ impl IMDSv2CredentialProvider {
         }
         let ec2_token = resp.into_body();
         // Set expires_in to 10 minutes to enforce re-read.
-        let expires_in =
-            now() + jiff::SignedDuration::from_secs(21600) - jiff::SignedDuration::from_secs(600);
+        let expires_in = Timestamp::now() + Duration::from_secs(21600) - Duration::from_secs(600);
 
         {
             *self.token.lock().expect("lock poisoned") = (ec2_token.clone(), expires_in);
@@ -244,7 +244,7 @@ impl ProvideCredential for IMDSv2CredentialProvider {
             access_key_id: resp.access_key_id,
             secret_access_key: resp.secret_access_key,
             session_token: Some(resp.token),
-            expires_in: Some(parse_rfc3339(&resp.expiration).map_err(|e| {
+            expires_in: Some(Timestamp::parse_timestamp(&resp.expiration).map_err(|e| {
                 Error::unexpected("failed to parse IMDS credential expiration time")
                     .with_source(e)
                     .with_context(format!("expiration_value: {}", resp.expiration))

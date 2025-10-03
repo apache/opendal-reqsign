@@ -18,7 +18,6 @@
 use reqsign_core::Result;
 
 use reqsign_core::hash;
-use reqsign_core::time;
 use reqsign_core::time::Timestamp;
 
 /// The default parameters that make up a SAS token
@@ -68,8 +67,8 @@ impl AccountSharedAccessSignature {
             self.resource_type,
             self.start
                 .as_ref()
-                .map_or("".to_string(), |v| urlencoded(time::format_rfc3339(*v))),
-            time::format_rfc3339(self.expiry),
+                .map_or("".to_string(), |v| urlencoded(v.format_rfc3339_zulu())),
+            self.expiry.format_rfc3339_zulu(),
             self.ip.clone().unwrap_or_default(),
             self.protocol
                 .as_ref()
@@ -93,13 +92,13 @@ impl AccountSharedAccessSignature {
             ("srt".to_string(), self.resource_type.to_string()),
             (
                 "se".to_string(),
-                urlencoded(time::format_rfc3339(self.expiry)),
+                urlencoded(self.expiry.format_rfc3339_zulu()),
             ),
             ("sp".to_string(), self.permissions.to_string()),
         ];
 
         if let Some(start) = &self.start {
-            elements.push(("st".to_string(), urlencoded(time::format_rfc3339(*start))))
+            elements.push(("st".to_string(), urlencoded(start.format_rfc3339_zulu())))
         }
         if let Some(ip) = &self.ip {
             elements.push(("sip".to_string(), ip.to_string()))
@@ -121,9 +120,9 @@ fn urlencoded(s: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
     use super::*;
+    use std::str::FromStr;
+    use std::time::Duration;
 
     fn test_time() -> Timestamp {
         Timestamp::from_str("2022-03-01T08:12:34Z").unwrap()
@@ -132,7 +131,7 @@ mod tests {
     #[test]
     fn test_can_generate_sas_token() {
         let key = hash::base64_encode("key".as_bytes());
-        let expiry = test_time() + jiff::SignedDuration::from_mins(5);
+        let expiry = test_time() + Duration::from_secs(300);
         let sign = AccountSharedAccessSignature::new("account".to_string(), key, expiry);
         let token_content = sign.token().expect("token decode failed");
         let token = token_content

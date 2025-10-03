@@ -23,7 +23,7 @@ use http::request::Parts;
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha1, hex_sha1};
-use reqsign_core::time::{Timestamp, format_http_date, now};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
 use std::time::Duration;
 
@@ -69,7 +69,7 @@ impl SignRequest for RequestSigner {
             return Ok(());
         };
 
-        let now = self.time.unwrap_or_else(now);
+        let now = self.time.unwrap_or_else(Timestamp::now);
         let mut signing_req = SigningRequest::build(req)?;
 
         if let Some(expires) = expires_in {
@@ -78,7 +78,7 @@ impl SignRequest for RequestSigner {
 
             signing_req
                 .headers
-                .insert(DATE, format_http_date(now).parse()?);
+                .insert(DATE, now.format_http_date().parse()?);
             signing_req.query_append(&signature);
 
             if let Some(token) = &cred.security_token {
@@ -93,7 +93,7 @@ impl SignRequest for RequestSigner {
 
             signing_req
                 .headers
-                .insert(DATE, format_http_date(now).parse()?);
+                .insert(DATE, now.format_http_date().parse()?);
             signing_req.headers.insert(AUTHORIZATION, {
                 let mut value: http::HeaderValue = signature.parse()?;
                 value.set_sensitive(true);
@@ -119,12 +119,7 @@ fn build_signature(
     now: Timestamp,
     expires: Duration,
 ) -> String {
-    let key_time = format!(
-        "{};{}",
-        now.as_second(),
-        (now + jiff::SignedDuration::try_from(expires).unwrap()).as_second()
-    );
-
+    let key_time = format!("{};{}", now.as_second(), (now + expires).as_second());
     let sign_key = hex_hmac_sha1(cred.secret_key.as_bytes(), key_time.as_bytes());
 
     let mut params = ctx

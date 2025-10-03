@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use log::debug;
 use reqsign_core::Result;
-use reqsign_core::time::{now, parse_rfc3339};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::{Deserialize, Serialize};
 
@@ -110,7 +110,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .header(CONTENT_LENGTH, bs.len())
             .header("X-TC-Action", "AssumeRoleWithWebIdentity")
             .header("X-TC-Region", &region)
-            .header("X-TC-Timestamp", now().as_second())
+            .header("X-TC-Timestamp", Timestamp::now().as_second())
             .header("X-TC-Version", "2018-08-13")
             .body(bs.into())?;
 
@@ -140,7 +140,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             secret_id: resp_cred.tmp_secret_id,
             secret_key: resp_cred.tmp_secret_key,
             security_token: Some(resp_cred.token),
-            expires_in: Some(parse_rfc3339(&resp_expiration)?),
+            expires_in: Some(Timestamp::parse_timestamp(&resp_expiration)?),
         };
 
         Ok(Some(cred))

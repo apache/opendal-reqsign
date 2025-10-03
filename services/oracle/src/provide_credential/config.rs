@@ -20,8 +20,10 @@
 use crate::{Config, Credential};
 use async_trait::async_trait;
 use log::debug;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Static configuration based loader.
 #[derive(Debug)]
@@ -62,9 +64,7 @@ impl ProvideCredential for ConfigCredentialProvider {
                     key_file: key_file.clone(),
                     fingerprint: fingerprint.clone(),
                     // Set expires_in to 10 minutes to enforce re-read
-                    expires_in: Some(
-                        reqsign_core::time::now() + jiff::SignedDuration::from_mins(10),
-                    ),
+                    expires_in: Some(Timestamp::now() + Duration::from_secs(600)),
                 }))
             }
             _ => {

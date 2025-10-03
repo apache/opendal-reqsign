@@ -29,7 +29,6 @@ rust-version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 http = { workspace = true }
-jiff = { workspace = true }
 jsonwebtoken = "9.2"
 log = { workspace = true }
 percent-encoding = { workspace = true }

@@ -23,7 +23,7 @@ use http::{HeaderValue, header};
 use log::debug;
 use percent_encoding::percent_encode;
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
-use reqsign_core::time::{Timestamp, format_http_date, now};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningMethod, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
@@ -103,7 +103,7 @@ impl SignRequest for RequestSigner {
                     SigningMethod::Header => {
                         ctx.headers.insert(
                             X_MS_DATE,
-                            format_http_date(now()).parse().map_err(|e| {
+                            Timestamp::now().format_http_date().parse().map_err(|e| {
                                 reqsign_core::Error::unexpected("failed to parse date header")
                                     .with_source(e)
                             })?,
@@ -133,11 +133,7 @@ impl SignRequest for RequestSigner {
                         let signer = crate::account_sas::AccountSharedAccessSignature::new(
                             account_name.clone(),
                             account_key.clone(),
-                            now()
-                                + jiff::SignedDuration::try_from(d).map_err(|e| {
-                                    reqsign_core::Error::unexpected("failed to convert duration")
-                                        .with_source(e)
-                                })?,
+                            Timestamp::now() + d,
                         );
                         let signer_token = signer.token().map_err(|e| {
                             reqsign_core::Error::unexpected("failed to generate account SAS token")
@@ -148,7 +144,7 @@ impl SignRequest for RequestSigner {
                         });
                     }
                     SigningMethod::Header => {
-                        let now_time = self.time.unwrap_or_else(now);
+                        let now_time = self.time.unwrap_or_else(Timestamp::now);
                         let string_to_sign = string_to_sign(&mut ctx, account_name, now_time)?;
                         let decode_content = base64_decode(account_key).map_err(|e| {
                             reqsign_core::Error::unexpected("failed to decode account key")
@@ -377,7 +373,7 @@ fn string_to_sign(
 fn canonicalize_header(ctx: &mut SigningRequest, now_time: Timestamp) -> Result<String> {
     ctx.headers.insert(
         X_MS_DATE,
-        format_http_date(now_time).parse().map_err(|e| {
+        now_time.format_http_date().parse().map_err(|e| {
             reqsign_core::Error::unexpected("failed to parse x-ms-date header").with_source(e)
         })?,
     );
@@ -462,7 +458,7 @@ mod tests {
             .with_env(OsEnv);
         let cred = Credential::with_bearer_token(
             "token",
-            Some(now() + jiff::SignedDuration::from_hours(1)),
+            Some(Timestamp::now() + Duration::from_secs(3600)),
         );
         let builder = RequestSigner::new();
 

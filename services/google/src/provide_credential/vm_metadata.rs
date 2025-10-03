@@ -17,10 +17,11 @@
 
 use log::debug;
 use serde::Deserialize;
-
-use reqsign_core::{Context, ProvideCredential, Result, time::now};
+use std::time::Duration;
 
 use crate::credential::{Credential, Token};
+use reqsign_core::time::Timestamp;
+use reqsign_core::{Context, ProvideCredential, Result};
 
 /// VM metadata token response.
 #[derive(Deserialize)]
@@ -106,13 +107,10 @@ impl ProvideCredential for VmMetadataCredentialProvider {
                     .with_source(e)
             })?;
 
-        let expires_at = now() + jiff::SignedDuration::from_secs(token_resp.expires_in as i64);
-
-        let token = Token {
+        let expires_at = Timestamp::now() + Duration::from_secs(token_resp.expires_in);
+        Ok(Some(Credential::with_token(Token {
             access_token: token_resp.access_token,
             expires_at: Some(expires_at),
-        };
-
-        Ok(Some(Credential::with_token(token)))
+        })))
     }
 }

@@ -33,7 +33,6 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true }
 http = { workspace = true }
-jiff = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }

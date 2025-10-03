@@ -18,12 +18,33 @@
 //! Time related utils.
 
 use crate::Error;
+use std::fmt;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
-use std::time::Duration;
+use std::str::FromStr;
+use std::time::{Duration, SystemTime};
 
 /// An instant in time represented as the number of nanoseconds since the Unix epoch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Timestamp(jiff::Timestamp);
+
+impl FromStr for Timestamp {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.parse() {
+            Ok(t) => Ok(Timestamp(t)),
+            Err(err) => Err(
+                Error::unexpected(format!("parse '{s}' into timestamp failed")).with_source(err),
+            ),
+        }
+    }
+}
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl Timestamp {
     /// Create the timestamp of now.
@@ -53,24 +74,81 @@ impl Timestamp {
         self.0.strftime("%a, %d %b %Y %T GMT").to_string()
     }
 
-    /// Format the timestamp into RFC3339: `2022-03-13T07:20:04Z`
-    pub fn format_rfc3339(self) -> String {
+    /// Format the timestamp into RFC3339 in Zulu: `2022-03-13T07:20:04Z`
+    pub fn format_rfc3339_zulu(self) -> String {
         self.0.strftime("%FT%TZ").to_string()
     }
 
-    /// Parse a timestamp from RFC3339.
+    /// Returns this timestamp as a number of seconds since the Unix epoch.
+    ///
+    /// This only returns the number of whole seconds. That is, if there are
+    /// any fractional seconds in this timestamp, then they are truncated.
+    pub fn as_second(self) -> i64 {
+        self.0.as_second()
+    }
+
+    /// Returns the fractional second component of this timestamp in units of
+    /// nanoseconds.
+    ///
+    /// It is guaranteed that this will never return a value that is greater
+    /// than 1 second (or less than -1 second).
+    pub fn subsec_nanosecond(self) -> i32 {
+        self.0.subsec_nanosecond()
+    }
+
+    /// Convert to `SystemTime`.
+    pub fn as_system_time(self) -> SystemTime {
+        SystemTime::from(self.0)
+    }
+
+    /// Creates a new instant in time from the number of milliseconds elapsed
+    /// since the Unix epoch.
+    ///
+    /// When `millisecond` is negative, it corresponds to an instant in time
+    /// before the Unix epoch. A smaller number corresponds to an instant in
+    /// time further into the past.
+    pub fn from_millisecond(millis: i64) -> crate::Result<Self> {
+        match jiff::Timestamp::from_millisecond(millis) {
+            Ok(t) => Ok(Timestamp(t)),
+            Err(err) => Err(Error::unexpected(format!(
+                "convert '{millis}' milliseconds into timestamp failed"
+            ))
+            .with_source(err)),
+        }
+    }
+
+    /// Creates a new instant in time from the number of seconds elapsed since
+    /// the Unix epoch.
+    ///
+    /// When `second` is negative, it corresponds to an instant in time before
+    /// the Unix epoch. A smaller number corresponds to an instant in time
+    /// further into the past.
+    pub fn from_second(second: i64) -> crate::Result<Self> {
+        match jiff::Timestamp::from_second(second) {
+            Ok(t) => Ok(Timestamp(t)),
+            Err(err) => Err(Error::unexpected(format!(
+                "convert '{second}' seconds into timestamp failed"
+            ))
+            .with_source(err)),
+        }
+    }
+
+    /// Parse a timestamp by the default [`DateTimeParser`].
     ///
     /// All of them are valid time:
     ///
     /// - `2022-03-13T07:20:04Z`
     /// - `2022-03-01T08:12:34+00:00`
     /// - `2022-03-01T08:12:34.00+00:00`
-    pub fn parse_rfc3339(s: &str) -> crate::Result<Timestamp> {
+    /// - `2024-06-15T07-04[America/New_York]`
+    ///
+    /// [`DateTimeParser`]: jiff::fmt::temporal::DateTimeParser
+    pub fn parse_timestamp(s: &str) -> crate::Result<Timestamp> {
         match s.parse() {
             Ok(t) => Ok(Timestamp(t)),
-            Err(err) => {
-                Err(Error::unexpected(format!("parse '{s}' into rfc3339 failed")).with_source(err))
-            }
+            Err(err) => Err(
+                Error::unexpected(format!("parse '{s}' into timestamp failed")).with_source(err),
+            ),
         }
     }
 
@@ -170,7 +248,7 @@ mod tests {
     #[test]
     fn test_format_rfc3339() {
         let t = test_time();
-        assert_eq!("2022-03-01T08:12:34Z", t.format_rfc3339())
+        assert_eq!("2022-03-01T08:12:34Z", t.format_rfc3339_zulu())
     }
 
     #[test]
@@ -182,7 +260,10 @@ mod tests {
             "2022-03-01T08:12:34+00:00",
             "2022-03-01T08:12:34.00+00:00",
         ] {
-            assert_eq!(t, Timestamp::parse_rfc3339(v).expect("must be valid time"));
+            assert_eq!(
+                t,
+                Timestamp::parse_timestamp(v).expect("must be valid time")
+            );
         }
     }
 }

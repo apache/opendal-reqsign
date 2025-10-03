@@ -36,7 +36,6 @@ async-trait = { workspace = true }
 bytes = "1.7.2"
 form_urlencoded = { workspace = true }
 http = { workspace = true }
-jiff = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 quick-xml = { workspace = true }

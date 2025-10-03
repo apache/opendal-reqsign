@@ -19,11 +19,13 @@
 
 use async_trait::async_trait;
 use reqsign_core::ProvideCredentialChain;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, OsEnv, ProvideCredential, Result};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 use reqsign_tencent_cos::{Credential, EnvCredentialProvider};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Mock provider that tracks how many times it was called
 #[derive(Debug)]
@@ -199,7 +201,7 @@ impl ProvideCredential for SecurityTokenProvider {
             secret_id: "temp_id".to_string(),
             secret_key: "temp_key".to_string(),
             security_token: Some("security_token".to_string()),
-            expires_in: Some(reqsign_core::time::now() + jiff::SignedDuration::from_hours(1)),
+            expires_in: Some(Timestamp::now() + Duration::from_secs(3600)),
         }))
     }
 }

@@ -18,10 +18,11 @@
 use http::header::CONTENT_TYPE;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
-
-use reqsign_core::{Context, ProvideCredential, Result, time::now};
+use std::time::Duration;
 
 use crate::credential::{Credential, OAuth2Credentials, Token};
+use reqsign_core::time::Timestamp;
+use reqsign_core::{Context, ProvideCredential, Result};
 
 /// OAuth2 refresh token request.
 #[derive(Serialize)]
@@ -96,13 +97,11 @@ impl ProvideCredential for AuthorizedUserCredentialProvider {
 
         let expires_at = token_resp
             .expires_in
-            .map(|expires_in| now() + jiff::SignedDuration::from_secs(expires_in as i64));
+            .map(|expires_in| Timestamp::now() + Duration::from_secs(expires_in));
 
-        let token = Token {
+        Ok(Some(Credential::with_token(Token {
             access_token: token_resp.access_token,
             expires_at,
-        };
-
-        Ok(Some(Credential::with_token(token)))
+        })))
     }
 }
