@@ -31,7 +31,6 @@ jobs:
   publish:
     name: Publish Workspace
     runs-on: ubuntu-24.04
-    if: needs.check-version.outputs.is_prerelease == 'false'
     steps:
       - uses: actions/checkout@v5
       - run: cargo publish --workspace
