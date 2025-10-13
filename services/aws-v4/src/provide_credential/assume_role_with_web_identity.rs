@@ -19,6 +19,7 @@ use crate::Credential;
 use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
 use async_trait::async_trait;
 use bytes::Bytes;
+use form_urlencoded::Serializer;
 use quick_xml::de;
 use reqsign_core::{Context, Error, ProvideCredential, Result, utils::Redact};
 use serde::Deserialize;
@@ -123,6 +124,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
                 .with_context(format!("file: {token_file}"))
                 .with_context("hint: check if the token file exists and is readable")
         })?;
+        let token = token.trim().to_string();
 
         // Get region from config or environment
         let region = self
@@ -150,9 +152,14 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .unwrap_or_else(|| "reqsign".to_string());
 
         // Construct request to AWS STS Service.
-        let url = format!(
-            "https://{endpoint}/?Action=AssumeRoleWithWebIdentity&RoleArn={role_arn}&WebIdentityToken={token}&Version=2011-06-15&RoleSessionName={session_name}"
-        );
+        let query = Serializer::new(String::new())
+            .append_pair("Action", "AssumeRoleWithWebIdentity")
+            .append_pair("RoleArn", &role_arn)
+            .append_pair("WebIdentityToken", &token)
+            .append_pair("Version", "2011-06-15")
+            .append_pair("RoleSessionName", &session_name)
+            .finish();
+        let url = format!("https://{endpoint}/?{query}");
         let req = http::request::Request::builder()
             .method("GET")
             .uri(url)
@@ -258,6 +265,10 @@ impl Debug for AssumeRoleWithWebIdentityCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use reqsign_core::{FileRead, HttpSend, StaticEnv};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_parse_assume_role_with_web_identity_response() -> Result<()> {
@@ -294,6 +305,120 @@ mod tests {
         );
         assert_eq!(&resp.result.credentials.session_token, "session_token");
         assert_eq!(&resp.result.credentials.expiration, "2022-05-25T11:45:17Z");
+
+        Ok(())
+    }
+
+    #[derive(Debug)]
+    struct TestFileRead {
+        expected_path: String,
+        content: Vec<u8>,
+    }
+
+    #[async_trait]
+    impl FileRead for TestFileRead {
+        async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+            assert_eq!(path, self.expected_path);
+            Ok(self.content.clone())
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct CaptureHttpSend {
+        uri: Arc<Mutex<Option<String>>>,
+        body: String,
+    }
+
+    impl CaptureHttpSend {
+        fn new(body: impl Into<String>) -> Self {
+            Self {
+                uri: Arc::new(Mutex::new(None)),
+                body: body.into(),
+            }
+        }
+
+        fn uri(&self) -> Option<String> {
+            self.uri.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl HttpSend for CaptureHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            *self.uri.lock().unwrap() = Some(req.uri().to_string());
+            let resp = http::Response::builder()
+                .status(http::StatusCode::OK)
+                .header("x-amzn-requestid", "test-request")
+                .body(Bytes::from(self.body.clone()))
+                .expect("response must build");
+            Ok(resp)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_web_identity_encodes_query_parameters() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let token_path = "/mock/token";
+        let raw_token = "header.payload+signature/\n";
+        let trimmed_token = "header.payload+signature/";
+
+        let file_read = TestFileRead {
+            expected_path: token_path.to_string(),
+            content: raw_token.as_bytes().to_vec(),
+        };
+
+        let http_body = r#"<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleWithWebIdentityResult>
+    <Credentials>
+      <AccessKeyId>access_key_id</AccessKeyId>
+      <SecretAccessKey>secret_access_key</SecretAccessKey>
+      <SessionToken>session_token</SessionToken>
+      <Expiration>2124-05-25T11:45:17Z</Expiration>
+    </Credentials>
+  </AssumeRoleWithWebIdentityResult>
+</AssumeRoleWithWebIdentityResponse>"#;
+        let http_send = CaptureHttpSend::new(http_body);
+
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::new(),
+            });
+
+        let provider = AssumeRoleWithWebIdentityCredentialProvider::with_config(
+            "arn:aws:iam::123456789012:role/test-role".to_string(),
+            token_path.into(),
+        );
+
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        assert_eq!(cred.access_key_id, "access_key_id");
+        assert_eq!(cred.secret_access_key, "secret_access_key");
+        assert_eq!(
+            cred.session_token.as_deref(),
+            Some("session_token"),
+            "session token must be populated"
+        );
+
+        let recorded_uri = http_send
+            .uri()
+            .expect("http_send must capture outgoing uri");
+        let expected_query = Serializer::new(String::new())
+            .append_pair("Action", "AssumeRoleWithWebIdentity")
+            .append_pair("RoleArn", "arn:aws:iam::123456789012:role/test-role")
+            .append_pair("WebIdentityToken", trimmed_token)
+            .append_pair("Version", "2011-06-15")
+            .append_pair("RoleSessionName", "reqsign")
+            .finish();
+        let expected_uri = format!("https://sts.amazonaws.com/?{expected_query}");
+
+        assert_eq!(recorded_uri, expected_uri);
 
         Ok(())
     }
