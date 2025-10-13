@@ -77,12 +77,12 @@ impl SignRequest for RequestSigner {
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let now = self.time.unwrap_or_else(Timestamp::now);
-        let mut signed_req = SigningRequest::build(req)?;
-
         let Some(cred) = credential else {
             return Ok(());
         };
+
+        let now = self.time.unwrap_or_else(Timestamp::now);
+        let mut signed_req = SigningRequest::build(req)?;
 
         // canonicalize context
         canonicalize_header(&mut signed_req, cred, expires_in, now)?;

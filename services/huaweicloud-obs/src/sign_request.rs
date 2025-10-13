@@ -77,8 +77,9 @@ impl SignRequest for RequestSigner {
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let k = credential
-            .ok_or_else(|| reqsign_core::Error::credential_invalid("missing credential"))?;
+        let Some(cred) = credential else {
+            return Ok(());
+        };
         let now = self.time.unwrap_or_else(Timestamp::now);
 
         let method = if let Some(expires_in) = expires_in {
@@ -89,15 +90,16 @@ impl SignRequest for RequestSigner {
 
         let mut ctx = SigningRequest::build(parts)?;
 
-        let string_to_sign = string_to_sign(&mut ctx, k, now, method, &self.bucket)?;
-        let signature = base64_hmac_sha1(k.secret_access_key.as_bytes(), string_to_sign.as_bytes());
+        let string_to_sign = string_to_sign(&mut ctx, cred, now, method, &self.bucket)?;
+        let signature =
+            base64_hmac_sha1(cred.secret_access_key.as_bytes(), string_to_sign.as_bytes());
 
         match method {
             SigningMethod::Header => {
                 ctx.headers.insert(DATE, now.format_http_date().parse()?);
                 ctx.headers.insert(AUTHORIZATION, {
                     let mut value: HeaderValue =
-                        format!("OBS {}:{}", k.access_key_id, signature).parse()?;
+                        format!("OBS {}:{}", cred.access_key_id, signature).parse()?;
                     value.set_sensitive(true);
 
                     value
@@ -105,7 +107,7 @@ impl SignRequest for RequestSigner {
             }
             SigningMethod::Query(expire) => {
                 ctx.headers.insert(DATE, now.format_http_date().parse()?);
-                ctx.query_push("AccessKeyId", &k.access_key_id);
+                ctx.query_push("AccessKeyId", &cred.access_key_id);
                 ctx.query_push("Expires", (now + expire).as_second().to_string());
                 ctx.query_push(
                     "Signature",

@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{Context, ProvideCredential, Result, SignRequest, SigningCredential};
+use crate::{Context, Error, ProvideCredential, Result, SignRequest, SigningCredential};
+use std::any::type_name;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -81,8 +82,13 @@ impl<K: SigningCredential> Signer<K> {
             ctx
         };
 
+        let credential_ref = credential.as_ref().ok_or_else(|| {
+            Error::credential_invalid("failed to load signing credential")
+                .with_context(format!("credential_type: {}", type_name::<K>()))
+        })?;
+
         self.builder
-            .sign_request(&self.ctx, req, credential.as_ref(), expires_in)
+            .sign_request(&self.ctx, req, Some(credential_ref), expires_in)
             .await
     }
 }
