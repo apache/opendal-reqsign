@@ -262,8 +262,9 @@ impl SignRequest for RequestSigner {
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let cred = credential
-            .ok_or_else(|| reqsign_core::Error::credential_invalid("missing credential"))?;
+        let Some(cred) = credential else {
+            return Ok(());
+        };
 
         let signing_req = match expires_in {
             // Query signing - must use ServiceAccount

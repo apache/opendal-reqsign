@@ -73,9 +73,7 @@ impl SignRequest for RequestSigner {
         expires_in: Option<Duration>,
     ) -> Result<()> {
         let Some(cred) = credential else {
-            return Err(reqsign_core::Error::request_invalid(
-                "credential is required",
-            ));
+            return Ok(());
         };
 
         let method = if let Some(expires_in) = expires_in {
