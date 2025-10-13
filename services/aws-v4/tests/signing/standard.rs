@@ -67,7 +67,7 @@ async fn test_put_object() -> Result<()> {
 
     let cred = load_static_credential()?;
     let body = "Hello, World!";
-    let body_digest = hex::encode(Sha256::digest(body).as_slice());
+    let body_digest = hex::encode(Sha256::digest(body.as_bytes()));
 
     let mut req = Request::new(body.to_string());
     req.headers_mut().insert(

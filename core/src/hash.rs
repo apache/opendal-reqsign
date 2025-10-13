@@ -43,7 +43,7 @@ pub fn base64_decode(content: &str) -> crate::Result<Vec<u8>> {
 /// Use this function instead of `hex::encode(sha1(content))` can reduce
 /// extra copy.
 pub fn hex_sha1(content: &[u8]) -> String {
-    hex::encode(Sha1::digest(content).as_slice())
+    hex::encode(Sha1::digest(content))
 }
 
 /// Hex encoded SHA256 hash.
@@ -51,7 +51,7 @@ pub fn hex_sha1(content: &[u8]) -> String {
 /// Use this function instead of `hex::encode(sha256(content))` can reduce
 /// extra copy.
 pub fn hex_sha256(content: &[u8]) -> String {
-    hex::encode(Sha256::digest(content).as_slice())
+    hex::encode(Sha256::digest(content))
 }
 
 /// HMAC with SHA256 hash.
