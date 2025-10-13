@@ -74,11 +74,22 @@ use reqsign_core::{Error, FileRead, Result};
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TokioFileRead;
 
+#[cfg(not(target_family = "wasm"))]
 #[async_trait]
 impl FileRead for TokioFileRead {
     async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
         tokio::fs::read(path)
             .await
             .map_err(|e| Error::unexpected("failed to read file").with_source(e))
+    }
+}
+
+#[cfg(target_family = "wasm")]
+#[async_trait]
+impl FileRead for TokioFileRead {
+    async fn file_read(&self, _path: &str) -> Result<Vec<u8>> {
+        Err(Error::unexpected(
+            "TokioFileRead is unsupported on wasm targets",
+        ))
     }
 }
