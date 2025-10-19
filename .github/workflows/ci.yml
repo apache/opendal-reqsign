@@ -95,8 +95,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install wasm-bindgen-test-runner
-        run: cargo install wasm-bindgen-test-runner --version 0.3.54 --locked
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.104 --locked
       - name: Run wasm tests
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
