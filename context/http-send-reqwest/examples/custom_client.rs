@@ -15,13 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#[cfg(not(target_arch = "wasm32"))]
 use anyhow::Result;
+#[cfg(not(target_arch = "wasm32"))]
 use bytes::Bytes;
+#[cfg(not(target_arch = "wasm32"))]
 use reqsign_core::{Context, OsEnv};
+#[cfg(not(target_arch = "wasm32"))]
 use reqsign_http_send_reqwest::ReqwestHttpSend;
+#[cfg(not(target_arch = "wasm32"))]
 use reqwest::Client;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create a custom reqwest client with specific configuration
@@ -94,4 +101,9 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    panic!("custom_client example is not supported on wasm targets");
 }

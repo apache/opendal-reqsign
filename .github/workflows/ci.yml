@@ -85,9 +85,19 @@ jobs:
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
-
       - name: Doc Test
         run: cargo test --doc --all-features --workspace
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
+
+  wasm_tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Run wasm tests
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo test --target wasm32-unknown-unknown -p reqsign-http-send-reqwest --test wasm
