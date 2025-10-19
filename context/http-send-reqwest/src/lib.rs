@@ -95,9 +95,14 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
+#[cfg(target_arch = "wasm32")]
+use futures_channel::oneshot;
+#[cfg(not(target_arch = "wasm32"))]
 use http_body_util::BodyExt;
 use reqsign_core::{Error, HttpSend, Result};
 use reqwest::{Client, Request};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
 
 /// Reqwest-based implementation of the `HttpSend` trait.
 ///
@@ -137,18 +142,68 @@ impl HttpSend for ReqwestHttpSend {
     async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
         let req = Request::try_from(req)
             .map_err(|e| Error::unexpected("failed to convert request").with_source(e))?;
-        let resp: http::Response<_> = self
-            .client
-            .execute(req)
-            .await
-            .map_err(|e| Error::unexpected("failed to send HTTP request").with_source(e))?
-            .into();
 
-        let (parts, body) = resp.into_parts();
-        let bs = BodyExt::collect(body)
-            .await
-            .map(|buf| buf.to_bytes())
-            .map_err(|e| Error::unexpected("failed to collect response body").with_source(e))?;
-        Ok(http::Response::from_parts(parts, bs))
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            return http_send_native(&self.client, req).await;
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            return http_send_wasm(&self.client, req).await;
+        }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn http_send_native(client: &Client, req: Request) -> Result<http::Response<Bytes>> {
+    let resp = client
+        .execute(req)
+        .await
+        .map_err(|e| Error::unexpected("failed to send HTTP request").with_source(e))?;
+
+    let resp: http::Response<_> = resp.into();
+    let (parts, body) = resp.into_parts();
+    let bs = BodyExt::collect(body)
+        .await
+        .map(|buf| buf.to_bytes())
+        .map_err(|e| Error::unexpected("failed to collect response body").with_source(e))?;
+    Ok(http::Response::from_parts(parts, bs))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn http_send_wasm(client: &Client, req: Request) -> Result<http::Response<Bytes>> {
+    let (tx, rx) = oneshot::channel();
+    let client = client.clone();
+
+    // reqwest's wasm client is !Send, so drive the request on the local executor
+    // and forward the result back through a channel to satisfy HttpSend's Send requirement.
+    spawn_local(async move {
+        let result = async move {
+            let resp = client
+                .execute(req)
+                .await
+                .map_err(|e| Error::unexpected("failed to send HTTP request").with_source(e))?;
+
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let body = resp
+                .bytes()
+                .await
+                .map_err(|e| Error::unexpected("failed to collect response body").with_source(e))?;
+
+            let mut response = http::Response::builder()
+                .status(status)
+                .body(body)
+                .map_err(|e| Error::unexpected("failed to build HTTP response").with_source(e))?;
+            *response.headers_mut() = headers;
+            Ok(response)
+        }
+        .await;
+
+        let _ = tx.send(result);
+    });
+
+    rx.await
+        .map_err(|_| Error::unexpected("failed to receive response from wasm task"))?
 }
