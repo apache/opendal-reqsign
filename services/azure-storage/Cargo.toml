@@ -41,7 +41,7 @@ serde_json = { workspace = true }
 sha1 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-jsonwebtoken = "10.1"
+jsonwebtoken = { version = "10.1", features = ["rust_crypto"] }
 pem = "3.0"
 rsa = { workspace = true }
 

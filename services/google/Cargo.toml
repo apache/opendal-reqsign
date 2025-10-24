@@ -29,7 +29,7 @@ rust-version.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 http = { workspace = true }
-jsonwebtoken = "10.1"
+jsonwebtoken = { version = "10.1", features = ["rust_crypto"] }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 rand = { workspace = true }
