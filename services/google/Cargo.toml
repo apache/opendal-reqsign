@@ -19,7 +19,7 @@
 name = "reqsign-google"
 version = "2.0.1"
 
-description = "Goole Cloud Platform signing implementation for reqsign."
+description = "Google Cloud Platform signing implementation for reqsign."
 
 edition.workspace = true
 license.workspace = true
