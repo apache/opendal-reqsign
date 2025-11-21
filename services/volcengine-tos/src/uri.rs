@@ -15,39 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+use crate::constants::{VOLCENGINE_QUERY_ENCODE_SET, VOLCENGINE_URI_ENCODE_SET};
+use percent_encoding::utf8_percent_encode;
 
-// Re-export core types
-pub use reqsign_core::*;
+pub fn percent_encode_path(path: &str) -> String {
+    utf8_percent_encode(path, &VOLCENGINE_URI_ENCODE_SET).to_string()
+}
 
-// Context utilities
-#[cfg(feature = "default-context")]
-mod context;
-#[cfg(feature = "default-context")]
-pub use context::default_context;
-
-// Service modules with convenience APIs
-#[cfg(feature = "aliyun")]
-pub mod aliyun;
-
-#[cfg(feature = "aws")]
-pub mod aws;
-
-#[cfg(feature = "azure")]
-pub mod azure;
-
-#[cfg(feature = "google")]
-pub mod google;
-
-#[cfg(feature = "huaweicloud")]
-pub mod huaweicloud;
-
-#[cfg(feature = "oracle")]
-pub mod oracle;
-
-#[cfg(feature = "tencent")]
-pub mod tencent;
-
-#[cfg(feature = "volcengine")]
-pub mod volcengine;
+pub fn percent_encode_query(query: &str) -> String {
+    utf8_percent_encode(query, &VOLCENGINE_QUERY_ENCODE_SET).to_string()
+}

@@ -15,39 +15,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC};
 
-// Re-export core types
-pub use reqsign_core::*;
+pub const ENV_ACCESS_KEY_ID: &str = "VOLCENGINE_ACCESS_KEY_ID";
+pub const ENV_SECRET_ACCESS_KEY: &str = "VOLCENGINE_SECRET_ACCESS_KEY";
+pub const ENV_SESSION_TOKEN: &str = "VOLCENGINE_SESSION_TOKEN";
 
-// Context utilities
-#[cfg(feature = "default-context")]
-mod context;
-#[cfg(feature = "default-context")]
-pub use context::default_context;
+pub static VOLCENGINE_URI_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~')
+    .remove(b'/');
 
-// Service modules with convenience APIs
-#[cfg(feature = "aliyun")]
-pub mod aliyun;
+pub static VOLCENGINE_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
 
-#[cfg(feature = "aws")]
-pub mod aws;
-
-#[cfg(feature = "azure")]
-pub mod azure;
-
-#[cfg(feature = "google")]
-pub mod google;
-
-#[cfg(feature = "huaweicloud")]
-pub mod huaweicloud;
-
-#[cfg(feature = "oracle")]
-pub mod oracle;
-
-#[cfg(feature = "tencent")]
-pub mod tencent;
-
-#[cfg(feature = "volcengine")]
-pub mod volcengine;
+pub const EMPTY_PAYLOAD_SHA256: &str =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";

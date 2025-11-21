@@ -15,39 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+//! Volcengine TOS signing implementation for reqsign.
 
-// Re-export core types
-pub use reqsign_core::*;
+mod constants;
+mod credential;
+pub use credential::Credential;
 
-// Context utilities
-#[cfg(feature = "default-context")]
-mod context;
-#[cfg(feature = "default-context")]
-pub use context::default_context;
+mod provide_credential;
+pub use provide_credential::*;
 
-// Service modules with convenience APIs
-#[cfg(feature = "aliyun")]
-pub mod aliyun;
+mod sign_request;
+mod uri;
+pub use uri::{percent_encode_path, percent_encode_query};
 
-#[cfg(feature = "aws")]
-pub mod aws;
-
-#[cfg(feature = "azure")]
-pub mod azure;
-
-#[cfg(feature = "google")]
-pub mod google;
-
-#[cfg(feature = "huaweicloud")]
-pub mod huaweicloud;
-
-#[cfg(feature = "oracle")]
-pub mod oracle;
-
-#[cfg(feature = "tencent")]
-pub mod tencent;
-
-#[cfg(feature = "volcengine")]
-pub mod volcengine;
+pub use sign_request::RequestSigner;
