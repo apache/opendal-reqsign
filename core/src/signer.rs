@@ -91,4 +91,28 @@ impl<K: SigningCredential> Signer<K> {
             .sign_request(&self.ctx, req, Some(credential_ref), expires_in)
             .await
     }
+
+    /// Signing request, synchronously. May fail if the credential needs async loading.
+    pub fn sign_sync(
+        &self,
+        req: &mut http::request::Parts,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        let credential = self.credential.lock().expect("lock poisoned").clone();
+        let credential = if credential.is_valid() {
+            credential
+        } else {
+            let credential = self.loader.provide_credential_sync(&self.ctx)?;
+            *self.credential.lock().expect("lock poisoned") = credential.clone();
+            credential
+        };
+
+        let credential_ref = credential.as_ref().ok_or_else(|| {
+            Error::credential_invalid("failed to load signing credential")
+                .with_context(format!("credential_type: {}", type_name::<K>()))
+        })?;
+
+        self.builder
+            .sign_request_sync(&self.ctx, req, Some(credential_ref), expires_in)
+    }
 }

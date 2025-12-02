@@ -47,7 +47,19 @@ pub trait ProvideCredential: Debug + Send + Sync + Unpin + 'static {
     type Credential: Send + Sync + Unpin + 'static;
 
     /// Load signing credential from current env.
-    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>>;
+    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        self.provide_credential_sync(ctx)
+    }
+
+    /// As `provide_credential`, but synchronous.
+    /// May error if an implementation is inherently asynchronous.
+    #[allow(unused_variables)]
+    fn provide_credential_sync(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        Err(crate::Error::needs_async(format!(
+            "synchronous provide_credential is not supported for {}",
+            std::any::type_name::<Self>()
+        )))
+    }
 }
 
 /// SignRequest is the trait used by signer to build the signing request.
@@ -77,7 +89,25 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.sign_request_sync(ctx, req, credential, expires_in)
+    }
+
+    /// As `sign_request`, but synchronous.
+    /// May error if an implementation is inherently asynchronous.
+    #[allow(unused_variables)]
+    fn sign_request_sync(
+        &self,
+        ctx: &Context,
+        req: &mut http::request::Parts,
+        credential: Option<&Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        Err(crate::Error::needs_async(format!(
+            "synchronous sign_request is not supported for {}",
+            std::any::type_name::<Self>()
+        )))
+    }
 }
 
 /// A chain of credential providers that will be tried in order.
