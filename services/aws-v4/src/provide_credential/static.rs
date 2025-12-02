@@ -51,7 +51,7 @@ impl StaticCredentialProvider {
 impl ProvideCredential for StaticCredentialProvider {
     type Credential = Credential;
 
-    async fn provide_credential(&self, _: &Context) -> Result<Option<Self::Credential>> {
+    fn provide_credential_sync(&self, _: &Context) -> Result<Option<Self::Credential>> {
         Ok(Some(Credential {
             access_key_id: self.access_key_id.clone(),
             secret_access_key: self.secret_access_key.clone(),

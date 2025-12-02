@@ -165,6 +165,13 @@ impl RequestSigner {
         })
     }
 
+    #[allow(unused_variables)]
+    fn exchange_token_sync(&self, ctx: &Context, sa: &ServiceAccount) -> Result<Token> {
+        Err(reqsign_core::Error::needs_async(
+            "synchronous token exchange not implemented",
+        ))
+    }
+
     fn build_token_auth(
         &self,
         parts: &mut http::request::Parts,
@@ -251,52 +258,38 @@ impl RequestSigner {
     }
 }
 
-#[async_trait::async_trait]
-impl SignRequest for RequestSigner {
-    type Credential = Credential;
-
-    async fn sign_request(
-        &self,
-        ctx: &Context,
-        req: &mut http::request::Parts,
-        credential: Option<&Self::Credential>,
-        expires_in: Option<Duration>,
-    ) -> Result<()> {
-        let Some(cred) = credential else {
+macro_rules! sign_request_body {
+    ($self:ident, $ctx:ident, $req:ident, $credential:ident, $expires_in:ident, |$sa:ident| $exchange_call:expr) => {{
+        let Some(cred) = $credential else {
             return Ok(());
         };
 
-        let signing_req = match expires_in {
-            // Query signing - must use ServiceAccount
+        let signing_req = match $expires_in {
             Some(expires) => {
                 let sa = cred.service_account.as_ref().ok_or_else(|| {
                     reqsign_core::Error::credential_invalid(
                         "service account required for query signing",
                     )
                 })?;
-                self.build_signed_query(ctx, req, sa, expires)?
+                $self.build_signed_query($ctx, $req, sa, expires)?
             }
-            // Header authentication - prefer valid token, otherwise exchange from SA
             None => {
-                // Check if we have a valid token
                 if let Some(token) = &cred.token {
                     if token.is_valid() {
-                        self.build_token_auth(req, token)?
-                    } else if let Some(sa) = &cred.service_account {
-                        // Token expired, but we have SA, exchange for new token
+                        $self.build_token_auth($req, token)?
+                    } else if let Some($sa) = &cred.service_account {
                         debug!("token expired, exchanging service account for new token");
-                        let new_token = self.exchange_token(ctx, sa).await?;
-                        self.build_token_auth(req, &new_token)?
+                        let new_token = $exchange_call;
+                        $self.build_token_auth($req, &new_token)?
                     } else {
                         return Err(reqsign_core::Error::credential_invalid(
                             "token expired and no service account available",
                         ));
                     }
-                } else if let Some(sa) = &cred.service_account {
-                    // No token but have SA, exchange for token
+                } else if let Some($sa) = &cred.service_account {
                     debug!("no token available, exchanging service account for token");
-                    let token = self.exchange_token(ctx, sa).await?;
-                    self.build_token_auth(req, &token)?
+                    let token = $exchange_call;
+                    $self.build_token_auth($req, &token)?
                 } else {
                     return Err(reqsign_core::Error::credential_invalid(
                         "no valid credential available",
@@ -305,9 +298,36 @@ impl SignRequest for RequestSigner {
             }
         };
 
-        signing_req.apply(req).map_err(|e| {
+        signing_req.apply($req).map_err(|e| {
             reqsign_core::Error::unexpected("failed to apply signing request").with_source(e)
         })
+    }};
+}
+
+#[async_trait::async_trait]
+impl SignRequest for RequestSigner {
+    type Credential = Credential;
+    async fn sign_request(
+        &self,
+        ctx: &Context,
+        req: &mut http::request::Parts,
+        credential: Option<&Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        sign_request_body!(self, ctx, req, credential, expires_in, |sa| self
+            .exchange_token(ctx, sa)
+            .await?)
+    }
+
+    fn sign_request_sync(
+        &self,
+        ctx: &Context,
+        req: &mut http::request::Parts,
+        credential: Option<&Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        sign_request_body!(self, ctx, req, credential, expires_in, |sa| self
+            .exchange_token_sync(ctx, sa)?)
     }
 }
 

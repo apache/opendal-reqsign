@@ -85,6 +85,8 @@ impl SignRequest for RequestSigner {
         debug!("string to sign: {}", &string_to_sign);
 
         // Read private key from file
+        // TODO: this probably shouldn't be done on every invocation, but the credential object
+        //       should cache it – maybe at construction time?
         let private_key_content = ctx.file_read_as_string(&cred.key_file).await?;
         let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_content).map_err(|e| {
             reqsign_core::Error::credential_invalid(format!("Failed to read private key: {e}"))
@@ -119,5 +121,19 @@ impl SignRequest for RequestSigner {
             .insert(AUTHORIZATION, auth_value.parse()?);
 
         signing_req.apply(req)
+    }
+
+    #[allow(unused_variables)]
+    fn sign_request_sync(
+        &self,
+        ctx: &Context,
+        req: &mut Parts,
+        credential: Option<&Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        // See TODO in the above async function
+        Err(reqsign_core::Error::needs_async(
+            "Reading private key requires async",
+        ))
     }
 }

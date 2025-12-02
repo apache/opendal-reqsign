@@ -58,7 +58,7 @@ impl RequestSigner {
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
-    async fn sign_request(
+    fn sign_request_sync(
         &self,
         _ctx: &Context,
         req: &mut Parts,
