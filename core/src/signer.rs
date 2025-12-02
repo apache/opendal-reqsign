@@ -77,9 +77,9 @@ impl<K: SigningCredential> Signer<K> {
         let credential = if credential.is_valid() {
             credential
         } else {
-            let ctx = self.loader.provide_credential(&self.ctx).await?;
-            *self.credential.lock().expect("lock poisoned") = ctx.clone();
-            ctx
+            let credential = self.loader.provide_credential(&self.ctx).await?;
+            *self.credential.lock().expect("lock poisoned") = credential.clone();
+            credential
         };
 
         let credential_ref = credential.as_ref().ok_or_else(|| {
