@@ -61,6 +61,10 @@ pub enum ErrorKind {
     /// Unexpected error that doesn't fit other categories
     /// User action: Check logs, report bug if persistent
     Unexpected,
+
+    /// Operation requires async context
+    /// User action: Ensure async runtime is available
+    NeedsAsync,
 }
 
 impl Error {
@@ -147,6 +151,11 @@ impl Error {
     pub fn unexpected(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Unexpected, message)
     }
+
+    /// Create an error indicating async context is required
+    pub fn needs_async(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::NeedsAsync, message)
+    }
 }
 
 impl fmt::Display for Error {
@@ -190,6 +199,7 @@ impl fmt::Display for ErrorKind {
             ErrorKind::RequestInvalid => write!(f, "invalid request"),
             ErrorKind::RateLimited => write!(f, "rate limited"),
             ErrorKind::Unexpected => write!(f, "unexpected error"),
+            ErrorKind::NeedsAsync => write!(f, "operation requires async context"),
         }
     }
 }
