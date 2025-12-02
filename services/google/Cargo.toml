@@ -34,7 +34,6 @@ log = { workspace = true }
 percent-encoding = { workspace = true }
 rand = { workspace = true }
 reqsign-core = { workspace = true }
-reqwest = { workspace = true }
 rsa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
