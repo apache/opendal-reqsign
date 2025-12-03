@@ -96,7 +96,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli --version 0.2.105 --locked
+        run: cargo install wasm-bindgen-cli --version 0.2.106 --locked
       - name: Run wasm tests
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
