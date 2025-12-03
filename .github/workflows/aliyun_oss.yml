@@ -35,7 +35,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Test
         working-directory: ./services/aliyun-oss
         run: cargo test --no-fail-fast

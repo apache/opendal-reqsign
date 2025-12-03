@@ -35,7 +35,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Test
         working-directory: ./services/huaweicloud-obs
         run: cargo test --no-fail-fast

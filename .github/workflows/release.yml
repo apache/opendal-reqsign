@@ -32,5 +32,5 @@ jobs:
     name: Publish Workspace
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - run: cargo publish --workspace

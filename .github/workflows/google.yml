@@ -38,7 +38,7 @@ jobs:
   unit_test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Run unit tests
         working-directory: ./services/google
         run: |
@@ -70,7 +70,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -98,7 +98,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -127,7 +127,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -154,7 +154,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -186,7 +186,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -221,7 +221,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -250,7 +250,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Start mock metadata server
         run: |
           python3 services/google/tests/mocks/vm_metadata_mock_server.py 8080 &
