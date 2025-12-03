@@ -38,7 +38,7 @@ jobs:
   unit_test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Run unit tests
         working-directory: ./services/azure-storage
         run: |
@@ -70,7 +70,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -99,7 +99,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -127,7 +127,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -156,7 +156,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -184,7 +184,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -228,7 +228,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -261,7 +261,7 @@ jobs:
   test_imds_provider:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Start IMDS mock server
         run: |
           python3 ./services/azure-storage/tests/mocks/imds_mock.py 8080 &

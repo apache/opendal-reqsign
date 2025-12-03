@@ -33,7 +33,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -46,7 +46,7 @@ jobs:
     env:
       FORCE_COLOR: 1
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Check license headers
         uses: korandoru/hawkeye@v6
 
@@ -59,7 +59,7 @@ jobs:
           - macos-latest
           - windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Build
         run: cargo build --workspace
 
@@ -67,7 +67,7 @@ jobs:
   build_under_wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Build
         working-directory: reqsign
         run: |
@@ -79,7 +79,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Test
         run: cargo test --no-fail-fast
         env:
@@ -94,7 +94,7 @@ jobs:
   wasm_tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install wasm-bindgen-cli
         run: cargo install wasm-bindgen-cli --version 0.2.106 --locked
       - name: Run wasm tests

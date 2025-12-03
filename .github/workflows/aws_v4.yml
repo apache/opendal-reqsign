@@ -38,7 +38,7 @@ jobs:
   unit_test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Run unit tests
         working-directory: ./services/aws-v4
         run: |
@@ -70,7 +70,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -100,7 +100,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -127,7 +127,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -175,7 +175,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:
@@ -207,7 +207,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Get GitHub OIDC token
         uses: actions/github-script@v8
         id: idtoken
@@ -247,7 +247,7 @@ jobs:
   test_imds_provider:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Start amazon-ec2-metadata-mock
         run: |
           # Download ec2-metadata-mock binary
@@ -323,7 +323,7 @@ jobs:
   test_ecs_provider:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup Mock ECS Credentials Server
         run: |
           # Start the mock server in background using the maintained script
@@ -372,7 +372,7 @@ jobs:
   test_sso_provider:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup SSO Mock Environment
         run: |
           # Create test home directory structure
@@ -451,7 +451,7 @@ jobs:
   test_process_provider:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup process credential helper
         run: |
           # Create test home directory
@@ -512,7 +512,7 @@ jobs:
   test_cognito_provider:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Start Cognito Identity Mock Server
         run: |
           # Start the mock server
@@ -555,7 +555,7 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Setup 1Password Connect
         uses: 1password/load-secrets-action/configure@v3
         with:

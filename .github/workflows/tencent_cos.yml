@@ -35,7 +35,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Test
         working-directory: ./services/tencent-cos
         run: cargo test --no-fail-fast
@@ -55,7 +55,7 @@ jobs:
       id-token: "write"
     if: github.event_name == 'push' || !github.event.pull_request.head.repo.fork
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Get Id Token
         uses: actions/github-script@v8
