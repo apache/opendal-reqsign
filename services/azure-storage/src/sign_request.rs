@@ -259,13 +259,15 @@ impl SignRequest for RequestSigner {
                                     let version = cfg.version.as_deref().unwrap_or("2020-12-06");
                                     let fetched = crate::user_delegation::get_user_delegation_key(
                                         context,
-                                        sctx.scheme.as_str(),
-                                        sctx.authority.as_str(),
-                                        token,
-                                        now_time,
-                                        expiry,
-                                        version,
-                                        now_time,
+                                        crate::user_delegation::UserDelegationKeyRequest {
+                                            scheme: sctx.scheme.as_str(),
+                                            authority: sctx.authority.as_str(),
+                                            bearer_token: token,
+                                            start: now_time,
+                                            expiry,
+                                            service_version: version,
+                                            now: now_time,
+                                        },
                                     )
                                     .await?;
                                     *self
@@ -278,13 +280,15 @@ impl SignRequest for RequestSigner {
                                 let version = cfg.version.as_deref().unwrap_or("2020-12-06");
                                 let fetched = crate::user_delegation::get_user_delegation_key(
                                     context,
-                                    sctx.scheme.as_str(),
-                                    sctx.authority.as_str(),
-                                    token,
-                                    now_time,
-                                    expiry,
-                                    version,
-                                    now_time,
+                                    crate::user_delegation::UserDelegationKeyRequest {
+                                        scheme: sctx.scheme.as_str(),
+                                        authority: sctx.authority.as_str(),
+                                        bearer_token: token,
+                                        start: now_time,
+                                        expiry,
+                                        service_version: version,
+                                        now: now_time,
+                                    },
                                 )
                                 .await?;
                                 *self
@@ -433,7 +437,7 @@ impl SignRequest for RequestSigner {
 }
 
 fn infer_account_name(authority: &str) -> Result<String> {
-    let host = authority.split('@').last().unwrap_or(authority);
+    let host = authority.split('@').next_back().unwrap_or(authority);
     let host = host.split(':').next().unwrap_or(host);
     let Some((account, _)) = host.split_once('.') else {
         return Err(reqsign_core::Error::request_invalid(

@@ -37,33 +37,43 @@ pub(crate) struct UserDelegationKey {
     pub value: String,
 }
 
+pub(crate) struct UserDelegationKeyRequest<'a> {
+    pub scheme: &'a str,
+    pub authority: &'a str,
+    pub bearer_token: &'a str,
+    pub start: Timestamp,
+    pub expiry: Timestamp,
+    pub service_version: &'a str,
+    pub now: Timestamp,
+}
+
 pub(crate) async fn get_user_delegation_key(
     ctx: &Context,
-    scheme: &str,
-    authority: &str,
-    bearer_token: &str,
-    start: Timestamp,
-    expiry: Timestamp,
-    service_version: &str,
-    now: Timestamp,
+    request: UserDelegationKeyRequest<'_>,
 ) -> Result<UserDelegationKey> {
-    let uri: http::Uri = format!("{scheme}://{authority}/?restype=service&comp=userdelegationkey")
-        .parse()
-        .map_err(|e| {
-            reqsign_core::Error::request_invalid("invalid user delegation key URI").with_source(e)
-        })?;
+    let uri: http::Uri = format!(
+        "{}://{}/?restype=service&comp=userdelegationkey",
+        request.scheme, request.authority
+    )
+    .parse()
+    .map_err(|e| {
+        reqsign_core::Error::request_invalid("invalid user delegation key URI").with_source(e)
+    })?;
 
     let body = format!(
         "<UserDelegationKey><SignedStart>{}</SignedStart><SignedExpiry>{}</SignedExpiry></UserDelegationKey>",
-        start.format_rfc3339_zulu(),
-        expiry.format_rfc3339_zulu(),
+        request.start.format_rfc3339_zulu(),
+        request.expiry.format_rfc3339_zulu(),
     );
 
     let req = http::Request::post(uri)
-        .header("x-ms-version", service_version)
-        .header("x-ms-date", now.format_http_date())
+        .header("x-ms-version", request.service_version)
+        .header("x-ms-date", request.now.format_http_date())
         .header(header::CONTENT_TYPE, "application/xml")
-        .header(header::AUTHORIZATION, format!("Bearer {bearer_token}"))
+        .header(
+            header::AUTHORIZATION,
+            format!("Bearer {}", request.bearer_token),
+        )
         .body(Bytes::from(body))
         .map_err(|e| {
             reqsign_core::Error::unexpected("failed to build user delegation key request")
