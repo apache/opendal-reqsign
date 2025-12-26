@@ -162,17 +162,17 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
         let endpoint = sts_endpoint(self.region.as_deref(), self.use_regional_sts_endpoint)
             .map_err(|e| e.with_context(format!("role_arn: {}", self.role_arn)))?;
 
-        let query = build_assume_role_query(
-            &self.role_arn,
-            &self.role_session_name,
-            self.external_id.as_deref(),
-            self.duration_seconds,
-            self.tags.as_deref(),
-            self.policy.as_deref(),
-            self.policy_arns.as_deref(),
-            self.serial_number.as_deref(),
-            self.token_code.as_deref(),
-        );
+        let query = build_assume_role_query(AssumeRoleQueryInput {
+            role_arn: &self.role_arn,
+            role_session_name: &self.role_session_name,
+            external_id: self.external_id.as_deref(),
+            duration_seconds: self.duration_seconds,
+            tags: self.tags.as_deref(),
+            policy: self.policy.as_deref(),
+            policy_arns: self.policy_arns.as_deref(),
+            serial_number: self.serial_number.as_deref(),
+            token_code: self.token_code.as_deref(),
+        });
         let url = format!("https://{endpoint}/?{query}");
 
         let req = http::request::Request::builder()
@@ -246,40 +246,42 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
     }
 }
 
-fn build_assume_role_query(
-    role_arn: &str,
-    role_session_name: &str,
-    external_id: Option<&str>,
+struct AssumeRoleQueryInput<'a> {
+    role_arn: &'a str,
+    role_session_name: &'a str,
+    external_id: Option<&'a str>,
     duration_seconds: Option<u32>,
-    tags: Option<&[(String, String)]>,
-    policy: Option<&str>,
-    policy_arns: Option<&[String]>,
-    serial_number: Option<&str>,
-    token_code: Option<&str>,
-) -> String {
+    tags: Option<&'a [(String, String)]>,
+    policy: Option<&'a str>,
+    policy_arns: Option<&'a [String]>,
+    serial_number: Option<&'a str>,
+    token_code: Option<&'a str>,
+}
+
+fn build_assume_role_query(input: AssumeRoleQueryInput<'_>) -> String {
     let mut serializer = Serializer::new(String::new());
     serializer
         .append_pair("Action", "AssumeRole")
-        .append_pair("RoleArn", role_arn)
+        .append_pair("RoleArn", input.role_arn)
         .append_pair("Version", "2011-06-15")
-        .append_pair("RoleSessionName", role_session_name);
+        .append_pair("RoleSessionName", input.role_session_name);
 
-    if let Some(external_id) = external_id {
+    if let Some(external_id) = input.external_id {
         serializer.append_pair("ExternalId", external_id);
     }
-    if let Some(duration_seconds) = duration_seconds {
+    if let Some(duration_seconds) = input.duration_seconds {
         serializer.append_pair("DurationSeconds", &duration_seconds.to_string());
     }
-    if let Some(policy) = policy {
+    if let Some(policy) = input.policy {
         serializer.append_pair("Policy", policy);
     }
-    if let Some(policy_arns) = policy_arns {
+    if let Some(policy_arns) = input.policy_arns {
         for (idx, arn) in policy_arns.iter().enumerate() {
             let key = format!("PolicyArns.member.{}.arn", idx + 1);
             serializer.append_pair(&key, arn);
         }
     }
-    if let Some(tags) = tags {
+    if let Some(tags) = input.tags {
         for (idx, (key, value)) in tags.iter().enumerate() {
             let tag_index = idx + 1;
             serializer
@@ -287,10 +289,10 @@ fn build_assume_role_query(
                 .append_pair(&format!("Tags.member.{tag_index}.Value"), value);
         }
     }
-    if let Some(serial_number) = serial_number {
+    if let Some(serial_number) = input.serial_number {
         serializer.append_pair("SerialNumber", serial_number);
     }
-    if let Some(token_code) = token_code {
+    if let Some(token_code) = input.token_code {
         serializer.append_pair("TokenCode", token_code);
     }
 
@@ -384,22 +386,26 @@ mod tests {
             "arn:aws:iam::aws:policy/ReadOnlyAccess".to_string(),
             "arn:aws:iam::123456789012:policy/ExamplePolicy".to_string(),
         ];
-        let query = build_assume_role_query(
-            "arn:aws:iam::123456789012:role/test-role",
-            "reqsign",
-            None,
-            Some(3600),
-            None,
-            Some(policy),
-            Some(policy_arns.as_slice()),
-            None,
-            None,
-        );
+        let query = build_assume_role_query(AssumeRoleQueryInput {
+            role_arn: "arn:aws:iam::123456789012:role/test-role",
+            role_session_name: "reqsign",
+            external_id: None,
+            duration_seconds: Some(3600),
+            tags: None,
+            policy: Some(policy),
+            policy_arns: Some(policy_arns.as_slice()),
+            serial_number: None,
+            token_code: None,
+        });
 
         assert!(
             query.contains("Policy=%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Action%22%3A%22s3%3AListBucket%22%2C%22Resource%22%3A%22*%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22s3%3Aprefix%22%3A%22a+b%22%7D%7D%7D%5D%7D")
         );
-        assert!(query.contains("PolicyArns.member.1.arn=arn%3Aaws%3Aiam%3A%3Aaws%3Apolicy%2FReadOnlyAccess"));
-        assert!(query.contains("PolicyArns.member.2.arn=arn%3Aaws%3Aiam%3A%3A123456789012%3Apolicy%2FExamplePolicy"));
+        assert!(query.contains(
+            "PolicyArns.member.1.arn=arn%3Aaws%3Aiam%3A%3Aaws%3Apolicy%2FReadOnlyAccess"
+        ));
+        assert!(query.contains(
+            "PolicyArns.member.2.arn=arn%3Aaws%3Aiam%3A%3A123456789012%3Apolicy%2FExamplePolicy"
+        ));
     }
 }
