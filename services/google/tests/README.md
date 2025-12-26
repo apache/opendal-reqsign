@@ -34,6 +34,7 @@ Tests for request signing functionality:
 - `REQSIGN_GOOGLE_TEST_IMPERSONATION_REAL`: Set to `on` to test with real impersonation credentials
 - `REQSIGN_GOOGLE_TEST_IMPERSONATION_DELEGATES`: Set to `on` to test impersonation with delegation chain
 - `REQSIGN_GOOGLE_TEST_VM_METADATA`: Set to `on` to enable VmMetadataCredentialProvider tests (GCP VMs only)
+- `REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK`: Set to `on` to enable VmMetadataCredentialProvider tests with the local mock server
 
 ### Google Cloud Configuration
 - `GOOGLE_APPLICATION_CREDENTIALS`: Path to credential JSON file (supports all credential types)
@@ -108,6 +109,7 @@ The DefaultCredentialProvider automatically detects and handles all these types.
 ## Notes
 
 - The VmMetadataCredentialProvider tests are disabled by default in CI as they require running on actual GCP VMs
+- CI runs a separate VmMetadataCredentialProvider test via the mock metadata server
 - External Account tests can run in GitHub Actions with proper Workload Identity setup
 - Impersonation tests require proper IAM permissions for the source credentials
 - Tests use real GCS API endpoints to verify signature validity
