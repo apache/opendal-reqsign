@@ -113,3 +113,13 @@ The DefaultCredentialProvider automatically detects and handles all these types.
 - Tests use real GCS API endpoints to verify signature validity
 - All tests are designed to be idempotent and safe to run repeatedly
 - Some credential provider tests use test data that will fail token exchange - this is expected
+
+## Local STS Mock
+
+For local development without real Google Cloud credentials, you can run a simple STS mock:
+
+```bash
+python3 services/google/tests/mocks/sts_mock_server.py 5000
+```
+
+The example credential file `services/google/testdata/test_external_account.json` is configured to use this mock.
