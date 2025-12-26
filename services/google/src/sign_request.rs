@@ -267,8 +267,7 @@ impl RequestSigner {
         let signature =
             Self::sign_with_service_account(&service_account.private_key, &string_to_sign)?;
 
-        req.query
-            .push(("X-Goog-Signature".to_string(), signature));
+        req.query.push(("X-Goog-Signature".to_string(), signature));
 
         Ok(req)
     }
@@ -295,7 +294,9 @@ impl RequestSigner {
         let body = serde_json::to_vec(&SignBlobRequest {
             payload: &payload_b64,
         })
-        .map_err(|e| reqsign_core::Error::unexpected("failed to encode signBlob request").with_source(e))?;
+        .map_err(|e| {
+            reqsign_core::Error::unexpected("failed to encode signBlob request").with_source(e)
+        })?;
 
         let req = http::Request::builder()
             .method(http::Method::POST)
@@ -352,8 +353,7 @@ impl RequestSigner {
             .sign_via_iamcredentials(ctx, token, signer_email, string_to_sign.as_bytes())
             .await?;
 
-        req.query
-            .push(("X-Goog-Signature".to_string(), signature));
+        req.query.push(("X-Goog-Signature".to_string(), signature));
 
         Ok(req)
     }
@@ -388,8 +388,14 @@ impl SignRequest for RequestSigner {
                         ));
                     }
 
-                    self.build_signed_query_via_iamcredentials(ctx, req, token, signer_email, expires)
-                        .await?
+                    self.build_signed_query_via_iamcredentials(
+                        ctx,
+                        req,
+                        token,
+                        signer_email,
+                        expires,
+                    )
+                    .await?
                 } else {
                     return Err(reqsign_core::Error::credential_invalid(
                         "service account or token + signer_email required for query signing",
@@ -674,8 +680,12 @@ mod tests {
         let (mut parts_for_rebuild, _body) = req.into_parts();
 
         let mut signing_req = SigningRequest::build(&mut parts_for_rebuild)?;
-        let string_to_sign =
-            signer.build_string_to_sign(&mut signing_req, "test-signer@example.com", now, expires_in)?;
+        let string_to_sign = signer.build_string_to_sign(
+            &mut signing_req,
+            "test-signer@example.com",
+            now,
+            expires_in,
+        )?;
         let expected_payload_b64 = reqsign_core::hash::base64_encode(string_to_sign.as_bytes());
 
         let recorded_payload_b64 = mock_http
