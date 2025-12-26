@@ -156,7 +156,6 @@
 //! - [Blob storage operations](examples/blob_storage.rs)
 //! - [SAS token generation](examples/sas_token.rs)
 
-mod account_sas;
 mod constants;
 mod service_sas;
 mod user_delegation;
