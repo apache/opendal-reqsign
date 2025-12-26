@@ -251,9 +251,8 @@ impl ExternalAccountCredentialProvider {
             .header(ACCEPT, "application/json")
             .header(CONTENT_TYPE, "application/json")
             .header(http::header::AUTHORIZATION, {
-                let mut value: http::HeaderValue = format!("Bearer {access_token}")
-                    .parse()
-                    .map_err(|e| {
+                let mut value: http::HeaderValue =
+                    format!("Bearer {access_token}").parse().map_err(|e| {
                         reqsign_core::Error::unexpected("failed to parse header value")
                             .with_source(e)
                     })?;
@@ -344,14 +343,11 @@ fn resolve_template(ctx: &Context, input: &str) -> Result<String> {
             )));
         }
 
-        let value = ctx
-            .env_var(var)
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| {
-                reqsign_core::Error::config_invalid(format!(
-                    "missing environment variable {var} required by template: {input}"
-                ))
-            })?;
+        let value = ctx.env_var(var).filter(|v| !v.is_empty()).ok_or_else(|| {
+            reqsign_core::Error::config_invalid(format!(
+                "missing environment variable {var} required by template: {input}"
+            ))
+        })?;
         out.push_str(&value);
     }
 }
@@ -438,8 +434,9 @@ mod tests {
                 "application/x-www-form-urlencoded"
             );
 
-            let pairs: HashMap<String, String> =
-                form_urlencoded::parse(req.body().as_ref()).into_owned().collect();
+            let pairs: HashMap<String, String> = form_urlencoded::parse(req.body().as_ref())
+                .into_owned()
+                .collect();
             assert_eq!(
                 pairs.get("grant_type").map(String::as_str),
                 Some("urn:ietf:params:oauth:grant-type:token-exchange")
@@ -506,7 +503,9 @@ mod tests {
                 http::Method::POST => {
                     assert_eq!(req.uri().to_string(), self.expected_post_url);
                     let pairs: HashMap<String, String> =
-                        form_urlencoded::parse(req.body().as_ref()).into_owned().collect();
+                        form_urlencoded::parse(req.body().as_ref())
+                            .into_owned()
+                            .collect();
                     assert_eq!(
                         pairs.get("subject_token").map(String::as_str),
                         Some(self.expected_subject_token.as_str())
@@ -556,7 +555,8 @@ mod tests {
         let fs = MockFileRead::default().with_file("/var/run/token", b"  test-oidc \n");
         let ctx = Context::new().with_http_send(http).with_file_read(fs);
 
-        let provider = ExternalAccountCredentialProvider::new(external_account).with_scope("scope-a");
+        let provider =
+            ExternalAccountCredentialProvider::new(external_account).with_scope("scope-a");
         let cred = provider
             .provide_credential(&ctx)
             .await?
