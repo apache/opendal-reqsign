@@ -813,12 +813,55 @@ mod tests {
             &self,
             req: http::Request<Bytes>,
         ) -> reqsign_core::Result<http::Response<Bytes>> {
+            if req.method() != http::Method::POST {
+                return Err(reqsign_core::Error::unexpected("unexpected request method")
+                    .with_context(req.method().to_string()));
+            }
+
             let uri = req.uri().to_string();
             if uri
                 != "https://account.blob.core.windows.net/?restype=service&comp=userdelegationkey"
             {
                 return Err(
                     reqsign_core::Error::unexpected("unexpected request uri").with_context(uri)
+                );
+            }
+
+            let version = req
+                .headers()
+                .get("x-ms-version")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            if version != "2020-12-06" {
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected x-ms-version header")
+                        .with_context(version),
+                );
+            }
+
+            let date = req
+                .headers()
+                .get("x-ms-date")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            if date != "Tue, 01 Mar 2022 08:12:34 GMT" {
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected x-ms-date header").with_context(date),
+                );
+            }
+
+            let content_type = req
+                .headers()
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            if content_type != "application/xml" {
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected content-type header")
+                        .with_context(content_type),
                 );
             }
 
@@ -832,6 +875,16 @@ mod tests {
                 return Err(
                     reqsign_core::Error::unexpected("unexpected authorization header")
                         .with_context(auth),
+                );
+            }
+
+            let body = String::from_utf8_lossy(req.body()).to_string();
+            if !body.contains("<KeyInfo>")
+                || !body.contains("<Start>2022-03-01T08:12:34Z</Start>")
+                || !body.contains("<Expiry>2022-03-01T08:17:34Z</Expiry>")
+            {
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected request body").with_context(body),
                 );
             }
 
