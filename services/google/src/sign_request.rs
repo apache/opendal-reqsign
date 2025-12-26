@@ -73,6 +73,7 @@ pub struct RequestSigner {
     service: String,
     region: String,
     scope: Option<String>,
+    signer_email: Option<String>,
 }
 
 impl Default for RequestSigner {
@@ -81,6 +82,7 @@ impl Default for RequestSigner {
             service: String::new(),
             region: "auto".to_string(),
             scope: None,
+            signer_email: None,
         }
     }
 }
@@ -92,12 +94,22 @@ impl RequestSigner {
             service: service.into(),
             region: "auto".to_string(),
             scope: None,
+            signer_email: None,
         }
     }
 
     /// Set the OAuth2 scope.
     pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
         self.scope = Some(scope.into());
+        self
+    }
+
+    /// Set the signer service account email used for query signing via IAMCredentials `signBlob`.
+    ///
+    /// This is required when generating signed URLs without an embedded service account private key
+    /// (e.g. ADC / WIF / impersonation tokens).
+    pub fn with_signer_email(mut self, signer_email: impl Into<String>) -> Self {
+        self.signer_email = Some(signer_email.into());
         self
     }
 
@@ -185,34 +197,27 @@ impl RequestSigner {
         Ok(req)
     }
 
-    fn build_signed_query(
+    fn build_string_to_sign(
         &self,
-        _ctx: &Context,
-        parts: &mut http::request::Parts,
-        service_account: &ServiceAccount,
+        req: &mut SigningRequest,
+        client_email: &str,
+        now: Timestamp,
         expires_in: Duration,
-    ) -> Result<SigningRequest> {
-        let mut req = SigningRequest::build(parts)?;
-        let now = Timestamp::now();
+    ) -> Result<String> {
+        canonicalize_header(req)?;
 
-        // Canonicalize headers
-        canonicalize_header(&mut req)?;
-
-        // Canonicalize query
         canonicalize_query(
-            &mut req,
+            req,
             SigningMethod::Query(expires_in),
-            service_account,
+            client_email,
             now,
             &self.service,
             &self.region,
         )?;
 
-        // Build canonical request string
-        let creq = canonical_request_string(&mut req)?;
+        let creq = canonical_request_string(req)?;
         let encoded_req = hex_sha256(creq.as_bytes());
 
-        // Build scope
         let scope = format!(
             "{}/{}/{}/goog4_request",
             now.format_date(),
@@ -221,7 +226,6 @@ impl RequestSigner {
         );
         debug!("calculated scope: {scope}");
 
-        // Build string to sign
         let string_to_sign = {
             let mut f = String::new();
             f.push_str("GOOG4-RSA-SHA256");
@@ -235,17 +239,121 @@ impl RequestSigner {
         };
         debug!("calculated string to sign: {string_to_sign}");
 
-        // Sign the string
+        Ok(string_to_sign)
+    }
+
+    fn sign_with_service_account(private_key_pem: &str, string_to_sign: &str) -> Result<String> {
         let mut rng = thread_rng();
-        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&service_account.private_key)
-            .map_err(|e| {
-                reqsign_core::Error::unexpected("failed to parse private key").with_source(e)
-            })?;
+        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to parse private key").with_source(e)
+        })?;
         let signing_key = SigningKey::<sha2::Sha256>::new(private_key);
         let signature = signing_key.sign_with_rng(&mut rng, string_to_sign.as_bytes());
 
-        req.query
-            .push(("X-Goog-Signature".to_string(), signature.to_string()));
+        Ok(signature.to_string())
+    }
+
+    fn build_signed_query_with_service_account(
+        &self,
+        parts: &mut http::request::Parts,
+        service_account: &ServiceAccount,
+        expires_in: Duration,
+    ) -> Result<SigningRequest> {
+        let mut req = SigningRequest::build(parts)?;
+        let now = Timestamp::now();
+
+        let string_to_sign =
+            self.build_string_to_sign(&mut req, &service_account.client_email, now, expires_in)?;
+        let signature =
+            Self::sign_with_service_account(&service_account.private_key, &string_to_sign)?;
+
+        req.query.push(("X-Goog-Signature".to_string(), signature));
+
+        Ok(req)
+    }
+
+    async fn sign_via_iamcredentials(
+        &self,
+        ctx: &Context,
+        token: &Token,
+        signer_email: &str,
+        payload: &[u8],
+    ) -> Result<String> {
+        #[derive(Serialize)]
+        struct SignBlobRequest<'a> {
+            payload: &'a str,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct SignBlobResponse {
+            signed_blob: String,
+        }
+
+        let payload_b64 = reqsign_core::hash::base64_encode(payload);
+        let body = serde_json::to_vec(&SignBlobRequest {
+            payload: &payload_b64,
+        })
+        .map_err(|e| {
+            reqsign_core::Error::unexpected("failed to encode signBlob request").with_source(e)
+        })?;
+
+        let req = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(format!(
+                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{signer_email}:signBlob"
+            ))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, {
+                let mut value: http::HeaderValue = format!("Bearer {}", &token.access_token)
+                    .parse()
+                    .map_err(|e| {
+                        reqsign_core::Error::unexpected("failed to parse header value")
+                            .with_source(e)
+                    })?;
+                value.set_sensitive(true);
+                value
+            })
+            .body(body.into())
+            .map_err(|e| {
+                reqsign_core::Error::unexpected("failed to build HTTP request").with_source(e)
+            })?;
+
+        let resp = ctx.http_send(req).await?;
+
+        if resp.status() != http::StatusCode::OK {
+            let body = String::from_utf8_lossy(resp.body());
+            return Err(reqsign_core::Error::unexpected(format!(
+                "iamcredentials signBlob failed: {body}"
+            )));
+        }
+
+        let sign_resp: SignBlobResponse = serde_json::from_slice(resp.body()).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to parse signBlob response").with_source(e)
+        })?;
+
+        let signed = reqsign_core::hash::base64_decode(&sign_resp.signed_blob)?;
+
+        Ok(hex_encode_upper(&signed))
+    }
+
+    async fn build_signed_query_via_iamcredentials(
+        &self,
+        ctx: &Context,
+        parts: &mut http::request::Parts,
+        token: &Token,
+        signer_email: &str,
+        expires_in: Duration,
+    ) -> Result<SigningRequest> {
+        let mut req = SigningRequest::build(parts)?;
+        let now = Timestamp::now();
+
+        let string_to_sign = self.build_string_to_sign(&mut req, signer_email, now, expires_in)?;
+        let signature = self
+            .sign_via_iamcredentials(ctx, token, signer_email, string_to_sign.as_bytes())
+            .await?;
+
+        req.query.push(("X-Goog-Signature".to_string(), signature));
 
         Ok(req)
     }
@@ -267,14 +375,32 @@ impl SignRequest for RequestSigner {
         };
 
         let signing_req = match expires_in {
-            // Query signing - must use ServiceAccount
+            // Query signing - prefer ServiceAccount, otherwise use IAMCredentials signBlob if possible.
             Some(expires) => {
-                let sa = cred.service_account.as_ref().ok_or_else(|| {
-                    reqsign_core::Error::credential_invalid(
-                        "service account required for query signing",
+                if let Some(sa) = cred.service_account.as_ref() {
+                    self.build_signed_query_with_service_account(req, sa, expires)?
+                } else if let (Some(token), Some(signer_email)) =
+                    (cred.token.as_ref(), self.signer_email.as_deref())
+                {
+                    if !token.is_valid() {
+                        return Err(reqsign_core::Error::credential_invalid(
+                            "token required for iamcredentials signBlob query signing",
+                        ));
+                    }
+
+                    self.build_signed_query_via_iamcredentials(
+                        ctx,
+                        req,
+                        token,
+                        signer_email,
+                        expires,
                     )
-                })?;
-                self.build_signed_query(ctx, req, sa, expires)?
+                    .await?
+                } else {
+                    return Err(reqsign_core::Error::credential_invalid(
+                        "service account or token + signer_email required for query signing",
+                    ));
+                }
             }
             // Header authentication - prefer valid token, otherwise exchange from SA
             None => {
@@ -309,6 +435,16 @@ impl SignRequest for RequestSigner {
             reqsign_core::Error::unexpected("failed to apply signing request").with_source(e)
         })
     }
+}
+
+fn hex_encode_upper(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(&mut out, "{:02X}", b).expect("writing to string must succeed");
+    }
+    out
 }
 
 fn canonical_request_string(req: &mut SigningRequest) -> Result<String> {
@@ -373,7 +509,7 @@ fn canonicalize_header(req: &mut SigningRequest) -> Result<()> {
 fn canonicalize_query(
     req: &mut SigningRequest,
     method: SigningMethod,
-    cred: &ServiceAccount,
+    client_email: &str,
     now: Timestamp,
     service: &str,
     region: &str,
@@ -385,7 +521,7 @@ fn canonicalize_query(
             "X-Goog-Credential".into(),
             format!(
                 "{}/{}/{}/{}/goog4_request",
-                &cred.client_email,
+                client_email,
                 now.format_date(),
                 region,
                 service
@@ -420,4 +556,148 @@ fn canonicalize_query(
         .collect();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use async_trait::async_trait;
+    use bytes::Bytes;
+    use http::header;
+    use reqsign_core::HttpSend;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct Recorded {
+        payload_b64: Option<String>,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct MockHttpSend {
+        recorded: Arc<Mutex<Recorded>>,
+    }
+
+    #[async_trait]
+    impl HttpSend for MockHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            assert_eq!(req.method(), http::Method::POST);
+            assert_eq!(
+                req.uri().to_string(),
+                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/test-signer@example.com:signBlob"
+            );
+            assert_eq!(
+                req.headers()
+                    .get(header::CONTENT_TYPE)
+                    .expect("content-type must exist")
+                    .to_str()
+                    .expect("content-type must be valid string"),
+                "application/json"
+            );
+            assert_eq!(
+                req.headers()
+                    .get(header::AUTHORIZATION)
+                    .expect("authorization must exist")
+                    .to_str()
+                    .expect("authorization must be valid string"),
+                "Bearer test-access-token"
+            );
+
+            let value: serde_json::Value =
+                serde_json::from_slice(req.body()).expect("body must be valid json");
+            let payload_b64 = value
+                .get("payload")
+                .and_then(|v| v.as_str())
+                .expect("payload must exist")
+                .to_string();
+
+            self.recorded.lock().unwrap().payload_b64 = Some(payload_b64);
+
+            // base64([0x01, 0x02, 0x03]) -> hex signature "010203"
+            let body = br#"{"signedBlob":"AQID"}"#;
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(body.as_slice().into())
+                .expect("response must build"))
+        }
+    }
+
+    fn query_get<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+        query.split('&').find_map(|kv| {
+            let (k, v) = kv.split_once('=')?;
+            if k == key { Some(v) } else { None }
+        })
+    }
+
+    fn parse_goog_date_to_timestamp(v: &str) -> Timestamp {
+        let year = &v[0..4];
+        let month = &v[4..6];
+        let day = &v[6..8];
+        let hour = &v[9..11];
+        let minute = &v[11..13];
+        let second = &v[13..15];
+        let rfc3339 = format!("{year}-{month}-{day}T{hour}:{minute}:{second}Z");
+        rfc3339.parse().expect("date must parse")
+    }
+
+    #[tokio::test]
+    async fn test_signed_url_via_iamcredentials_sign_blob() -> Result<()> {
+        let mock_http = MockHttpSend::default();
+        let ctx = Context::new().with_http_send(mock_http.clone());
+
+        let signer = RequestSigner::new("storage").with_signer_email("test-signer@example.com");
+
+        let cred = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: None,
+        });
+
+        let expires_in = Duration::from_secs(60);
+
+        let mut builder = http::Request::builder();
+        builder = builder.method(http::Method::GET);
+        builder = builder.uri("https://storage.googleapis.com/test-bucket/test-object");
+        let req = builder.body(Bytes::new()).expect("request must build");
+        let (mut parts, _body) = req.into_parts();
+
+        signer
+            .sign_request(&ctx, &mut parts, Some(&cred), Some(expires_in))
+            .await?;
+
+        let query = parts.uri.query().expect("signed url must have query");
+        assert_eq!(
+            query_get(query, "X-Goog-Signature").expect("signature must exist"),
+            "010203"
+        );
+
+        let goog_date = query_get(query, "X-Goog-Date").expect("date must exist");
+        let now = parse_goog_date_to_timestamp(goog_date);
+
+        let mut builder = http::Request::builder();
+        builder = builder.method(http::Method::GET);
+        builder = builder.uri("https://storage.googleapis.com/test-bucket/test-object");
+        let req = builder.body(Bytes::new()).expect("request must build");
+        let (mut parts_for_rebuild, _body) = req.into_parts();
+
+        let mut signing_req = SigningRequest::build(&mut parts_for_rebuild)?;
+        let string_to_sign = signer.build_string_to_sign(
+            &mut signing_req,
+            "test-signer@example.com",
+            now,
+            expires_in,
+        )?;
+        let expected_payload_b64 = reqsign_core::hash::base64_encode(string_to_sign.as_bytes());
+
+        let recorded_payload_b64 = mock_http
+            .recorded
+            .lock()
+            .unwrap()
+            .payload_b64
+            .clone()
+            .expect("payload must be recorded");
+
+        assert_eq!(recorded_payload_b64, expected_payload_b64);
+
+        Ok(())
+    }
 }
