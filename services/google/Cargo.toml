@@ -40,6 +40,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 dotenv = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
