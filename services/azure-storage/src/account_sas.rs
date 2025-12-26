@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#![allow(dead_code)]
+
 use reqsign_core::Result;
 
 use reqsign_core::hash;
