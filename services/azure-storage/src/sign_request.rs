@@ -848,7 +848,8 @@ mod tests {
                 .to_string();
             if date != "Tue, 01 Mar 2022 08:12:34 GMT" {
                 return Err(
-                    reqsign_core::Error::unexpected("unexpected x-ms-date header").with_context(date),
+                    reqsign_core::Error::unexpected("unexpected x-ms-date header")
+                        .with_context(date),
                 );
             }
 
@@ -884,7 +885,7 @@ mod tests {
                 || !body.contains("<Expiry>2022-03-01T08:17:34Z</Expiry>")
             {
                 return Err(
-                    reqsign_core::Error::unexpected("unexpected request body").with_context(body),
+                    reqsign_core::Error::unexpected("unexpected request body").with_context(body)
                 );
             }
 
