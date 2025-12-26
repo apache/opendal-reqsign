@@ -229,8 +229,14 @@ impl SignRequest for RequestSigner {
                                 sctx.path_percent_decoded().as_ref(),
                             )?;
                         match (cfg.resource, &resource) {
-                            (SasResourceKind::Container, crate::service_sas::ServiceSasResource::Container { .. }) => {}
-                            (SasResourceKind::Blob, crate::service_sas::ServiceSasResource::Blob { .. }) => {}
+                            (
+                                SasResourceKind::Container,
+                                crate::service_sas::ServiceSasResource::Container { .. },
+                            ) => {}
+                            (
+                                SasResourceKind::Blob,
+                                crate::service_sas::ServiceSasResource::Blob { .. },
+                            ) => {}
                             _ => {
                                 return Err(reqsign_core::Error::request_invalid(
                                     "request resource doesn't match configured SAS resource kind",
@@ -289,13 +295,14 @@ impl SignRequest for RequestSigner {
                             }
                         };
 
-                        let mut signer = crate::user_delegation::UserDelegationSharedAccessSignature::new(
-                            account,
-                            key,
-                            resource,
-                            cfg.permissions.to_string(),
-                            expiry,
-                        );
+                        let mut signer =
+                            crate::user_delegation::UserDelegationSharedAccessSignature::new(
+                                account,
+                                key,
+                                resource,
+                                cfg.permissions.to_string(),
+                                expiry,
+                            );
                         if let Some(start) = cfg.start {
                             signer = signer.with_start(start);
                         }
@@ -355,9 +362,10 @@ impl SignRequest for RequestSigner {
                             ));
                         };
 
-                        let resource = crate::service_sas::ServiceSasResource::from_path_percent_decoded(
-                            sctx.path_percent_decoded().as_ref(),
-                        )?;
+                        let resource =
+                            crate::service_sas::ServiceSasResource::from_path_percent_decoded(
+                                sctx.path_percent_decoded().as_ref(),
+                            )?;
 
                         let mut signer = crate::service_sas::ServiceSharedAccessSignature::new(
                             account_name.clone(),
@@ -389,8 +397,7 @@ impl SignRequest for RequestSigner {
                     }
                     SigningMethod::Header => {
                         let now_time = self.time.unwrap_or_else(Timestamp::now);
-                        let string_to_sign =
-                            string_to_sign(&mut sctx, account_name, now_time)?;
+                        let string_to_sign = string_to_sign(&mut sctx, account_name, now_time)?;
                         let decode_content = base64_decode(account_key).map_err(|e| {
                             reqsign_core::Error::unexpected("failed to decode account key")
                                 .with_source(e)
@@ -672,8 +679,8 @@ mod tests {
     use reqsign_core::{Context, HttpSend, OsEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
-    use std::time::Duration;
     use std::str::FromStr;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_sas_token() {
@@ -778,7 +785,12 @@ mod tests {
         let (mut parts, _) = req.into_parts();
 
         builder
-            .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(300)))
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&cred),
+                Some(Duration::from_secs(300)),
+            )
             .await
             .unwrap();
 
@@ -798,10 +810,12 @@ mod tests {
             req: http::Request<Bytes>,
         ) -> reqsign_core::Result<http::Response<Bytes>> {
             let uri = req.uri().to_string();
-            if uri != "https://account.blob.core.windows.net/?restype=service&comp=userdelegationkey"
+            if uri
+                != "https://account.blob.core.windows.net/?restype=service&comp=userdelegationkey"
             {
-                return Err(reqsign_core::Error::unexpected("unexpected request uri")
-                    .with_context(uri));
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected request uri").with_context(uri)
+                );
             }
 
             let auth = req
@@ -811,8 +825,10 @@ mod tests {
                 .unwrap_or_default()
                 .to_string();
             if auth != "Bearer token" {
-                return Err(reqsign_core::Error::unexpected("unexpected authorization header")
-                    .with_context(auth));
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected authorization header")
+                        .with_context(auth),
+                );
             }
 
             let body = r#"
@@ -855,7 +871,12 @@ mod tests {
         let (mut parts, _) = req.into_parts();
 
         builder
-            .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(300)))
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&cred),
+                Some(Duration::from_secs(300)),
+            )
             .await
             .unwrap();
 

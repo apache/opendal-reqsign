@@ -149,22 +149,25 @@ impl ServiceSharedAccessSignature {
                 .map_or("".to_string(), |v| v.format_rfc3339_zulu()),
             self.expiry.format_rfc3339_zulu(),
             canonicalized_resource,
-            "", // si
-            self.ip.clone().unwrap_or_default(), // sip
+            "",                                        // si
+            self.ip.clone().unwrap_or_default(),       // sip
             self.protocol.clone().unwrap_or_default(), // spr
-            &self.version, // sv
-            self.resource.signed_resource(), // sr
-            "", // snapshot time
-            "", // encryption scope
-            "", // rscc
-            "", // rscd
-            "", // rsce
-            "", // rscl
-            "", // rsct
+            &self.version,                             // sv
+            self.resource.signed_resource(),           // sr
+            "",                                        // snapshot time
+            "",                                        // encryption scope
+            "",                                        // rscc
+            "",                                        // rscd
+            "",                                        // rsce
+            "",                                        // rscl
+            "",                                        // rsct
         );
 
         let decoded_key = hash::base64_decode(&self.key)?;
-        Ok(hash::base64_hmac_sha256(&decoded_key, string_to_sign.as_bytes()))
+        Ok(hash::base64_hmac_sha256(
+            &decoded_key,
+            string_to_sign.as_bytes(),
+        ))
     }
 
     /// Generate SAS query parameters.
@@ -173,7 +176,10 @@ impl ServiceSharedAccessSignature {
             ("sv".to_string(), self.version.to_string()),
             ("se".to_string(), self.expiry.format_rfc3339_zulu()),
             ("sp".to_string(), self.permissions.to_string()),
-            ("sr".to_string(), self.resource.signed_resource().to_string()),
+            (
+                "sr".to_string(),
+                self.resource.signed_resource().to_string(),
+            ),
         ];
 
         if let Some(start) = &self.start {

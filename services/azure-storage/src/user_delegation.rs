@@ -47,11 +47,11 @@ pub(crate) async fn get_user_delegation_key(
     service_version: &str,
     now: Timestamp,
 ) -> Result<UserDelegationKey> {
-    let uri: http::Uri = format!(
-        "{scheme}://{authority}/?restype=service&comp=userdelegationkey"
-    )
-    .parse()
-    .map_err(|e| reqsign_core::Error::request_invalid("invalid user delegation key URI").with_source(e))?;
+    let uri: http::Uri = format!("{scheme}://{authority}/?restype=service&comp=userdelegationkey")
+        .parse()
+        .map_err(|e| {
+            reqsign_core::Error::request_invalid("invalid user delegation key URI").with_source(e)
+        })?;
 
     let body = format!(
         "<UserDelegationKey><SignedStart>{}</SignedStart><SignedExpiry>{}</SignedExpiry></UserDelegationKey>",
@@ -65,13 +65,18 @@ pub(crate) async fn get_user_delegation_key(
         .header(header::CONTENT_TYPE, "application/xml")
         .header(header::AUTHORIZATION, format!("Bearer {bearer_token}"))
         .body(Bytes::from(body))
-        .map_err(|e| reqsign_core::Error::unexpected("failed to build user delegation key request").with_source(e))?;
+        .map_err(|e| {
+            reqsign_core::Error::unexpected("failed to build user delegation key request")
+                .with_source(e)
+        })?;
 
     let resp = ctx.http_send(req).await?;
     let (parts, body) = resp.into_parts();
     if !parts.status.is_success() {
-        return Err(reqsign_core::Error::unexpected("user delegation key request failed")
-            .with_context(format!("status: {}", parts.status)));
+        return Err(
+            reqsign_core::Error::unexpected("user delegation key request failed")
+                .with_context(format!("status: {}", parts.status)),
+        );
     }
 
     let xml = String::from_utf8_lossy(&body).to_string();
@@ -212,11 +217,20 @@ impl UserDelegationSharedAccessSignature {
             ("sv".to_string(), self.version.to_string()),
             ("se".to_string(), self.expiry.format_rfc3339_zulu()),
             ("sp".to_string(), self.permissions.to_string()),
-            ("sr".to_string(), self.resource.signed_resource().to_string()),
+            (
+                "sr".to_string(),
+                self.resource.signed_resource().to_string(),
+            ),
             ("skoid".to_string(), self.key.signed_oid.to_string()),
             ("sktid".to_string(), self.key.signed_tid.to_string()),
-            ("skt".to_string(), self.key.signed_start.format_rfc3339_zulu()),
-            ("ske".to_string(), self.key.signed_expiry.format_rfc3339_zulu()),
+            (
+                "skt".to_string(),
+                self.key.signed_start.format_rfc3339_zulu(),
+            ),
+            (
+                "ske".to_string(),
+                self.key.signed_expiry.format_rfc3339_zulu(),
+            ),
             ("sks".to_string(), self.key.signed_service.to_string()),
             ("skv".to_string(), self.key.signed_version.to_string()),
         ];
