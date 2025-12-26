@@ -20,8 +20,7 @@ tests/
 │   ├── shared_key.rs       # SharedKey signature tests
 │   └── sas_token.rs        # SAS token handling tests
 └── mocks/                   # Mock servers for testing
-    ├── imds_mock_server.py  # Mock IMDS endpoint
-    └── oauth_mock_server.py # Mock OAuth2 token endpoint
+    └── imds_mock.py         # Mock IMDS endpoint
 ```
 
 ## Running Tests Locally
@@ -109,26 +108,14 @@ The test suite includes mock servers for testing without Azure dependencies:
 
 Simulates the Azure Instance Metadata Service:
 ```bash
-python3 tests/mocks/imds_mock_server.py 8080
+python3 tests/mocks/imds_mock.py 8080
 ```
 
 Then run tests with:
 ```bash
-export REQSIGN_AZURE_STORAGE_TEST_IMDS_MOCK=on
-export AZURE_IMDS_ENDPOINT=http://localhost:8080
-cargo test credential_providers::imds::test_imds_provider_with_mock
-```
-
-### OAuth Mock Server
-
-Simulates Azure AD token endpoints:
-```bash
-python3 tests/mocks/oauth_mock_server.py 8081
-```
-
-Configure with:
-```bash
-export AZURE_AUTHORITY_HOST=http://localhost:8081
+export REQSIGN_AZURE_STORAGE_TEST_IMDS=on
+export AZURE_IMDS_ENDPOINT=http://localhost:8080/metadata/identity/oauth2/token
+cargo test credential_providers::imds:: --no-fail-fast
 ```
 
 ## GitHub Actions

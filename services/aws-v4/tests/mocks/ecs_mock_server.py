@@ -15,12 +15,16 @@ class ECSHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/creds':
             # Return mock credentials
+            last_updated = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
             expiration = (datetime.utcnow() + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
             response = {
+                'RoleArn': 'arn:aws:iam::123456789012:role/test-ecs-role',
+                'Type': 'AWS-HMAC',
                 'AccessKeyId': 'AKIAIOSFODNN7EXAMPLE',
                 'SecretAccessKey': 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
                 'Token': 'IQoJb3JpZ2luX2VjEJv//////////wEaCXVzLXdlc3QtMiJGMEQCIDyJl0YXJwU8iBG4gLVxiNJTYfLp3oFxEOpGGHmQuWmFAiBHEK/GkClQFb0aQ/+kOZkzHKVAPItVJW/VEXAMPLE=',
-                'Expiration': expiration
+                'Expiration': expiration,
+                'LastUpdated': last_updated,
             }
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')

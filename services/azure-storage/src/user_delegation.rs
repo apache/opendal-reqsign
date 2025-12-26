@@ -60,8 +60,11 @@ pub(crate) async fn get_user_delegation_key(
         reqsign_core::Error::request_invalid("invalid user delegation key URI").with_source(e)
     })?;
 
+    // Azure Blob Storage expects a KeyInfo payload.
+    //
+    // Reference: https://learn.microsoft.com/en-us/rest/api/storageservices/get-user-delegation-key
     let body = format!(
-        "<UserDelegationKey><SignedStart>{}</SignedStart><SignedExpiry>{}</SignedExpiry></UserDelegationKey>",
+        "<KeyInfo><Start>{}</Start><Expiry>{}</Expiry></KeyInfo>",
         request.start.format_rfc3339_zulu(),
         request.expiry.format_rfc3339_zulu(),
     );
