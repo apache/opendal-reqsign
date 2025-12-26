@@ -26,7 +26,17 @@ use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningMethod, SigningRequest};
 use std::fmt::Write;
+use std::sync::Mutex;
 use std::time::Duration;
+
+/// Resource kind required by SAS generation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SasResourceKind {
+    /// Container SAS.
+    Container,
+    /// Blob SAS.
+    Blob,
+}
 
 /// RequestSigner that implement Azure Storage Shared Key Authorization.
 ///
@@ -34,12 +44,123 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct RequestSigner {
     time: Option<Timestamp>,
+    service_sas_permissions: Option<String>,
+    service_sas_start: Option<Timestamp>,
+    service_sas_ip: Option<String>,
+    service_sas_protocol: Option<String>,
+    service_sas_version: Option<String>,
+
+    user_delegation_presign: Option<UserDelegationPresignConfig>,
+    user_delegation_key_cache: Mutex<Option<crate::user_delegation::UserDelegationKey>>,
+}
+
+#[derive(Clone, Debug)]
+struct UserDelegationPresignConfig {
+    resource: SasResourceKind,
+    permissions: String,
+    start: Option<Timestamp>,
+    ip: Option<String>,
+    protocol: Option<String>,
+    version: Option<String>,
 }
 
 impl RequestSigner {
     /// Create a new builder for Azure Storage signer.
     pub fn new() -> Self {
-        Self { time: None }
+        Self {
+            time: None,
+            service_sas_permissions: None,
+            service_sas_start: None,
+            service_sas_ip: None,
+            service_sas_protocol: None,
+            service_sas_version: None,
+
+            user_delegation_presign: None,
+            user_delegation_key_cache: Mutex::new(None),
+        }
+    }
+
+    /// Configure Service SAS presign permissions for Shared Key query signing.
+    ///
+    /// This setting is required when `expires_in` is provided and credential is `SharedKey`.
+    pub fn with_service_sas_permissions(mut self, permissions: &str) -> Self {
+        self.service_sas_permissions = Some(permissions.to_string());
+        self
+    }
+
+    /// Configure Service SAS presign start time for Shared Key query signing.
+    pub fn with_service_sas_start(mut self, start: Timestamp) -> Self {
+        self.service_sas_start = Some(start);
+        self
+    }
+
+    /// Configure Service SAS presign allowed IP range.
+    pub fn with_service_sas_ip(mut self, ip: &str) -> Self {
+        self.service_sas_ip = Some(ip.to_string());
+        self
+    }
+
+    /// Configure Service SAS presign allowed protocol, e.g. `https` or `https,http`.
+    pub fn with_service_sas_protocol(mut self, protocol: &str) -> Self {
+        self.service_sas_protocol = Some(protocol.to_string());
+        self
+    }
+
+    /// Configure Service SAS presign service version.
+    pub fn with_service_sas_version(mut self, version: &str) -> Self {
+        self.service_sas_version = Some(version.to_string());
+        self
+    }
+
+    /// Enable User Delegation SAS presign for Bearer Token query signing.
+    ///
+    /// This is only used when `expires_in` is provided and credential is `BearerToken`.
+    pub fn with_user_delegation_presign(
+        mut self,
+        resource: SasResourceKind,
+        permissions: &str,
+    ) -> Self {
+        self.user_delegation_presign = Some(UserDelegationPresignConfig {
+            resource,
+            permissions: permissions.to_string(),
+            start: None,
+            ip: None,
+            protocol: None,
+            version: None,
+        });
+        self
+    }
+
+    /// Configure User Delegation SAS presign start time.
+    pub fn with_user_delegation_start(mut self, start: Timestamp) -> Self {
+        if let Some(cfg) = self.user_delegation_presign.as_mut() {
+            cfg.start = Some(start);
+        }
+        self
+    }
+
+    /// Configure User Delegation SAS presign allowed IP range.
+    pub fn with_user_delegation_ip(mut self, ip: &str) -> Self {
+        if let Some(cfg) = self.user_delegation_presign.as_mut() {
+            cfg.ip = Some(ip.to_string());
+        }
+        self
+    }
+
+    /// Configure User Delegation SAS presign allowed protocol, e.g. `https` or `https,http`.
+    pub fn with_user_delegation_protocol(mut self, protocol: &str) -> Self {
+        if let Some(cfg) = self.user_delegation_presign.as_mut() {
+            cfg.protocol = Some(protocol.to_string());
+        }
+        self
+    }
+
+    /// Configure User Delegation SAS presign service version.
+    pub fn with_user_delegation_version(mut self, version: &str) -> Self {
+        if let Some(cfg) = self.user_delegation_presign.as_mut() {
+            cfg.version = Some(version.to_string());
+        }
+        self
     }
 
     /// Specify the signing time.
@@ -67,7 +188,7 @@ impl SignRequest for RequestSigner {
 
     async fn sign_request(
         &self,
-        _: &Context,
+        context: &Context,
         req: &mut Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
@@ -82,31 +203,142 @@ impl SignRequest for RequestSigner {
             SigningMethod::Header
         };
 
-        let mut ctx = SigningRequest::build(req)?;
+        let mut sctx = SigningRequest::build(req)?;
 
         // Handle different credential types
         match cred {
             Credential::SasToken { token } => {
                 // SAS token authentication
-                ctx.query_append(token);
+                sctx.query_append(token);
             }
             Credential::BearerToken { token, .. } => {
                 // Bearer token authentication
                 match method {
-                    SigningMethod::Query(_) => {
-                        return Err(reqsign_core::Error::request_invalid(
-                            "BearerToken can't be used in query string",
-                        ));
+                    SigningMethod::Query(d) => {
+                        let Some(cfg) = &self.user_delegation_presign else {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "BearerToken can't be used in query string",
+                            ));
+                        };
+
+                        let now_time = self.time.unwrap_or_else(Timestamp::now);
+                        let expiry = now_time + d;
+
+                        let resource =
+                            crate::service_sas::ServiceSasResource::from_path_percent_decoded(
+                                sctx.path_percent_decoded().as_ref(),
+                            )?;
+                        match (cfg.resource, &resource) {
+                            (
+                                SasResourceKind::Container,
+                                crate::service_sas::ServiceSasResource::Container { .. },
+                            ) => {}
+                            (
+                                SasResourceKind::Blob,
+                                crate::service_sas::ServiceSasResource::Blob { .. },
+                            ) => {}
+                            _ => {
+                                return Err(reqsign_core::Error::request_invalid(
+                                    "request resource doesn't match configured SAS resource kind",
+                                ));
+                            }
+                        }
+
+                        let account = infer_account_name(sctx.authority.as_str())?;
+
+                        let key = {
+                            let cached = self
+                                .user_delegation_key_cache
+                                .lock()
+                                .expect("lock poisoned")
+                                .clone();
+                            if let Some(cached) = cached {
+                                if cached.signed_expiry > expiry + Duration::from_secs(20) {
+                                    cached
+                                } else {
+                                    let version = cfg.version.as_deref().unwrap_or("2020-12-06");
+                                    let fetched = crate::user_delegation::get_user_delegation_key(
+                                        context,
+                                        crate::user_delegation::UserDelegationKeyRequest {
+                                            scheme: sctx.scheme.as_str(),
+                                            authority: sctx.authority.as_str(),
+                                            bearer_token: token,
+                                            start: now_time,
+                                            expiry,
+                                            service_version: version,
+                                            now: now_time,
+                                        },
+                                    )
+                                    .await?;
+                                    *self
+                                        .user_delegation_key_cache
+                                        .lock()
+                                        .expect("lock poisoned") = Some(fetched.clone());
+                                    fetched
+                                }
+                            } else {
+                                let version = cfg.version.as_deref().unwrap_or("2020-12-06");
+                                let fetched = crate::user_delegation::get_user_delegation_key(
+                                    context,
+                                    crate::user_delegation::UserDelegationKeyRequest {
+                                        scheme: sctx.scheme.as_str(),
+                                        authority: sctx.authority.as_str(),
+                                        bearer_token: token,
+                                        start: now_time,
+                                        expiry,
+                                        service_version: version,
+                                        now: now_time,
+                                    },
+                                )
+                                .await?;
+                                *self
+                                    .user_delegation_key_cache
+                                    .lock()
+                                    .expect("lock poisoned") = Some(fetched.clone());
+                                fetched
+                            }
+                        };
+
+                        let mut signer =
+                            crate::user_delegation::UserDelegationSharedAccessSignature::new(
+                                account,
+                                key,
+                                resource,
+                                cfg.permissions.to_string(),
+                                expiry,
+                            );
+                        if let Some(start) = cfg.start {
+                            signer = signer.with_start(start);
+                        }
+                        if let Some(ip) = &cfg.ip {
+                            signer = signer.with_ip(ip);
+                        }
+                        if let Some(protocol) = &cfg.protocol {
+                            signer = signer.with_protocol(protocol);
+                        }
+                        if let Some(version) = &cfg.version {
+                            signer = signer.with_version(version);
+                        }
+
+                        let signer_token = signer.token().map_err(|e| {
+                            reqsign_core::Error::unexpected(
+                                "failed to generate user delegation SAS token",
+                            )
+                            .with_source(e)
+                        })?;
+                        signer_token
+                            .into_iter()
+                            .for_each(|(k, v)| sctx.query_push(k, v));
                     }
                     SigningMethod::Header => {
-                        ctx.headers.insert(
+                        sctx.headers.insert(
                             X_MS_DATE,
                             Timestamp::now().format_http_date().parse().map_err(|e| {
                                 reqsign_core::Error::unexpected("failed to parse date header")
                                     .with_source(e)
                             })?,
                         );
-                        ctx.headers.insert(header::AUTHORIZATION, {
+                        sctx.headers.insert(header::AUTHORIZATION, {
                             let mut value: HeaderValue =
                                 format!("Bearer {token}").parse().map_err(|e| {
                                     reqsign_core::Error::unexpected(
@@ -127,23 +359,49 @@ impl SignRequest for RequestSigner {
                 // Shared key authentication
                 match method {
                     SigningMethod::Query(d) => {
-                        // try sign request use account_sas token
-                        let signer = crate::account_sas::AccountSharedAccessSignature::new(
+                        let now_time = self.time.unwrap_or_else(Timestamp::now);
+                        let Some(permissions) = &self.service_sas_permissions else {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "Service SAS permissions are required for presign",
+                            ));
+                        };
+
+                        let resource =
+                            crate::service_sas::ServiceSasResource::from_path_percent_decoded(
+                                sctx.path_percent_decoded().as_ref(),
+                            )?;
+
+                        let mut signer = crate::service_sas::ServiceSharedAccessSignature::new(
                             account_name.clone(),
                             account_key.clone(),
-                            Timestamp::now() + d,
+                            resource,
+                            permissions.to_string(),
+                            now_time + d,
                         );
+                        if let Some(start) = self.service_sas_start {
+                            signer = signer.with_start(start);
+                        }
+                        if let Some(ip) = &self.service_sas_ip {
+                            signer = signer.with_ip(ip);
+                        }
+                        if let Some(protocol) = &self.service_sas_protocol {
+                            signer = signer.with_protocol(protocol);
+                        }
+                        if let Some(version) = &self.service_sas_version {
+                            signer = signer.with_version(version);
+                        }
+
                         let signer_token = signer.token().map_err(|e| {
-                            reqsign_core::Error::unexpected("failed to generate account SAS token")
+                            reqsign_core::Error::unexpected("failed to generate service SAS token")
                                 .with_source(e)
                         })?;
-                        signer_token.iter().for_each(|(k, v)| {
-                            ctx.query_push(k, v);
-                        });
+                        signer_token
+                            .into_iter()
+                            .for_each(|(k, v)| sctx.query_push(k, v));
                     }
                     SigningMethod::Header => {
                         let now_time = self.time.unwrap_or_else(Timestamp::now);
-                        let string_to_sign = string_to_sign(&mut ctx, account_name, now_time)?;
+                        let string_to_sign = string_to_sign(&mut sctx, account_name, now_time)?;
                         let decode_content = base64_decode(account_key).map_err(|e| {
                             reqsign_core::Error::unexpected("failed to decode account key")
                                 .with_source(e)
@@ -151,7 +409,7 @@ impl SignRequest for RequestSigner {
                         let signature =
                             base64_hmac_sha256(&decode_content, string_to_sign.as_bytes());
 
-                        ctx.headers.insert(header::AUTHORIZATION, {
+                        sctx.headers.insert(header::AUTHORIZATION, {
                             let mut value: HeaderValue =
                                 format!("SharedKey {account_name}:{signature}")
                                     .parse()
@@ -170,12 +428,23 @@ impl SignRequest for RequestSigner {
         }
 
         // Apply percent encoding for query parameters
-        for (_, v) in ctx.query.iter_mut() {
+        for (_, v) in sctx.query.iter_mut() {
             *v = percent_encode(v.as_bytes(), &AZURE_QUERY_ENCODE_SET).to_string();
         }
 
-        ctx.apply(req)
+        sctx.apply(req)
     }
+}
+
+fn infer_account_name(authority: &str) -> Result<String> {
+    let host = authority.split('@').next_back().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host);
+    let Some((account, _)) = host.split_once('.') else {
+        return Err(reqsign_core::Error::request_invalid(
+            "failed to infer account name from authority",
+        ));
+    };
+    Ok(account.to_string())
 }
 
 /// Construct string to sign
@@ -408,10 +677,13 @@ fn canonicalize_resource(ctx: &mut SigningRequest, account_name: &str) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use bytes::Bytes;
     use http::Request;
-    use reqsign_core::{Context, OsEnv};
+    use reqsign_core::{Context, HttpSend, OsEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
+    use std::str::FromStr;
     use std::time::Duration;
 
     #[tokio::test]
@@ -492,6 +764,129 @@ mod tests {
                 .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(1)))
                 .await
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shared_key_presign_service_sas() {
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(OsEnv);
+
+        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
+        let key = reqsign_core::hash::base64_encode("key".as_bytes());
+        let cred = Credential::with_shared_key("account", &key);
+
+        let builder = RequestSigner::new()
+            .with_time(now)
+            .with_service_sas_permissions("r");
+
+        let req = Request::builder()
+            .uri("https://account.blob.core.windows.net/container/path/to/blob.txt")
+            .body(())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        builder
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&cred),
+                Some(Duration::from_secs(300)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            parts.uri.to_string(),
+            "https://account.blob.core.windows.net/container/path/to/blob.txt?sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
+        );
+    }
+
+    #[derive(Debug)]
+    struct MockUserDelegationHttpSend;
+
+    #[async_trait]
+    impl HttpSend for MockUserDelegationHttpSend {
+        async fn http_send(
+            &self,
+            req: http::Request<Bytes>,
+        ) -> reqsign_core::Result<http::Response<Bytes>> {
+            let uri = req.uri().to_string();
+            if uri
+                != "https://account.blob.core.windows.net/?restype=service&comp=userdelegationkey"
+            {
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected request uri").with_context(uri)
+                );
+            }
+
+            let auth = req
+                .headers()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string();
+            if auth != "Bearer token" {
+                return Err(
+                    reqsign_core::Error::unexpected("unexpected authorization header")
+                        .with_context(auth),
+                );
+            }
+
+            let body = r#"
+<UserDelegationKey>
+  <SignedOid>oid</SignedOid>
+  <SignedTid>tid</SignedTid>
+  <SignedStart>2022-03-01T08:12:34Z</SignedStart>
+  <SignedExpiry>2022-03-01T09:12:34Z</SignedExpiry>
+  <SignedService>b</SignedService>
+  <SignedVersion>2020-12-06</SignedVersion>
+  <Value>a2V5</Value>
+</UserDelegationKey>
+"#;
+
+            Ok(http::Response::builder()
+                .status(200)
+                .body(Bytes::from(body))
+                .unwrap())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_bearer_token_presign_user_delegation_sas() {
+        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(MockUserDelegationHttpSend)
+            .with_env(OsEnv);
+
+        let cred = Credential::with_bearer_token("token", None);
+        let builder = RequestSigner::new()
+            .with_time(now)
+            .with_user_delegation_presign(SasResourceKind::Blob, "r");
+
+        let req = Request::builder()
+            .uri("https://account.blob.core.windows.net/container/path/to/blob.txt")
+            .body(())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        builder
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&cred),
+                Some(Duration::from_secs(300)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            parts.uri.to_string(),
+            "https://account.blob.core.windows.net/container/path/to/blob.txt?sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=VkI3h/LWkD6qcDzshjQzCuCdMPDCFA3tMEbxM%2BED5Nc%3D"
         );
     }
 }
