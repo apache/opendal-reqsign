@@ -72,12 +72,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3
+        uses: 1password/load-secrets-action/configure@v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
         with:
           export-env: true
         env:
@@ -102,12 +102,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3
+        uses: 1password/load-secrets-action/configure@v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
         with:
           export-env: true
         env:
@@ -129,13 +129,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3
+        uses: 1password/load-secrets-action/configure@v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
         id: load_secret
-        uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
         env:
           REQSIGN_AWS_V4_TEST_ENV: on
           REQSIGN_AWS_V4_TEST_PROFILE: on
@@ -177,12 +177,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3
+        uses: 1password/load-secrets-action/configure@v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
         with:
           export-env: true
         env:
@@ -222,12 +222,12 @@ jobs:
 
             console.log('GitHub OIDC token obtained and saved');
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3
+        uses: 1password/load-secrets-action/configure@v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
         with:
           export-env: true
         env:
@@ -557,12 +557,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3
+        uses: 1password/load-secrets-action/configure@v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@13f58eec611f8e5db52ec16247f58c508398f3e6 # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
         with:
           export-env: true
         env:
