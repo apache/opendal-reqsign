@@ -19,7 +19,6 @@ use http::header;
 use jsonwebtoken::{Algorithm, EncodingKey, Header as JwtHeader};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
-use rand::thread_rng;
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::RandomizedSigner;
@@ -243,7 +242,7 @@ impl RequestSigner {
     }
 
     fn sign_with_service_account(private_key_pem: &str, string_to_sign: &str) -> Result<String> {
-        let mut rng = thread_rng();
+        let mut rng = rand::thread_rng();
         let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
             reqsign_core::Error::unexpected("failed to parse private key").with_source(e)
         })?;

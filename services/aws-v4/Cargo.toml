@@ -55,7 +55,7 @@ env_logger = { workspace = true }
 hex = { workspace = true }
 pretty_assertions = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
-reqwest = { workspace = true, features = ["rustls-tls"] }
+reqwest = { workspace = true, features = ["default-tls"] }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
