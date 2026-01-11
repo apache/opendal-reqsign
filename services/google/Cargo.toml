@@ -28,6 +28,7 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait = { workspace = true }
+form_urlencoded = { workspace = true }
 http = { workspace = true }
 jsonwebtoken = "9.2"
 log = { workspace = true }
@@ -40,10 +41,11 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 dotenv = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
-reqwest = { workspace = true, features = ["rustls-tls"] }
+reqwest = { workspace = true, features = ["default-tls"] }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

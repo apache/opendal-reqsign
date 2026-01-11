@@ -37,6 +37,9 @@ pub struct AssumeRoleWithWebIdentityCredentialProvider {
     role_arn: Option<String>,
     role_session_name: Option<String>,
     web_identity_token_file: Option<PathBuf>,
+    duration_seconds: Option<u32>,
+    policy: Option<String>,
+    policy_arns: Option<Vec<String>>,
 
     // STS configuration
     region: Option<String>,
@@ -55,6 +58,9 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
             role_arn: Some(role_arn),
             role_session_name: None,
             web_identity_token_file: Some(token_file),
+            duration_seconds: None,
+            policy: None,
+            policy_arns: None,
             region: None,
             use_regional_sts_endpoint: None,
         }
@@ -75,6 +81,24 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
     /// Set the role session name.
     pub fn with_role_session_name(mut self, name: String) -> Self {
         self.role_session_name = Some(name);
+        self
+    }
+
+    /// Set the duration in seconds.
+    pub fn with_duration_seconds(mut self, seconds: u32) -> Self {
+        self.duration_seconds = Some(seconds);
+        self
+    }
+
+    /// Set the session policy.
+    pub fn with_policy(mut self, policy: String) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// Set the session policy ARNs.
+    pub fn with_policy_arns(mut self, policy_arns: Vec<String>) -> Self {
+        self.policy_arns = Some(policy_arns);
         self
     }
 
@@ -152,13 +176,29 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .unwrap_or_else(|| "reqsign".to_string());
 
         // Construct request to AWS STS Service.
-        let query = Serializer::new(String::new())
-            .append_pair("Action", "AssumeRoleWithWebIdentity")
-            .append_pair("RoleArn", &role_arn)
-            .append_pair("WebIdentityToken", &token)
-            .append_pair("Version", "2011-06-15")
-            .append_pair("RoleSessionName", &session_name)
-            .finish();
+        let query = {
+            let mut serializer = Serializer::new(String::new());
+            serializer
+                .append_pair("Action", "AssumeRoleWithWebIdentity")
+                .append_pair("RoleArn", &role_arn)
+                .append_pair("WebIdentityToken", &token)
+                .append_pair("Version", "2011-06-15")
+                .append_pair("RoleSessionName", &session_name);
+
+            if let Some(duration_seconds) = self.duration_seconds {
+                serializer.append_pair("DurationSeconds", &duration_seconds.to_string());
+            }
+            if let Some(policy) = self.policy.as_deref() {
+                serializer.append_pair("Policy", policy);
+            }
+            if let Some(policy_arns) = self.policy_arns.as_deref() {
+                for (idx, arn) in policy_arns.iter().enumerate() {
+                    serializer.append_pair(&format!("PolicyArns.member.{}.arn", idx + 1), arn);
+                }
+            }
+
+            serializer.finish()
+        };
         let url = format!("https://{endpoint}/?{query}");
         let req = http::request::Request::builder()
             .method("GET")
@@ -419,6 +459,74 @@ mod tests {
         let expected_uri = format!("https://sts.amazonaws.com/?{expected_query}");
 
         assert_eq!(recorded_uri, expected_uri);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_web_identity_supports_policy_and_policy_arns() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let token_path = "/mock/token";
+        let raw_token = "header.payload+signature/\n";
+
+        let file_read = TestFileRead {
+            expected_path: token_path.to_string(),
+            content: raw_token.as_bytes().to_vec(),
+        };
+
+        let http_body = r#"<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleWithWebIdentityResult>
+    <Credentials>
+      <AccessKeyId>access_key_id</AccessKeyId>
+      <SecretAccessKey>secret_access_key</SecretAccessKey>
+      <SessionToken>session_token</SessionToken>
+      <Expiration>2124-05-25T11:45:17Z</Expiration>
+    </Credentials>
+  </AssumeRoleWithWebIdentityResult>
+</AssumeRoleWithWebIdentityResponse>"#;
+        let http_send = CaptureHttpSend::new(http_body);
+
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::new(),
+            });
+
+        let policy = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:ListBucket","Resource":"*","Condition":{"StringEquals":{"s3:prefix":"a b"}}}]}"#;
+
+        let provider = AssumeRoleWithWebIdentityCredentialProvider::with_config(
+            "arn:aws:iam::123456789012:role/test-role".to_string(),
+            token_path.into(),
+        )
+        .with_duration_seconds(900)
+        .with_policy(policy.to_string())
+        .with_policy_arns(vec![
+            "arn:aws:iam::aws:policy/ReadOnlyAccess".to_string(),
+            "arn:aws:iam::123456789012:policy/ExamplePolicy".to_string(),
+        ]);
+
+        let _ = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        let recorded_uri = http_send
+            .uri()
+            .expect("http_send must capture outgoing uri");
+
+        assert!(recorded_uri.contains("DurationSeconds=900"));
+        assert!(
+            recorded_uri.contains("Policy=%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Action%22%3A%22s3%3AListBucket%22%2C%22Resource%22%3A%22*%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22s3%3Aprefix%22%3A%22a+b%22%7D%7D%7D%5D%7D")
+        );
+        assert!(recorded_uri.contains(
+            "PolicyArns.member.1.arn=arn%3Aaws%3Aiam%3A%3Aaws%3Apolicy%2FReadOnlyAccess"
+        ));
+        assert!(recorded_uri.contains(
+            "PolicyArns.member.2.arn=arn%3Aaws%3Aiam%3A%3A123456789012%3Apolicy%2FExamplePolicy"
+        ));
 
         Ok(())
     }

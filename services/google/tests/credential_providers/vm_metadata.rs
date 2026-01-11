@@ -46,6 +46,29 @@ async fn test_vm_metadata_credential_provider() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_vm_metadata_credential_provider_with_mock() -> Result<()> {
+    if env::var("REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK").unwrap_or_default() != "on" {
+        warn!("REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK is not set, skipped");
+        return Ok(());
+    }
+
+    let ctx = create_test_context();
+
+    let provider = VmMetadataCredentialProvider::new();
+    let credential = provider
+        .provide_credential(&ctx)
+        .await?
+        .expect("credential must be provided with mock metadata server");
+
+    assert!(credential.has_token(), "Must have access token");
+    assert!(credential.has_valid_token(), "Token must be valid");
+    let token = credential.token.as_ref().unwrap();
+    assert!(!token.access_token.is_empty(), "Token must not be empty");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_vm_metadata_credential_provider_with_scope() -> Result<()> {
     if env::var("REQSIGN_GOOGLE_TEST_VM_METADATA").unwrap_or_default() != "on" {
         warn!("REQSIGN_GOOGLE_TEST_VM_METADATA is not set, skipped");
