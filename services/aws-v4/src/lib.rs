@@ -71,8 +71,9 @@
 //! 2. **Credential File**: `~/.aws/credentials`
 //! 3. **IAM Roles**: For EC2 instances and ECS tasks
 //! 4. **AssumeRole**: Via STS AssumeRole operations
-//! 5. **WebIdentity**: For Kubernetes service accounts
-//! 6. **SSO**: AWS SSO credentials
+//! 5. **WebIdentity**: For Kubernetes service accounts (IRSA)
+//! 6. **EKS Pod Identity**: For Amazon EKS Pod Identity associations
+//! 7. **SSO**: AWS SSO credentials
 //!
 //! ## Supported Services
 //!

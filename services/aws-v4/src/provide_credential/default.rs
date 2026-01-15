@@ -17,8 +17,8 @@
 
 use crate::Credential;
 use crate::provide_credential::{
-    AssumeRoleWithWebIdentityCredentialProvider, ECSCredentialProvider, EnvCredentialProvider,
-    IMDSv2CredentialProvider, ProfileCredentialProvider,
+    AssumeRoleWithWebIdentityCredentialProvider, ECSCredentialProvider, EKSPodIdentityCredentialProvider,
+    EnvCredentialProvider, IMDSv2CredentialProvider, ProfileCredentialProvider,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::provide_credential::{ProcessCredentialProvider, SSOCredentialProvider};
@@ -35,7 +35,8 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// 4. Web Identity Tokens
 /// 5. Process credentials
 /// 6. ECS (IAM Roles for Tasks) & Container credentials
-/// 7. EC2 IMDSv2
+/// 7. EKS Pod Identity
+/// 8. EC2 IMDSv2
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -100,6 +101,7 @@ pub struct DefaultCredentialProviderBuilder {
     #[cfg(not(target_arch = "wasm32"))]
     process: Option<ProcessCredentialProvider>,
     ecs: Option<ECSCredentialProvider>,
+    eks_pod_identity: Option<EKSPodIdentityCredentialProvider>,
     imds: Option<IMDSv2CredentialProvider>,
 }
 
@@ -254,6 +256,26 @@ impl DefaultCredentialProviderBuilder {
         self
     }
 
+    /// Configure the EKS Pod Identity credential provider.
+    pub fn configure_eks_pod_identity<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(EKSPodIdentityCredentialProvider) -> EKSPodIdentityCredentialProvider,
+    {
+        let p = self.eks_pod_identity.take().unwrap_or_default();
+        self.eks_pod_identity = Some(f(p));
+        self
+    }
+
+    /// Disable (true) or ensure enabled (false) the EKS Pod Identity provider.
+    pub fn disable_eks_pod_identity(mut self, disable: bool) -> Self {
+        if disable {
+            self.eks_pod_identity = None;
+        } else if self.eks_pod_identity.is_none() {
+            self.eks_pod_identity = Some(EKSPodIdentityCredentialProvider::new());
+        }
+        self
+    }
+
     /// Configure the EC2 IMDSv2 credential provider.
     pub fn configure_imds<F>(mut self, f: F) -> Self
     where
@@ -318,6 +340,12 @@ impl DefaultCredentialProviderBuilder {
             chain = chain.push(p);
         } else {
             chain = chain.push(ECSCredentialProvider::new());
+        }
+
+        if let Some(p) = self.eks_pod_identity {
+            chain = chain.push(p);
+        } else {
+            chain = chain.push(EKSPodIdentityCredentialProvider::new());
         }
 
         if let Some(p) = self.imds {
@@ -540,7 +568,9 @@ mod tests {
             chain = chain.push(ProcessCredentialProvider::new());
         }
 
-        chain = chain.push(ECSCredentialProvider::new());
+        chain = chain
+            .push(ECSCredentialProvider::new())
+            .push(EKSPodIdentityCredentialProvider::new());
 
         let provider = DefaultCredentialProvider::with_chain(chain);
 
@@ -591,6 +621,7 @@ mod tests {
 
         chain = chain
             .push(ECSCredentialProvider::new())
+            .push(EKSPodIdentityCredentialProvider::new())
             .push(IMDSv2CredentialProvider::new());
 
         let provider = DefaultCredentialProvider::with_chain(chain);

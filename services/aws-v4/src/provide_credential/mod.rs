@@ -30,6 +30,9 @@ pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
 mod ecs;
 pub use ecs::ECSCredentialProvider;
 
+mod eks_pod_identity;
+pub use eks_pod_identity::EKSPodIdentityCredentialProvider;
+
 mod env;
 pub use env::EnvCredentialProvider;
 
