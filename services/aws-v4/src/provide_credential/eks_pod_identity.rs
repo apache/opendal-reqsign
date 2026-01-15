@@ -160,7 +160,9 @@ impl ProvideCredential for EKSPodIdentityCredentialProvider {
         let endpoint = match self.get_endpoint(ctx) {
             Some(ep) => ep,
             None => {
-                debug!("EKS Pod Identity provider: no endpoint found, not running in EKS Pod Identity environment");
+                debug!(
+                    "EKS Pod Identity provider: no endpoint found, not running in EKS Pod Identity environment"
+                );
                 return Ok(None);
             }
         };
@@ -168,7 +170,9 @@ impl ProvideCredential for EKSPodIdentityCredentialProvider {
         let token_file = match self.get_token_file(ctx) {
             Some(tf) => tf,
             None => {
-                debug!("EKS Pod Identity provider: no token file found, not running in EKS Pod Identity environment");
+                debug!(
+                    "EKS Pod Identity provider: no token file found, not running in EKS Pod Identity environment"
+                );
                 return Ok(None);
             }
         };
@@ -293,7 +297,10 @@ mod tests {
 
         let provider = EKSPodIdentityCredentialProvider::new();
         let endpoint = provider.get_endpoint(&ctx);
-        assert_eq!(endpoint, Some("http://169.254.170.23/v1/credentials".to_string()));
+        assert_eq!(
+            endpoint,
+            Some("http://169.254.170.23/v1/credentials".to_string())
+        );
     }
 
     #[tokio::test]
@@ -311,7 +318,10 @@ mod tests {
 
         let provider = EKSPodIdentityCredentialProvider::new();
         let endpoint = provider.get_endpoint(&ctx);
-        assert!(endpoint.is_none(), "Should not use ECS endpoint for EKS Pod Identity");
+        assert!(
+            endpoint.is_none(),
+            "Should not use ECS endpoint for EKS Pod Identity"
+        );
     }
 
     #[tokio::test]
@@ -328,7 +338,10 @@ mod tests {
             .with_endpoint("http://custom-endpoint/v1/credentials");
 
         let endpoint = provider.get_endpoint(&ctx);
-        assert_eq!(endpoint, Some("http://custom-endpoint/v1/credentials".to_string()));
+        assert_eq!(
+            endpoint,
+            Some("http://custom-endpoint/v1/credentials".to_string())
+        );
     }
 
     #[tokio::test]
@@ -340,7 +353,8 @@ mod tests {
             home_dir: None,
             envs: HashMap::from_iter([(
                 AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE.to_string(),
-                "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token".to_string(),
+                "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token"
+                    .to_string(),
             )]),
         });
 
@@ -348,7 +362,10 @@ mod tests {
         let token_file = provider.get_token_file(&ctx);
         assert_eq!(
             token_file,
-            Some("/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token".to_string())
+            Some(
+                "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token"
+                    .to_string()
+            )
         );
     }
 
@@ -362,12 +379,10 @@ mod tests {
                 envs: HashMap::new(),
             });
 
-        let provider = EKSPodIdentityCredentialProvider::new()
-            .with_token_file("/custom/token/path");
+        let provider =
+            EKSPodIdentityCredentialProvider::new().with_token_file("/custom/token/path");
 
         let token_file = provider.get_token_file(&ctx);
         assert_eq!(token_file, Some("/custom/token/path".to_string()));
     }
 }
-
-

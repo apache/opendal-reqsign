@@ -17,8 +17,9 @@
 
 use crate::Credential;
 use crate::provide_credential::{
-    AssumeRoleWithWebIdentityCredentialProvider, ECSCredentialProvider, EKSPodIdentityCredentialProvider,
-    EnvCredentialProvider, IMDSv2CredentialProvider, ProfileCredentialProvider,
+    AssumeRoleWithWebIdentityCredentialProvider, ECSCredentialProvider,
+    EKSPodIdentityCredentialProvider, EnvCredentialProvider, IMDSv2CredentialProvider,
+    ProfileCredentialProvider,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::provide_credential::{ProcessCredentialProvider, SSOCredentialProvider};
