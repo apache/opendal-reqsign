@@ -368,6 +368,46 @@ jobs:
             kill $MOCK_PID || true
           fi
 
+  # EKSPodIdentityCredentialProvider test (using mock server)
+  test_eks_pod_identity_provider:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Mock EKS Pod Identity Server
+        run: |
+          # Create a mock token file
+          echo "mock-eks-pod-identity-token" > /tmp/eks-pod-identity-token
+
+          # Start the mock server in background
+          python3 services/aws-v4/tests/mocks/eks_pod_identity_mock_server.py 8080 &
+          MOCK_PID=$!
+          echo "MOCK_PID=$MOCK_PID" >> $GITHUB_ENV
+
+          # Wait for server to start
+          sleep 2
+
+          # Verify the mock server is running
+          echo "::group::Verifying mock EKS Pod Identity server"
+          curl -v -H "Authorization: test-token" http://localhost:8080/v1/credentials
+          echo "::endgroup::"
+      - name: Test EKSPodIdentityCredentialProvider
+        working-directory: ./services/aws-v4
+        run: |
+          echo "::group::Testing EKSPodIdentityCredentialProvider"
+          cargo test test_eks_pod_identity_credential_provider --no-fail-fast -- --no-capture
+          echo "::endgroup::"
+        env:
+          RUST_LOG: DEBUG
+          REQSIGN_AWS_V4_TEST_EKS_POD_IDENTITY: on
+          AWS_CONTAINER_CREDENTIALS_FULL_URI: http://localhost:8080/v1/credentials
+          AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: /tmp/eks-pod-identity-token
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ ! -z "$MOCK_PID" ]; then
+            kill $MOCK_PID || true
+          fi
+
   # SSOCredentialProvider test
   test_sso_provider:
     runs-on: ubuntu-latest
@@ -591,6 +631,7 @@ jobs:
       - test_web_identity_provider
       - test_imds_provider
       - test_ecs_provider
+      - test_eks_pod_identity_provider
       - test_sso_provider
       - test_process_provider
       - test_cognito_provider
@@ -635,6 +676,7 @@ jobs:
           echo "|----------|-------------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| IMDSv2CredentialProvider | amazon-ec2-metadata-mock | ${{ needs.test_imds_provider.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ECSCredentialProvider | Python mock (port 51679) | ${{ needs.test_ecs_provider.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| EKSPodIdentityCredentialProvider | Python mock (port 8080) | ${{ needs.test_eks_pod_identity_provider.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| SSOCredentialProvider | Python mock (port 8080) | ${{ needs.test_sso_provider.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ProcessCredentialProvider | Python credential helper | ${{ needs.test_process_provider.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| CognitoIdentityCredentialProvider | Python mock (port 8443) | ${{ needs.test_cognito_provider.result }} |" >> $GITHUB_STEP_SUMMARY

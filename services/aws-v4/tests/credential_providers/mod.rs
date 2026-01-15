@@ -19,6 +19,7 @@ mod assume_role;
 mod assume_role_with_web_identity;
 mod cognito;
 mod ecs;
+mod eks_pod_identity;
 mod env;
 mod imds;
 #[cfg(not(target_arch = "wasm32"))]
