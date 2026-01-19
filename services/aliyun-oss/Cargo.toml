@@ -29,6 +29,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+form_urlencoded = { workspace = true }
 http = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
@@ -37,6 +38,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 dotenv = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }

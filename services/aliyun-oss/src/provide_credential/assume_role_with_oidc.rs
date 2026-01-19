@@ -17,6 +17,7 @@
 
 use crate::{Credential, constants::*};
 use async_trait::async_trait;
+use form_urlencoded::Serializer;
 use reqsign_core::Result;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
@@ -26,12 +27,14 @@ use serde::Deserialize;
 ///
 /// This provider reads configuration from environment variables at runtime:
 /// - `ALIBABA_CLOUD_ROLE_ARN`: The ARN of the role to assume
+/// - `ALIBABA_CLOUD_ROLE_SESSION_NAME`: Optional role session name
 /// - `ALIBABA_CLOUD_OIDC_PROVIDER_ARN`: The ARN of the OIDC provider
 /// - `ALIBABA_CLOUD_OIDC_TOKEN_FILE`: Path to the OIDC token file
 /// - `ALIBABA_CLOUD_STS_ENDPOINT`: Optional custom STS endpoint
 #[derive(Debug, Default, Clone)]
 pub struct AssumeRoleWithOidcCredentialProvider {
     sts_endpoint: Option<String>,
+    role_session_name: Option<String>,
 }
 
 impl AssumeRoleWithOidcCredentialProvider {
@@ -47,6 +50,14 @@ impl AssumeRoleWithOidcCredentialProvider {
         self
     }
 
+    /// Set the role session name.
+    ///
+    /// This setting takes precedence over `ALIBABA_CLOUD_ROLE_SESSION_NAME`.
+    pub fn with_role_session_name(mut self, name: impl Into<String>) -> Self {
+        self.role_session_name = Some(name.into());
+        self
+    }
+
     fn get_sts_endpoint(&self, envs: &std::collections::HashMap<String, String>) -> String {
         if let Some(endpoint) = &self.sts_endpoint {
             return endpoint.clone();
@@ -56,6 +67,16 @@ impl AssumeRoleWithOidcCredentialProvider {
             Some(endpoint) => format!("https://{endpoint}"),
             None => "https://sts.aliyuncs.com".to_string(),
         }
+    }
+
+    fn get_role_session_name(&self, envs: &std::collections::HashMap<String, String>) -> String {
+        if let Some(name) = &self.role_session_name {
+            return name.clone();
+        }
+
+        envs.get(ALIBABA_CLOUD_ROLE_SESSION_NAME)
+            .cloned()
+            .unwrap_or_else(|| "reqsign".to_string())
     }
 }
 
@@ -76,20 +97,22 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
             _ => return Ok(None),
         };
 
-        let token = ctx.file_read(token_file).await?;
-        let token = String::from_utf8(token)?;
-        let role_session_name = "reqsign"; // Default session name
+        let token = ctx.file_read_as_string(token_file).await?;
+        let token = token.trim();
+        let role_session_name = self.get_role_session_name(&envs);
 
         // Construct request to Aliyun STS Service.
-        let url = format!(
-            "{}/?Action=AssumeRoleWithOIDC&OIDCProviderArn={}&RoleArn={}&RoleSessionName={}&Format=JSON&Version=2015-04-01&Timestamp={}&OIDCToken={}",
-            self.get_sts_endpoint(&envs),
-            provider_arn,
-            role_arn,
-            role_session_name,
-            Timestamp::now().format_rfc3339_zulu(),
-            token
-        );
+        let query = Serializer::new(String::new())
+            .append_pair("Action", "AssumeRoleWithOIDC")
+            .append_pair("OIDCProviderArn", provider_arn)
+            .append_pair("RoleArn", role_arn)
+            .append_pair("RoleSessionName", &role_session_name)
+            .append_pair("Format", "JSON")
+            .append_pair("Version", "2015-04-01")
+            .append_pair("Timestamp", &Timestamp::now().format_rfc3339_zulu())
+            .append_pair("OIDCToken", token)
+            .finish();
+        let url = format!("{}/?{query}", self.get_sts_endpoint(&envs));
 
         let req = http::Request::builder()
             .method(http::Method::GET)
@@ -145,10 +168,14 @@ struct AssumeRoleWithOidcCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use bytes::Bytes;
     use reqsign_core::StaticEnv;
+    use reqsign_core::{Context, FileRead, HttpSend};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_parse_assume_role_with_oidc_response() -> Result<()> {
@@ -205,5 +232,184 @@ mod tests {
         let credential = loader.provide_credential(&ctx).await.unwrap();
 
         assert!(credential.is_none());
+    }
+
+    #[derive(Debug)]
+    struct TestFileRead {
+        expected_path: String,
+        content: Vec<u8>,
+    }
+
+    #[async_trait]
+    impl FileRead for TestFileRead {
+        async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+            assert_eq!(path, self.expected_path);
+            Ok(self.content.clone())
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct CaptureHttpSend {
+        uri: Arc<Mutex<Option<String>>>,
+        body: String,
+    }
+
+    impl CaptureHttpSend {
+        fn new(body: impl Into<String>) -> Self {
+            Self {
+                uri: Arc::new(Mutex::new(None)),
+                body: body.into(),
+            }
+        }
+
+        fn uri(&self) -> Option<String> {
+            self.uri.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl HttpSend for CaptureHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            *self.uri.lock().unwrap() = Some(req.uri().to_string());
+            let resp = http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(Bytes::from(self.body.clone()))
+                .expect("response must build");
+            Ok(resp)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_oidc_supports_role_session_name() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let token_path = "/mock/token";
+        let raw_token = "header.payload.signature\n";
+
+        let file_read = TestFileRead {
+            expected_path: token_path.to_string(),
+            content: raw_token.as_bytes().to_vec(),
+        };
+
+        let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
+        let http_send = CaptureHttpSend::new(http_body);
+
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        token_path.to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_SESSION_NAME.to_string(),
+                        "my-session".to_string(),
+                    ),
+                ]),
+            });
+
+        let provider = AssumeRoleWithOidcCredentialProvider::new();
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        assert_eq!(cred.access_key_id, "access_key_id");
+        assert_eq!(cred.access_key_secret, "secret_access_key");
+        assert_eq!(cred.security_token.as_deref(), Some("security_token"));
+
+        let recorded_uri = http_send
+            .uri()
+            .expect("http_send must capture outgoing uri");
+        let uri: http::Uri = recorded_uri.parse().expect("uri must parse");
+        let query = uri.query().expect("query must exist");
+        let params: HashMap<String, String> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+
+        assert_eq!(
+            params.get("RoleSessionName").map(String::as_str),
+            Some("my-session")
+        );
+        assert_eq!(
+            params.get("OIDCToken").map(String::as_str),
+            Some("header.payload.signature")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_oidc_role_session_name_overrides_env() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let token_path = "/mock/token";
+
+        let file_read = TestFileRead {
+            expected_path: token_path.to_string(),
+            content: b"token".to_vec(),
+        };
+
+        let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
+        let http_send = CaptureHttpSend::new(http_body);
+
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        token_path.to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_SESSION_NAME.to_string(),
+                        "env-session".to_string(),
+                    ),
+                ]),
+            });
+
+        let provider =
+            AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("override-session");
+        let _ = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        let recorded_uri = http_send
+            .uri()
+            .expect("http_send must capture outgoing uri");
+        let uri: http::Uri = recorded_uri.parse().expect("uri must parse");
+        let query = uri.query().expect("query must exist");
+        let params: HashMap<String, String> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+
+        assert_eq!(
+            params.get("RoleSessionName").map(String::as_str),
+            Some("override-session")
+        );
+
+        Ok(())
     }
 }

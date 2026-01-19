@@ -135,7 +135,9 @@
 //!
 //! // Use environment variables
 //! // Set ALIBABA_CLOUD_ROLE_ARN, ALIBABA_CLOUD_OIDC_PROVIDER_ARN, ALIBABA_CLOUD_OIDC_TOKEN_FILE
-//! let loader = AssumeRoleWithOidcCredentialProvider::new();
+//! // Optionally set ALIBABA_CLOUD_ROLE_SESSION_NAME
+//! let loader = AssumeRoleWithOidcCredentialProvider::new()
+//!     .with_role_session_name("my-session");
 //! ```
 //!
 //! ### Custom Endpoints

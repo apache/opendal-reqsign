@@ -96,7 +96,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install wasm-bindgen-cli
-        run: cargo install wasm-bindgen-cli --version 0.2.106 --locked
+        run: |
+          WASM_BINDGEN_VERSION=$(
+            cargo metadata --format-version 1 --filter-platform wasm32-unknown-unknown \
+              | jq -r '.packages[] | select(.name=="wasm-bindgen") | .version' \
+              | sort -V \
+              | tail -n 1
+          )
+          if [ -z "${WASM_BINDGEN_VERSION}" ]; then
+            echo "failed to resolve wasm-bindgen version"
+            exit 1
+          fi
+          echo "wasm-bindgen version: ${WASM_BINDGEN_VERSION}"
+          cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
       - name: Run wasm tests
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
