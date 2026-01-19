@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-huaweicloud-obs"
-version = "2.0.1"
+version = "2.0.2"
 
 description = "Huawei Cloud OBS signing implementation for reqsign."
 
@@ -39,3 +39,11 @@ env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+
+[[example]]
+name = "huaweicloud_chain_logging"
+path = "examples/chain_logging.rs"
+
+[[example]]
+name = "huaweicloud_custom_chain"
+path = "examples/custom_chain.rs"

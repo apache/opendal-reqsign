@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-core"
-version = "2.0.1"
+version = "2.0.2"
 
 categories = ["command-line-utilities", "web-programming"]
 description = "Signing API requests without effort."
