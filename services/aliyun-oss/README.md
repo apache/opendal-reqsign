@@ -88,6 +88,8 @@ let config = Config::default()
 let loader = AssumeRoleWithOidcLoader::new(config);
 ```
 
+The session name defaults to `reqsign`. To customize it, set `ALIBABA_CLOUD_ROLE_SESSION_NAME` or use `AssumeRoleWithOidcCredentialProvider::with_role_session_name`.
+
 ## OSS Operations
 
 ### Object Operations
