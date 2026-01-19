@@ -112,10 +112,7 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
             .append_pair("Timestamp", &Timestamp::now().format_rfc3339_zulu())
             .append_pair("OIDCToken", token)
             .finish();
-        let url = format!(
-            "{}/?{query}",
-            self.get_sts_endpoint(&envs)
-        );
+        let url = format!("{}/?{query}", self.get_sts_endpoint(&envs));
 
         let req = http::Request::builder()
             .method(http::Method::GET)
@@ -337,8 +334,9 @@ mod tests {
             .expect("http_send must capture outgoing uri");
         let uri: http::Uri = recorded_uri.parse().expect("uri must parse");
         let query = uri.query().expect("query must exist");
-        let params: HashMap<String, String> =
-            form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+        let params: HashMap<String, String> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
 
         assert_eq!(
             params.get("RoleSessionName").map(String::as_str),
@@ -391,8 +389,8 @@ mod tests {
                 ]),
             });
 
-        let provider = AssumeRoleWithOidcCredentialProvider::new()
-            .with_role_session_name("override-session");
+        let provider =
+            AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("override-session");
         let _ = provider
             .provide_credential(&ctx)
             .await?
@@ -403,8 +401,9 @@ mod tests {
             .expect("http_send must capture outgoing uri");
         let uri: http::Uri = recorded_uri.parse().expect("uri must parse");
         let query = uri.query().expect("query must exist");
-        let params: HashMap<String, String> =
-            form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+        let params: HashMap<String, String> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
 
         assert_eq!(
             params.get("RoleSessionName").map(String::as_str),
