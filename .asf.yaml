@@ -29,6 +29,11 @@ github:
     squash: true
     merge: false
     rebase: false
+  features:
+    wiki: false
+    issues: true
+    projects: false
+    discussions: true
   custom_subjects:
     new_discussion: "{title}"
     edit_discussion: "Re: {title}"
