@@ -30,7 +30,7 @@ rust-version.workspace = true
 async-trait = { workspace = true }
 form_urlencoded = { workspace = true }
 http = { workspace = true }
-jsonwebtoken = "9.2"
+jsonwebtoken = { version = "10.1", features = ["rust_crypto"] }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 rand = { workspace = true }
