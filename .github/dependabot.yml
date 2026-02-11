@@ -22,9 +22,13 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    cooldown:
+      default-days: 7
 
   # Maintain dependencies for rust
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "daily"
+    cooldown:
+      default-days: 7
