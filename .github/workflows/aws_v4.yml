@@ -156,12 +156,12 @@ jobs:
           mkdir -p ~/.aws
           cat > ~/.aws/credentials << EOF
           [default]
-          aws_access_key_id = ${{ steps.load_secrets.outputs.AWS_ACCESS_KEY_ID }}
-          aws_secret_access_key = ${{ steps.load_secrets.outputs.AWS_SECRET_ACCESS_KEY }}
+          aws_access_key_id = ${STEPS_LOAD_SECRETS_OUTPUTS_AWS_ACCESS_KEY_ID}
+          aws_secret_access_key = ${STEPS_LOAD_SECRETS_OUTPUTS_AWS_SECRET_ACCESS_KEY}
 
           [test-profile]
-          aws_access_key_id = ${{ steps.load_secrets.outputs.AWS_ACCESS_KEY_ID }}
-          aws_secret_access_key = ${{ steps.load_secrets.outputs.AWS_SECRET_ACCESS_KEY }}
+          aws_access_key_id = ${STEPS_LOAD_SECRETS_OUTPUTS_AWS_ACCESS_KEY_ID}
+          aws_secret_access_key = ${STEPS_LOAD_SECRETS_OUTPUTS_AWS_SECRET_ACCESS_KEY}
           EOF
 
           cat > ~/.aws/config << EOF
@@ -172,6 +172,9 @@ jobs:
           region = us-west-1
           output = json
           EOF
+        env:
+          STEPS_LOAD_SECRETS_OUTPUTS_AWS_ACCESS_KEY_ID: ${{ steps.load_secrets.outputs.AWS_ACCESS_KEY_ID }}
+          STEPS_LOAD_SECRETS_OUTPUTS_AWS_SECRET_ACCESS_KEY: ${{ steps.load_secrets.outputs.AWS_SECRET_ACCESS_KEY }}
       - name: Test ProfileCredentialProvider
         working-directory: ./services/aws-v4
         run: |
@@ -634,21 +637,21 @@ jobs:
           echo "#### Core Tests" >> $GITHUB_STEP_SUMMARY
           echo "| Test | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Unit Tests | ${{ needs.unit_test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Unit Tests | ${NEEDS_UNIT_TEST_RESULT} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           echo "#### Integration Tests (with real AWS credentials)" >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ needs.check_secrets.outputs.has_secrets }}" == "true" ]]; then
+          if [[ "${NEEDS_CHECK_SECRETS_OUTPUTS_HAS_SECRETS}" == "true" ]]; then
             echo "✅ **Integration tests with real AWS credentials were executed**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "| Test | Result |" >> $GITHUB_STEP_SUMMARY
             echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Signing Tests | ${{ needs.signing_test.result }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| EnvCredentialProvider | ${{ needs.test_env_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| ProfileCredentialProvider | ${{ needs.test_profile_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| AssumeRoleCredentialProvider | ${{ needs.test_assume_role_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| AssumeRoleWithWebIdentityCredentialProvider | ${{ needs.test_web_identity_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| S3ExpressSessionProvider | ${{ needs.test_s3_express_provider.result }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Signing Tests | ${NEEDS_SIGNING_TEST_RESULT} |" >> $GITHUB_STEP_SUMMARY
+            echo "| EnvCredentialProvider | ${NEEDS_TEST_ENV_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+            echo "| ProfileCredentialProvider | ${NEEDS_TEST_PROFILE_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+            echo "| AssumeRoleCredentialProvider | ${NEEDS_TEST_ASSUME_ROLE_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+            echo "| AssumeRoleWithWebIdentityCredentialProvider | ${NEEDS_TEST_WEB_IDENTITY_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+            echo "| S3ExpressSessionProvider | ${NEEDS_TEST_S3_EXPRESS_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
           else
             echo "⚠️ **Integration tests were skipped** (forked repository or no secrets available)" >> $GITHUB_STEP_SUMMARY
           fi
@@ -659,8 +662,35 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Provider | Mock Server | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| IMDSv2CredentialProvider | amazon-ec2-metadata-mock | ${{ needs.test_imds_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ECSCredentialProvider | Python mock (port 51679) | ${{ needs.test_ecs_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| SSOCredentialProvider | Python mock (port 8080) | ${{ needs.test_sso_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ProcessCredentialProvider | Python credential helper | ${{ needs.test_process_provider.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| CognitoIdentityCredentialProvider | Python mock (port 8443) | ${{ needs.test_cognito_provider.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| IMDSv2CredentialProvider | amazon-ec2-metadata-mock | ${NEEDS_TEST_IMDS_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ECSCredentialProvider | Python mock (port 51679) | ${NEEDS_TEST_ECS_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SSOCredentialProvider | Python mock (port 8080) | ${NEEDS_TEST_SSO_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ProcessCredentialProvider | Python credential helper | ${NEEDS_TEST_PROCESS_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CognitoIdentityCredentialProvider | Python mock (port 8443) | ${NEEDS_TEST_COGNITO_PROVIDER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+
+        env:
+          NEEDS_UNIT_TEST_RESULT: ${{ needs.unit_test.result }}
+
+          NEEDS_CHECK_SECRETS_OUTPUTS_HAS_SECRETS: ${{ needs.check_secrets.outputs.has_secrets }}
+
+          NEEDS_SIGNING_TEST_RESULT: ${{ needs.signing_test.result }}
+
+          NEEDS_TEST_ENV_PROVIDER_RESULT: ${{ needs.test_env_provider.result }}
+
+          NEEDS_TEST_PROFILE_PROVIDER_RESULT: ${{ needs.test_profile_provider.result }}
+
+          NEEDS_TEST_ASSUME_ROLE_PROVIDER_RESULT: ${{ needs.test_assume_role_provider.result }}
+
+          NEEDS_TEST_WEB_IDENTITY_PROVIDER_RESULT: ${{ needs.test_web_identity_provider.result }}
+
+          NEEDS_TEST_S3_EXPRESS_PROVIDER_RESULT: ${{ needs.test_s3_express_provider.result }}
+
+          NEEDS_TEST_IMDS_PROVIDER_RESULT: ${{ needs.test_imds_provider.result }}
+
+          NEEDS_TEST_ECS_PROVIDER_RESULT: ${{ needs.test_ecs_provider.result }}
+
+          NEEDS_TEST_SSO_PROVIDER_RESULT: ${{ needs.test_sso_provider.result }}
+
+          NEEDS_TEST_PROCESS_PROVIDER_RESULT: ${{ needs.test_process_provider.result }}
+
+          NEEDS_TEST_COGNITO_PROVIDER_RESULT: ${{ needs.test_cognito_provider.result }}
