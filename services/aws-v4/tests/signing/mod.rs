@@ -48,7 +48,7 @@ pub fn load_static_credential() -> Result<Credential> {
 /// Initialize test environment
 pub fn init_signing_test() -> Option<(Context, RequestSigner, String)> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let _ = dotenv::dotenv();
+    let _ = dotenvy::dotenv();
 
     if env::var("REQSIGN_AWS_V4_TEST").is_err() || env::var("REQSIGN_AWS_V4_TEST").unwrap() != "on"
     {

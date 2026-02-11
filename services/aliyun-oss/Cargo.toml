@@ -39,7 +39,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 bytes = { workspace = true }
-dotenv = { workspace = true }
+dotenvy = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }

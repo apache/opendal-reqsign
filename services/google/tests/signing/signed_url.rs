@@ -27,7 +27,7 @@ use std::time::Duration;
 
 async fn init_signer_for_signed_url() -> Option<(Context, Signer<Credential>)> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let _ = dotenv::dotenv();
+    let _ = dotenvy::dotenv();
 
     if env::var("REQSIGN_GOOGLE_TEST").unwrap_or_default() != "on" {
         return None;
