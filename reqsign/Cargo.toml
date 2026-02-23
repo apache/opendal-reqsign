@@ -42,6 +42,7 @@ reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
+reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
 
@@ -64,11 +65,12 @@ aws = ["dep:reqsign-aws-v4"]
 azure = ["dep:reqsign-azure-storage"]
 google = ["dep:reqsign-google"]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
+openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
 
 # Full feature set
-full = ["aliyun", "aws", "azure", "google", "huaweicloud", "oracle", "tencent"]
+full = ["aliyun", "aws", "azure", "google", "huaweicloud", "openstack", "oracle", "tencent"]
 
 [dev-dependencies]
 anyhow = "1"
