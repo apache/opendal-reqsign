@@ -75,6 +75,11 @@ mod huaweicloud;
 #[cfg(feature = "services-huaweicloud")]
 pub use huaweicloud::*;
 
+#[cfg(feature = "services-openstack")]
+mod openstack;
+#[cfg(feature = "services-openstack")]
+pub use openstack::*;
+
 #[cfg(feature = "services-oracle")]
 mod oracle;
 #[cfg(feature = "services-oracle")]

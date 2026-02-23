@@ -57,6 +57,7 @@ jobs:
           - services-azblob
           - services-google
           - services-huaweicloud
+          - services-openstack
           - services-oracle
           - services-tencent
     steps:

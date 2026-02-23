@@ -29,6 +29,7 @@ services-all = [
   "services-azblob",
   "services-google",
   "services-huaweicloud",
+  "services-openstack",
   "services-oracle",
   "services-tencent",
 ]
@@ -56,6 +57,7 @@ services-google = [
   "dep:rsa",
 ]
 services-huaweicloud = ["dep:serde", "dep:serde_json", "dep:once_cell"]
+services-openstack = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 services-oracle = ["dep:reqwest", "dep:rsa", "dep:toml", "dep:serde"]
 services-tencent = ["dep:reqwest", "dep:serde", "dep:serde_json"]
 
