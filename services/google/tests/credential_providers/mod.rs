@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 pub fn create_test_context() -> Context {
     let _ = env_logger::builder().is_test(true).try_init();
-    let _ = dotenv::dotenv();
+    let _ = dotenvy::dotenv();
 
     Context::new()
         .with_file_read(TokioFileRead)
@@ -39,7 +39,7 @@ pub fn create_test_context() -> Context {
 
 pub fn create_test_context_with_env(envs: HashMap<String, String>) -> Context {
     let _ = env_logger::builder().is_test(true).try_init();
-    let _ = dotenv::dotenv();
+    let _ = dotenvy::dotenv();
 
     let home_dir = std::env::var("HOME").ok().map(std::path::PathBuf::from);
 

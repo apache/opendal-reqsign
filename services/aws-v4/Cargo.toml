@@ -50,7 +50,7 @@ sha1 = "0.10"
 aws-credential-types = "1.1.8"
 aws-sigv4 = "1.2.0"
 criterion = { workspace = true }
-dotenv = { workspace = true }
+dotenvy = { workspace = true }
 env_logger = { workspace = true }
 hex = { workspace = true }
 pretty_assertions = { workspace = true }

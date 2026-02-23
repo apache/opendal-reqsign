@@ -34,7 +34,7 @@ use reqsign_tencent_cos::{Credential, RequestSigner, StaticCredentialProvider};
 
 async fn init_signer() -> Option<Signer<Credential>> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let _ = dotenv::dotenv();
+    let _ = dotenvy::dotenv();
     if env::var("REQSIGN_TENCENT_COS_TEST").is_err()
         || env::var("REQSIGN_TENCENT_COS_TEST").unwrap() != "on"
     {

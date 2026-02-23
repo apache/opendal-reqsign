@@ -33,7 +33,7 @@ use reqwest::Client;
 
 async fn init_signer() -> Option<(Context, Signer<reqsign_aliyun_oss::Credential>)> {
     let _ = env_logger::builder().is_test(true).try_init();
-    let _ = dotenv::dotenv();
+    let _ = dotenvy::dotenv();
 
     if env::var("REQSIGN_ALIYUN_OSS_TEST").is_err()
         || env::var("REQSIGN_ALIYUN_OSS_TEST").unwrap() != "on"
