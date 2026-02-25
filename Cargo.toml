@@ -52,6 +52,7 @@ hex = "0.4"
 hmac = "0.12"
 http = "1"
 jiff = "0.2"
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 log = "0.4"
 percent-encoding = "2"
 pretty_assertions = "1.3"
