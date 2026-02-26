@@ -1,0 +1,124 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: OpenStack Keystone Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  RUST_LOG: DEBUG
+  RUST_BACKTRACE: full
+
+jobs:
+  # Unit tests - always run, no secrets needed
+  unit_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run unit tests
+        working-directory: ./services/openstack-keystone
+        run: |
+          echo "::group::Running unit tests"
+          cargo test --lib --no-fail-fast
+          cargo test --doc --no-fail-fast
+          echo "::endgroup::"
+
+  # KeystoneCredentialProvider test with mock server
+  test_keystone_mock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Start mock Keystone server
+        run: |
+          python3 services/openstack-keystone/tests/mocks/keystone_mock_server.py 5000 &
+          echo "MOCK_PID=$!" >> $GITHUB_ENV
+          sleep 2
+          # Verify the mock server is running
+          curl -f -X POST http://127.0.0.1:5000/v3/auth/tokens \
+            -H "Content-Type: application/json" \
+            -d '{"auth":{"identity":{"methods":["password"],"password":{"user":{"name":"test","password":"test","domain":{"name":"Default"}}}}}}' \
+            -o /dev/null -w "HTTP %{http_code}\n" || exit 1
+      - name: Test KeystoneCredentialProvider with mock
+        working-directory: ./services/openstack-keystone
+        run: |
+          echo "::group::Testing KeystoneCredentialProvider with mock"
+          export REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK=on
+          export REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL=http://127.0.0.1:5000/v3
+          cargo test --test credential_providers --no-fail-fast -- --no-capture
+          echo "::endgroup::"
+      - name: Stop mock server
+        if: always()
+        run: |
+          if [ ! -z "$MOCK_PID" ]; then
+            kill $MOCK_PID || true
+          fi
+
+  # Summary
+  test_summary:
+    needs:
+      [
+        unit_test,
+        test_keystone_mock,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test Summary
+        run: |
+          echo "## OpenStack Keystone Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Unit tests status
+          if [[ "${{ needs.unit_test.result }}" == "success" ]]; then
+            echo "✅ Unit tests passed" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.unit_test.result }}" == "skipped" ]]; then
+            echo "⏭️ Unit tests skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Unit tests failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Mock tests status
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Integration Tests" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ needs.test_keystone_mock.result }}" == "success" ]]; then
+            echo "✅ Keystone mock tests passed" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.test_keystone_mock.result }}" == "skipped" ]]; then
+            echo "⏭️ Keystone mock tests skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Keystone mock tests failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Overall status
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ needs.unit_test.result }}" == "success" ]] && \
+             ( [[ "${{ needs.test_keystone_mock.result }}" == "success" ]] || [[ "${{ needs.test_keystone_mock.result }}" == "skipped" ]] ); then
+            echo "### ✅ All tests completed successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi

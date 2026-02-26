@@ -36,6 +36,7 @@ reqsign-file-read-tokio = { version = "2.0.2", path = "context/file-read-tokio" 
 reqsign-google = { version = "2.0.2", path = "services/google" }
 reqsign-http-send-reqwest = { version = "3.0.0", path = "context/http-send-reqwest" }
 reqsign-huaweicloud-obs = { version = "2.0.2", path = "services/huaweicloud-obs" }
+reqsign-openstack-keystone = { version = "2.0.0", path = "services/openstack-keystone" }
 reqsign-oracle = { version = "2.0.2", path = "services/oracle" }
 reqsign-tencent-cos = { version = "2.0.2", path = "services/tencent-cos" }
 
