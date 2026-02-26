@@ -25,9 +25,15 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// This loader will try to load credentials in the following order:
 /// 1. From environment variables
 /// 2. From the default Oracle config file (~/.oci/config)
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
+}
+
+impl Default for DefaultCredentialProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DefaultCredentialProvider {
@@ -148,5 +154,44 @@ impl ProvideCredential for DefaultCredentialProvider {
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
         self.chain.provide_credential(ctx).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constants::{ORACLE_FINGERPRINT, ORACLE_KEY_FILE, ORACLE_TENANCY, ORACLE_USER};
+    use reqsign_core::{Context, StaticEnv};
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_default_matches_new() {
+        let ctx = Context::new().with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from([
+                (ORACLE_USER.to_string(), "test_user".to_string()),
+                (ORACLE_TENANCY.to_string(), "test_tenancy".to_string()),
+                (ORACLE_KEY_FILE.to_string(), "/tmp/key.pem".to_string()),
+                (ORACLE_FINGERPRINT.to_string(), "test_fingerprint".to_string()),
+            ]),
+        });
+
+        let from_default = DefaultCredentialProvider::default()
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed")
+            .expect("credential must exist");
+        let from_new = DefaultCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed")
+            .expect("credential must exist");
+
+        assert_eq!(from_default.user, from_new.user);
+        assert_eq!(from_default.tenancy, from_new.tenancy);
+        assert_eq!(from_default.key_file, from_new.key_file);
+        assert_eq!(from_default.fingerprint, from_new.fingerprint);
+        assert!(from_default.expires_in.is_some());
+        assert!(from_new.expires_in.is_some());
     }
 }

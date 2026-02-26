@@ -19,6 +19,6 @@ mod default;
 mod env;
 mod r#static;
 
-pub use default::DefaultCredentialProvider;
+pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
 pub use env::EnvCredentialProvider;
 pub use r#static::StaticCredentialProvider;
