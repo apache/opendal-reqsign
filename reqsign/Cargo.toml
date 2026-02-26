@@ -44,6 +44,7 @@ reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
+reqsign-volcengine-tos = { workspace = true, optional = true }
 
 # Context implementations (optional but included by default)
 reqsign-command-execute-tokio = { workspace = true, optional = true }
@@ -66,9 +67,10 @@ google = ["dep:reqsign-google"]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
+volcengine = ["dep:reqsign-volcengine-tos"]
 
 # Full feature set
-full = ["aliyun", "aws", "azure", "google", "huaweicloud", "oracle", "tencent"]
+full = ["aliyun", "aws", "azure", "google", "huaweicloud", "oracle", "tencent", "volcengine"]
 
 [dev-dependencies]
 anyhow = "1"
