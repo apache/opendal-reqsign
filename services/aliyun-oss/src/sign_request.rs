@@ -321,7 +321,15 @@ impl RequestSigner {
 
         // Build resource string
         let decoded_path = percent_encoding::percent_decode_str(path).decode_utf8_lossy();
-        let resource_path = format!("/{}{}", self.bucket, decoded_path);
+        let authority = req.uri.authority().map(|v| v.as_str()).unwrap_or("");
+        let is_virtual_host = authority.starts_with(&format!("{}.", self.bucket));
+
+        let resource_path = if is_virtual_host {
+            format!("/{}{}", self.bucket, decoded_path)
+        } else {
+            // Path-style addressing already includes bucket in request path: http://endpoint/<bucket>/<object>, do not repeat
+            decoded_path.to_string()
+        };
 
         if query_pairs.is_empty() {
             resource_path
