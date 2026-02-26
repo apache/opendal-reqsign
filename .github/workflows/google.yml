@@ -33,12 +33,16 @@ env:
   RUST_LOG: DEBUG
   RUST_BACKTRACE: full
 
+permissions: {}
+
 jobs:
   # Unit tests - always run, no secrets needed
   unit_test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Run unit tests
         working-directory: ./services/google
         run: |
@@ -70,14 +74,16 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3.1.0
+        uses: 1password/load-secrets-action/configure@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           export-env: true
         env:
@@ -98,22 +104,26 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3.1.0
+        uses: 1password/load-secrets-action/configure@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
         id: load_secrets
-        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         env:
           REQSIGN_GOOGLE_TEST_DEFAULT: on
           GOOGLE_APPLICATION_CREDENTIALS_BASE64: op://reqsign/google/credential_base64
       - name: Setup test credentials file
         run: |
-          echo "${{ steps.load_secrets.outputs.GOOGLE_APPLICATION_CREDENTIALS_BASE64 }}" | base64 -d > /tmp/gcp_credentials.json
+          echo "${STEPS_LOAD_SECRETS_OUTPUTS_GOOGLE_APPLICATION_CREDENTIALS_BASE64}" | base64 -d > /tmp/gcp_credentials.json
           echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_credentials.json" >> $GITHUB_ENV
+        env:
+          STEPS_LOAD_SECRETS_OUTPUTS_GOOGLE_APPLICATION_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_APPLICATION_CREDENTIALS_BASE64 }}
       - name: Test DefaultCredentialProvider
         working-directory: ./services/google
         run: |
@@ -127,14 +137,16 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3.1.0
+        uses: 1password/load-secrets-action/configure@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           export-env: true
         env:
@@ -154,22 +166,26 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3.1.0
+        uses: 1password/load-secrets-action/configure@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
         id: load_secrets
-        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         env:
           REQSIGN_GOOGLE_TEST_AUTHORIZED_USER: on
           AUTHORIZED_USER_CREDENTIALS_BASE64: op://reqsign/google/authorized_user_base64
       - name: Setup test credentials file
         run: |
-          echo "${{ steps.load_secrets.outputs.AUTHORIZED_USER_CREDENTIALS_BASE64 }}" | base64 -d > /tmp/authorized_user.json
+          echo "${STEPS_LOAD_SECRETS_OUTPUTS_AUTHORIZED_USER_CREDENTIALS_BASE64}" | base64 -d > /tmp/authorized_user.json
           echo "REQSIGN_GOOGLE_AUTHORIZED_USER_CREDENTIALS=/tmp/authorized_user.json" >> $GITHUB_ENV
+        env:
+          STEPS_LOAD_SECRETS_OUTPUTS_AUTHORIZED_USER_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.AUTHORIZED_USER_CREDENTIALS_BASE64 }}
       - name: Test AuthorizedUserCredentialProvider
         working-directory: ./services/google
         run: |
@@ -186,14 +202,16 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3.1.0
+        uses: 1password/load-secrets-action/configure@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
-        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           export-env: true
         env:
@@ -201,7 +219,7 @@ jobs:
           GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
           GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
       - name: Setup Workload Identity with Google Auth
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           create_credentials_file: true
           workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
@@ -221,22 +239,26 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Setup 1Password Connect
-        uses: 1password/load-secrets-action/configure@v3.1.0
+        uses: 1password/load-secrets-action/configure@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load secrets
         id: load_secrets
-        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3
+        uses: 1password/load-secrets-action@8d0d610af187e78a2772c2d18d627f4c52d3fbfb # v3.1.0
         env:
           REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT: on
           IMPERSONATED_SA_CREDENTIALS_BASE64: op://reqsign/google/impersonated_sa_base64
       - name: Setup test credentials file
         run: |
-          echo "${{ steps.load_secrets.outputs.IMPERSONATED_SA_CREDENTIALS_BASE64 }}" | base64 -d > /tmp/impersonated_sa.json
+          echo "${STEPS_LOAD_SECRETS_OUTPUTS_IMPERSONATED_SA_CREDENTIALS_BASE64}" | base64 -d > /tmp/impersonated_sa.json
           echo "REQSIGN_GOOGLE_IMPERSONATED_SERVICE_ACCOUNT_CREDENTIALS=/tmp/impersonated_sa.json" >> $GITHUB_ENV
+        env:
+          STEPS_LOAD_SECRETS_OUTPUTS_IMPERSONATED_SA_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.IMPERSONATED_SA_CREDENTIALS_BASE64 }}
       - name: Test ImpersonatedServiceAccountCredentialProvider
         working-directory: ./services/google
         run: |
@@ -250,7 +272,9 @@ jobs:
     if: needs.check_secrets.outputs.has_secrets == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
       - name: Start mock metadata server
         run: |
           python3 services/google/tests/mocks/vm_metadata_mock_server.py 8080 &
@@ -295,9 +319,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Unit tests status
-          if [[ "${{ needs.unit_test.result }}" == "success" ]]; then
+          if [[ "${NEEDS_UNIT_TEST_RESULT}" == "success" ]]; then
             echo "✅ Unit tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.unit_test.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_UNIT_TEST_RESULT}" == "skipped" ]]; then
             echo "⏭️ Unit tests skipped" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Unit tests failed" >> $GITHUB_STEP_SUMMARY
@@ -307,57 +331,57 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Integration Tests" >> $GITHUB_STEP_SUMMARY
 
-          if [[ "${{ needs.signing_test.result }}" == "success" ]]; then
+          if [[ "${NEEDS_SIGNING_TEST_RESULT}" == "success" ]]; then
             echo "✅ Signing tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.signing_test.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_SIGNING_TEST_RESULT}" == "skipped" ]]; then
             echo "⏭️ Signing tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Signing tests failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [[ "${{ needs.test_default_provider.result }}" == "success" ]]; then
+          if [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "success" ]]; then
             echo "✅ DefaultCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.test_default_provider.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "skipped" ]]; then
             echo "⏭️ DefaultCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ DefaultCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [[ "${{ needs.test_static_provider.result }}" == "success" ]]; then
+          if [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "success" ]]; then
             echo "✅ StaticCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.test_static_provider.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "skipped" ]]; then
             echo "⏭️ StaticCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ StaticCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [[ "${{ needs.test_authorized_user_provider.result }}" == "success" ]]; then
+          if [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "success" ]]; then
             echo "✅ AuthorizedUserCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.test_authorized_user_provider.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "skipped" ]]; then
             echo "⏭️ AuthorizedUserCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ AuthorizedUserCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [[ "${{ needs.test_external_account_provider.result }}" == "success" ]]; then
+          if [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "success" ]]; then
             echo "✅ ExternalAccountCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.test_external_account_provider.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]]; then
             echo "⏭️ ExternalAccountCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ ExternalAccountCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [[ "${{ needs.test_impersonated_service_account_provider.result }}" == "success" ]]; then
+          if [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "success" ]]; then
             echo "✅ ImpersonatedServiceAccountCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.test_impersonated_service_account_provider.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]]; then
             echo "⏭️ ImpersonatedServiceAccountCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ ImpersonatedServiceAccountCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [[ "${{ needs.test_vm_metadata_provider.result }}" == "success" ]]; then
+          if [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "success" ]]; then
             echo "✅ VmMetadataCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${{ needs.test_vm_metadata_provider.result }}" == "skipped" ]]; then
+          elif [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "skipped" ]]; then
             echo "⏭️ VmMetadataCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ VmMetadataCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
@@ -365,16 +389,33 @@ jobs:
 
           # Overall status
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ needs.unit_test.result }}" == "success" ]] && \
-             ( [[ "${{ needs.signing_test.result }}" == "success" ]] || [[ "${{ needs.signing_test.result }}" == "skipped" ]] ) && \
-             ( [[ "${{ needs.test_default_provider.result }}" == "success" ]] || [[ "${{ needs.test_default_provider.result }}" == "skipped" ]] ) && \
-             ( [[ "${{ needs.test_static_provider.result }}" == "success" ]] || [[ "${{ needs.test_static_provider.result }}" == "skipped" ]] ) && \
-             ( [[ "${{ needs.test_authorized_user_provider.result }}" == "success" ]] || [[ "${{ needs.test_authorized_user_provider.result }}" == "skipped" ]] ) && \
-             ( [[ "${{ needs.test_external_account_provider.result }}" == "success" ]] || [[ "${{ needs.test_external_account_provider.result }}" == "skipped" ]] ) && \
-             ( [[ "${{ needs.test_impersonated_service_account_provider.result }}" == "success" ]] || [[ "${{ needs.test_impersonated_service_account_provider.result }}" == "skipped" ]] ) && \
-             ( [[ "${{ needs.test_vm_metadata_provider.result }}" == "success" ]] || [[ "${{ needs.test_vm_metadata_provider.result }}" == "skipped" ]] ); then
+          if [[ "${NEEDS_UNIT_TEST_RESULT}" == "success" ]] && \
+             ( [[ "${NEEDS_SIGNING_TEST_RESULT}" == "success" ]] || [[ "${NEEDS_SIGNING_TEST_RESULT}" == "skipped" ]] ) && \
+             ( [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "skipped" ]] ) && \
+             ( [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "skipped" ]] ) && \
+             ( [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "skipped" ]] ) && \
+             ( [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]] ) && \
+             ( [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]] ) && \
+             ( [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "skipped" ]] ); then
             echo "### ✅ All tests completed successfully" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
+
+        env:
+          NEEDS_UNIT_TEST_RESULT: ${{ needs.unit_test.result }}
+
+          NEEDS_SIGNING_TEST_RESULT: ${{ needs.signing_test.result }}
+
+          NEEDS_TEST_DEFAULT_PROVIDER_RESULT: ${{ needs.test_default_provider.result }}
+
+          NEEDS_TEST_STATIC_PROVIDER_RESULT: ${{ needs.test_static_provider.result }}
+
+          NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT: ${{ needs.test_authorized_user_provider.result }}
+
+          NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT: ${{ needs.test_external_account_provider.result }}
+
+          NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT: ${{ needs.test_impersonated_service_account_provider.result }}
+
+          NEEDS_TEST_VM_METADATA_PROVIDER_RESULT: ${{ needs.test_vm_metadata_provider.result }}
