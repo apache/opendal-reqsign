@@ -27,5 +27,5 @@ pub use credential::Credential;
 mod sign_request;
 pub use sign_request::RequestSigner;
 
-pub mod provide_credential;
+mod provide_credential;
 pub use provide_credential::*;
