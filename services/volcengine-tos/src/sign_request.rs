@@ -15,10 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::fmt::Write;
-use std::sync::LazyLock;
-
-use async_trait::async_trait;
 use http::header::AUTHORIZATION;
 use http::{HeaderName, HeaderValue, header};
 use log::debug;
@@ -26,6 +22,8 @@ use percent_encoding::percent_decode_str;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
+use std::fmt::Write;
+use std::sync::LazyLock;
 
 use crate::constants::*;
 use crate::credential::Credential;
@@ -66,8 +64,6 @@ impl RequestSigner {
         self
     }
 }
-
-#[async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 

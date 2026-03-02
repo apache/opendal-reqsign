@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::{Credential, constants::*};
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, Result};
 
 /// EnvCredentialProvider loads Aliyun credentials from environment variables.
@@ -34,8 +33,6 @@ impl EnvCredentialProvider {
         Self
     }
 }
-
-#[async_trait]
 impl ProvideCredential for EnvCredentialProvider {
     type Credential = Credential;
 

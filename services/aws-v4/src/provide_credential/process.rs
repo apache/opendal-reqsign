@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use ini::Ini;
 use log::debug;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
@@ -194,8 +193,6 @@ struct ProcessCredentialOutput {
     #[serde(default)]
     expiration: Option<String>,
 }
-
-#[async_trait]
 impl ProvideCredential for ProcessCredentialProvider {
     type Credential = Credential;
 

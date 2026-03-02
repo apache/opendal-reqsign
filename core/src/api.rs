@@ -15,8 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{Context, Result};
+use crate::{BoxedFuture, Context, MaybeSend, Result};
 use std::fmt::Debug;
+use std::future::Future;
+use std::ops::Deref;
 use std::time::Duration;
 
 /// SigningCredential is the trait used by signer as the signing credential.
@@ -39,7 +41,6 @@ impl<T: SigningCredential> SigningCredential for Option<T> {
 ///`
 /// Service may require different credential to sign the request, for example, AWS require
 /// access key and secret key, while Google Cloud Storage require token.
-#[async_trait::async_trait]
 pub trait ProvideCredential: Debug + Send + Sync + Unpin + 'static {
     /// Credential returned by this loader.
     ///
@@ -47,11 +48,50 @@ pub trait ProvideCredential: Debug + Send + Sync + Unpin + 'static {
     type Credential: Send + Sync + Unpin + 'static;
 
     /// Load signing credential from current env.
-    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>>;
+    fn provide_credential(
+        &self,
+        ctx: &Context,
+    ) -> impl Future<Output = Result<Option<Self::Credential>>> + MaybeSend;
+}
+
+/// ProvideCredentialDyn is the dyn version of [`ProvideCredential`].
+pub trait ProvideCredentialDyn: Debug + Send + Sync + Unpin + 'static {
+    /// Credential returned by this loader.
+    type Credential: Send + Sync + Unpin + 'static;
+
+    /// Dyn version of [`ProvideCredential::provide_credential`].
+    fn provide_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> BoxedFuture<'a, Result<Option<Self::Credential>>>;
+}
+
+impl<T> ProvideCredentialDyn for T
+where
+    T: ProvideCredential + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn provide_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> BoxedFuture<'a, Result<Option<Self::Credential>>> {
+        Box::pin(self.provide_credential(ctx))
+    }
+}
+
+impl<T> ProvideCredential for std::sync::Arc<T>
+where
+    T: ProvideCredentialDyn + ?Sized,
+{
+    type Credential = T::Credential;
+
+    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        self.deref().provide_credential_dyn(ctx).await
+    }
 }
 
 /// SignRequest is the trait used by signer to build the signing request.
-#[async_trait::async_trait]
 pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     /// Credential used by this builder.
     ///
@@ -71,13 +111,64 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     ///
     /// Implementation details determine how to handle the expiration logic. For instance,
     /// AWS uses a query string that includes an `Expires` parameter.
+    fn sign_request<'a>(
+        &'a self,
+        ctx: &'a Context,
+        req: &'a mut http::request::Parts,
+        credential: Option<&'a Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> impl Future<Output = Result<()>> + MaybeSend + 'a;
+}
+
+/// SignRequestDyn is the dyn version of [`SignRequest`].
+pub trait SignRequestDyn: Debug + Send + Sync + Unpin + 'static {
+    /// Credential used by this builder.
+    type Credential: Send + Sync + Unpin + 'static;
+
+    /// Dyn version of [`SignRequest::sign_request`].
+    fn sign_request_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        req: &'a mut http::request::Parts,
+        credential: Option<&'a Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<()>>;
+}
+
+impl<T> SignRequestDyn for T
+where
+    T: SignRequest + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn sign_request_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        req: &'a mut http::request::Parts,
+        credential: Option<&'a Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<()>> {
+        Box::pin(self.sign_request(ctx, req, credential, expires_in))
+    }
+}
+
+impl<T> SignRequest for std::sync::Arc<T>
+where
+    T: SignRequestDyn + ?Sized,
+{
+    type Credential = T::Credential;
+
     async fn sign_request(
         &self,
         ctx: &Context,
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.deref()
+            .sign_request_dyn(ctx, req, credential, expires_in)
+            .await
+    }
 }
 
 /// A chain of credential providers that will be tried in order.
@@ -90,7 +181,6 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
 ///
 /// ```no_run
 /// use reqsign_core::{ProvideCredentialChain, Context, ProvideCredential, Result};
-/// use async_trait::async_trait;
 ///
 /// #[derive(Debug)]
 /// struct MyCredential {
@@ -100,7 +190,6 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
 /// #[derive(Debug)]
 /// struct EnvironmentProvider;
 ///
-/// #[async_trait]
 /// impl ProvideCredential for EnvironmentProvider {
 ///     type Credential = MyCredential;
 ///
@@ -118,7 +207,7 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
 /// # }
 /// ```
 pub struct ProvideCredentialChain<C> {
-    providers: Vec<Box<dyn ProvideCredential<Credential = C>>>,
+    providers: Vec<Box<dyn ProvideCredentialDyn<Credential = C>>>,
 }
 
 impl<C> ProvideCredentialChain<C>
@@ -150,7 +239,7 @@ where
     }
 
     /// Create a credential provider chain from a vector of providers.
-    pub fn from_vec(providers: Vec<Box<dyn ProvideCredential<Credential = C>>>) -> Self {
+    pub fn from_vec(providers: Vec<Box<dyn ProvideCredentialDyn<Credential = C>>>) -> Self {
         Self { providers }
     }
 
@@ -185,7 +274,6 @@ where
     }
 }
 
-#[async_trait::async_trait]
 impl<C> ProvideCredential for ProvideCredentialChain<C>
 where
     C: Send + Sync + Unpin + 'static,
@@ -196,7 +284,7 @@ where
         for provider in &self.providers {
             log::debug!("Trying credential provider: {provider:?}");
 
-            match provider.provide_credential(ctx).await {
+            match provider.provide_credential_dyn(ctx).await {
                 Ok(Some(cred)) => {
                     log::debug!("Successfully loaded credential from provider: {provider:?}");
                     return Ok(Some(cred));

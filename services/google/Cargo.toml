@@ -27,7 +27,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-async-trait = { workspace = true }
 form_urlencoded = { workspace = true }
 http = { workspace = true }
 jsonwebtoken = { workspace = true }

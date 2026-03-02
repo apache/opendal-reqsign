@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::{Credential, constants::*};
-use async_trait::async_trait;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 use std::time::Duration;
@@ -37,8 +36,6 @@ impl EnvCredentialProvider {
         Self {}
     }
 }
-
-#[async_trait]
 impl ProvideCredential for EnvCredentialProvider {
     type Credential = Credential;
 

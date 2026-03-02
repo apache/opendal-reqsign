@@ -19,7 +19,6 @@ use crate::Credential;
 use crate::provide_credential::{
     AssumeRoleWithWebIdentityCredentialProvider, EnvCredentialProvider,
 };
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
 /// Default loader for Tencent COS.
@@ -152,8 +151,6 @@ impl DefaultCredentialProviderBuilder {
         DefaultCredentialProvider::with_chain(chain)
     }
 }
-
-#[async_trait]
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 

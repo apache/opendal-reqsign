@@ -14,8 +14,6 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
-use async_trait::async_trait;
 use reqsign_core::Context;
 use reqsign_core::ProvideCredential;
 use reqsign_core::Result;
@@ -49,8 +47,6 @@ impl StaticCredentialProvider {
         self
     }
 }
-
-#[async_trait]
 impl ProvideCredential for StaticCredentialProvider {
     type Credential = Credential;
 

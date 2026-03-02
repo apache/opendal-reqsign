@@ -16,8 +16,6 @@
 // under the License.
 
 //! Integration tests for ProvideCredentialChain with Huawei Cloud OBS
-
-use async_trait::async_trait;
 use reqsign_core::ProvideCredentialChain;
 use reqsign_core::{Context, OsEnv, ProvideCredential, Result};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -32,8 +30,6 @@ struct CountingProvider {
     return_credential: bool,
     call_count: Arc<std::sync::Mutex<usize>>,
 }
-
-#[async_trait]
 impl ProvideCredential for CountingProvider {
     type Credential = Credential;
 
@@ -191,8 +187,6 @@ async fn test_chain_with_security_token() {
 /// Mock provider that returns credentials with security token
 #[derive(Debug)]
 struct SecurityTokenProvider;
-
-#[async_trait]
 impl ProvideCredential for SecurityTokenProvider {
     type Credential = Credential;
 

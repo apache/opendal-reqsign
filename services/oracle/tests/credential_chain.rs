@@ -16,8 +16,6 @@
 // under the License.
 
 //! Integration tests for ProvideCredentialChain with Oracle Cloud Infrastructure
-
-use async_trait::async_trait;
 use reqsign_core::ProvideCredentialChain;
 use reqsign_core::{Context, OsEnv, ProvideCredential, Result};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -32,8 +30,6 @@ struct CountingProvider {
     return_credential: bool,
     call_count: Arc<std::sync::Mutex<usize>>,
 }
-
-#[async_trait]
 impl ProvideCredential for CountingProvider {
     type Credential = Credential;
 

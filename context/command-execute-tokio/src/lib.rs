@@ -77,8 +77,6 @@
 //! # Ok(())
 //! # }
 //! ```
-
-use async_trait::async_trait;
 use reqsign_core::{CommandExecute, CommandOutput, Error, Result};
 use std::process::Stdio;
 use tokio::process::Command;
@@ -89,8 +87,6 @@ use tokio::process::Command;
 /// process spawning operations.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TokioCommandExecute;
-
-#[async_trait]
 impl CommandExecute for TokioCommandExecute {
     async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
         let output = Command::new(program)

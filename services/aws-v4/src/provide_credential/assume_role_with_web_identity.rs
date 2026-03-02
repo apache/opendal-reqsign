@@ -17,7 +17,6 @@
 
 use crate::Credential;
 use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
-use async_trait::async_trait;
 use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
@@ -114,8 +113,6 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
         self
     }
 }
-
-#[async_trait]
 impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
     type Credential = Credential;
 
@@ -305,7 +302,6 @@ impl Debug for AssumeRoleWithWebIdentityCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use reqsign_core::{FileRead, HttpSend, StaticEnv};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -354,8 +350,6 @@ mod tests {
         expected_path: String,
         content: Vec<u8>,
     }
-
-    #[async_trait]
     impl FileRead for TestFileRead {
         async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
             assert_eq!(path, self.expected_path);
@@ -381,8 +375,6 @@ mod tests {
             self.uri.lock().unwrap().clone()
         }
     }
-
-    #[async_trait]
     impl HttpSend for CaptureHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             *self.uri.lock().unwrap() = Some(req.uri().to_string());

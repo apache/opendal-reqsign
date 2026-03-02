@@ -15,10 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{Error, Result};
+use crate::{BoxedFuture, Error, MaybeSend, Result};
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::future::Future;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -40,10 +42,10 @@ use std::sync::Arc;
 /// ```
 #[derive(Clone)]
 pub struct Context {
-    fs: Arc<dyn FileRead>,
-    http: Arc<dyn HttpSend>,
+    fs: Arc<dyn FileReadDyn>,
+    http: Arc<dyn HttpSendDyn>,
     env: Arc<dyn Env>,
-    cmd: Arc<dyn CommandExecute>,
+    cmd: Arc<dyn CommandExecuteDyn>,
 }
 
 impl Debug for Context {
@@ -115,7 +117,7 @@ impl Context {
     /// Read the file content entirely in `Vec<u8>`.
     #[inline]
     pub async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
-        self.fs.file_read(path).await
+        self.fs.file_read_dyn(path).await
     }
 
     /// Read the file content entirely in `String`.
@@ -127,7 +129,7 @@ impl Context {
     /// Send http request and return the response.
     #[inline]
     pub async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
-        self.http.http_send(req).await
+        self.http.http_send_dyn(req).await
     }
 
     /// Send http request and return the response as string.
@@ -135,7 +137,7 @@ impl Context {
         &self,
         req: http::Request<Bytes>,
     ) -> Result<http::Response<String>> {
-        let (parts, body) = self.http.http_send(req).await?.into_parts();
+        let (parts, body) = self.http.http_send_dyn(req).await?.into_parts();
         let body = String::from_utf8_lossy(&body).to_string();
         Ok(http::Response::from_parts(parts, body))
     }
@@ -180,27 +182,70 @@ impl Context {
     ///
     /// Returns the command output including exit status, stdout, and stderr.
     pub async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
-        self.cmd.command_execute(program, args).await
+        self.cmd.command_execute_dyn(program, args).await
     }
 }
 
 /// FileRead is used to read the file content entirely in `Vec<u8>`.
 ///
 /// This could be used by `Load` to load the credential from the file.
-#[async_trait::async_trait]
 pub trait FileRead: Debug + Send + Sync + 'static {
     /// Read the file content entirely in `Vec<u8>`.
-    async fn file_read(&self, path: &str) -> Result<Vec<u8>>;
+    fn file_read(&self, path: &str) -> impl Future<Output = Result<Vec<u8>>> + MaybeSend;
+}
+
+/// FileReadDyn is the dyn version of [`FileRead`].
+pub trait FileReadDyn: Debug + Send + Sync + 'static {
+    /// Dyn version of [`FileRead::file_read`].
+    fn file_read_dyn<'a>(&'a self, path: &'a str) -> BoxedFuture<'a, Result<Vec<u8>>>;
+}
+
+impl<T: FileRead + ?Sized> FileReadDyn for T {
+    fn file_read_dyn<'a>(&'a self, path: &'a str) -> BoxedFuture<'a, Result<Vec<u8>>> {
+        Box::pin(self.file_read(path))
+    }
+}
+
+impl<T: FileReadDyn + ?Sized> FileRead for Arc<T> {
+    async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+        self.deref().file_read_dyn(path).await
+    }
 }
 
 /// HttpSend is used to send http request during the signing process.
 ///
 /// For example, fetch IMDS token from AWS or OAuth2 refresh token. This trait is designed
 /// especially for the signer, please don't use it as a general http client.
-#[async_trait::async_trait]
 pub trait HttpSend: Debug + Send + Sync + 'static {
     /// Send http request and return the response.
-    async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>>;
+    fn http_send(
+        &self,
+        req: http::Request<Bytes>,
+    ) -> impl Future<Output = Result<http::Response<Bytes>>> + MaybeSend;
+}
+
+/// HttpSendDyn is the dyn version of [`HttpSend`].
+pub trait HttpSendDyn: Debug + Send + Sync + 'static {
+    /// Dyn version of [`HttpSend::http_send`].
+    fn http_send_dyn(
+        &self,
+        req: http::Request<Bytes>,
+    ) -> BoxedFuture<'_, Result<http::Response<Bytes>>>;
+}
+
+impl<T: HttpSend + ?Sized> HttpSendDyn for T {
+    fn http_send_dyn(
+        &self,
+        req: http::Request<Bytes>,
+    ) -> BoxedFuture<'_, Result<http::Response<Bytes>>> {
+        Box::pin(self.http_send(req))
+    }
+}
+
+impl<T: HttpSendDyn + ?Sized> HttpSend for Arc<T> {
+    async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+        self.deref().http_send_dyn(req).await
+    }
 }
 
 /// Permits parameterizing the home functions via the _from variants
@@ -299,10 +344,39 @@ impl CommandOutput {
 /// - Blocking execution for non-async contexts
 /// - WebAssembly environments (returning errors)
 /// - Mock implementations for testing
-#[async_trait::async_trait]
 pub trait CommandExecute: Debug + Send + Sync + 'static {
     /// Execute a command with the given program and arguments.
-    async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput>;
+    fn command_execute<'a>(
+        &'a self,
+        program: &'a str,
+        args: &'a [&'a str],
+    ) -> impl Future<Output = Result<CommandOutput>> + MaybeSend + 'a;
+}
+
+/// CommandExecuteDyn is the dyn version of [`CommandExecute`].
+pub trait CommandExecuteDyn: Debug + Send + Sync + 'static {
+    /// Dyn version of [`CommandExecute::command_execute`].
+    fn command_execute_dyn<'a>(
+        &'a self,
+        program: &'a str,
+        args: &'a [&'a str],
+    ) -> BoxedFuture<'a, Result<CommandOutput>>;
+}
+
+impl<T: CommandExecute + ?Sized> CommandExecuteDyn for T {
+    fn command_execute_dyn<'a>(
+        &'a self,
+        program: &'a str,
+        args: &'a [&'a str],
+    ) -> BoxedFuture<'a, Result<CommandOutput>> {
+        Box::pin(self.command_execute(program, args))
+    }
+}
+
+impl<T: CommandExecuteDyn + ?Sized> CommandExecute for Arc<T> {
+    async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
+        self.deref().command_execute_dyn(program, args).await
+    }
 }
 
 /// NoopFileRead is a no-op implementation that always returns an error.
@@ -311,7 +385,6 @@ pub trait CommandExecute: Debug + Send + Sync + 'static {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoopFileRead;
 
-#[async_trait::async_trait]
 impl FileRead for NoopFileRead {
     async fn file_read(&self, _path: &str) -> Result<Vec<u8>> {
         Err(Error::unexpected(
@@ -326,7 +399,6 @@ impl FileRead for NoopFileRead {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoopHttpSend;
 
-#[async_trait::async_trait]
 impl HttpSend for NoopHttpSend {
     async fn http_send(&self, _req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
         Err(Error::unexpected(
@@ -361,7 +433,6 @@ impl Env for NoopEnv {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoopCommandExecute;
 
-#[async_trait::async_trait]
 impl CommandExecute for NoopCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
         Err(Error::unexpected(

@@ -17,7 +17,6 @@
 
 use crate::Credential;
 use crate::constants::*;
-use async_trait::async_trait;
 use http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
 use log::debug;
 use reqsign_core::Result;
@@ -35,8 +34,6 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
         Self {}
     }
 }
-
-#[async_trait]
 impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
     type Credential = Credential;
 

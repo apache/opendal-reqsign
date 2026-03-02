@@ -17,7 +17,6 @@
 
 use crate::Credential;
 use crate::provide_credential::{ConfigFileCredentialProvider, EnvCredentialProvider};
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
 /// Default loader for Oracle Cloud Infrastructure.
@@ -141,8 +140,6 @@ impl DefaultCredentialProviderBuilder {
         DefaultCredentialProvider::with_chain(chain)
     }
 }
-
-#[async_trait]
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 

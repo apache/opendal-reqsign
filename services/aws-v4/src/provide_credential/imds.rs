@@ -17,7 +17,6 @@
 
 use crate::Credential;
 use crate::provide_credential::utils::parse_imds_error;
-use async_trait::async_trait;
 use bytes::Bytes;
 use http::Method;
 use http::header::CONTENT_LENGTH;
@@ -115,8 +114,6 @@ impl IMDSv2CredentialProvider {
         Ok(ec2_token)
     }
 }
-
-#[async_trait]
 impl ProvideCredential for IMDSv2CredentialProvider {
     type Credential = Credential;
 

@@ -16,8 +16,6 @@
 // under the License.
 
 //! Example of building a custom credential chain with specific providers
-
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_google::{Credential, ServiceAccount, Token};
@@ -48,8 +46,6 @@ impl StaticCredentialProvider {
         }
     }
 }
-
-#[async_trait]
 impl ProvideCredential for StaticCredentialProvider {
     type Credential = Credential;
 
@@ -61,8 +57,6 @@ impl ProvideCredential for StaticCredentialProvider {
 /// Environment-based provider (simplified example)
 #[derive(Debug)]
 struct EnvCredentialProvider;
-
-#[async_trait]
 impl ProvideCredential for EnvCredentialProvider {
     type Credential = Credential;
 

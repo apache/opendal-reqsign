@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose};
 use http::header::{AUTHORIZATION, DATE};
 use http::request::Parts;
@@ -49,8 +48,6 @@ impl Default for RequestSigner {
         Self::new()
     }
 }
-
-#[async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
