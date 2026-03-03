@@ -20,7 +20,7 @@ Add `reqsign` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-reqsign = "0.19"
+reqsign = "0.20"
 ```
 
 By default, this includes the `default-context` feature which provides a ready-to-use context implementation using `reqwest` and `tokio`.
@@ -29,7 +29,7 @@ To use specific services only:
 
 ```toml
 [dependencies]
-reqsign = { version = "0.19", default-features = false, features = ["aws", "default-context"] }
+reqsign = { version = "0.20", default-features = false, features = ["aws", "default-context"] }
 ```
 
 ## Examples
@@ -178,6 +178,6 @@ This crate supports WebAssembly (WASM) targets. However, the `default-context` f
 Example for WASM:
 ```toml
 [dependencies]
-reqsign = { version = "0.19", default-features = false, features = ["aws"] }
-reqsign-http-send-reqwest = "3"
+reqsign = { version = "0.20", default-features = false, features = ["aws"] }
+reqsign-http-send-reqwest = "4"
 ```
