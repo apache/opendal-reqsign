@@ -78,7 +78,9 @@
 //! # }
 //! ```
 use reqsign_core::{CommandExecute, CommandOutput, Error, Result};
+#[cfg(not(target_family = "wasm"))]
 use std::process::Stdio;
+#[cfg(not(target_family = "wasm"))]
 use tokio::process::Command;
 
 /// Tokio-based implementation of the `CommandExecute` trait.
@@ -87,6 +89,8 @@ use tokio::process::Command;
 /// process spawning operations.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TokioCommandExecute;
+
+#[cfg(not(target_family = "wasm"))]
 impl CommandExecute for TokioCommandExecute {
     async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
         let output = Command::new(program)
@@ -107,7 +111,16 @@ impl CommandExecute for TokioCommandExecute {
     }
 }
 
-#[cfg(test)]
+#[cfg(target_family = "wasm")]
+impl CommandExecute for TokioCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Err(Error::unexpected(
+            "TokioCommandExecute is unsupported on wasm targets",
+        ))
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
 
