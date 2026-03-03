@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential};
 
 use crate::credential::Credential;
@@ -44,8 +43,6 @@ impl StaticCredentialProvider {
         }
     }
 }
-
-#[async_trait]
 impl ProvideCredential for StaticCredentialProvider {
     type Credential = Credential;
 

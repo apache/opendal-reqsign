@@ -16,8 +16,6 @@
 // under the License.
 
 //! Integration tests for ProvideCredentialChain with Aliyun OSS
-
-use async_trait::async_trait;
 use reqsign_aliyun_oss::{Credential, EnvCredentialProvider};
 use reqsign_core::ProvideCredentialChain;
 use reqsign_core::{Context, OsEnv, ProvideCredential, Result};
@@ -32,8 +30,6 @@ struct CountingProvider {
     return_credential: bool,
     call_count: Arc<std::sync::Mutex<usize>>,
 }
-
-#[async_trait]
 impl ProvideCredential for CountingProvider {
     type Credential = Credential;
 

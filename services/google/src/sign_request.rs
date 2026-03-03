@@ -357,8 +357,6 @@ impl RequestSigner {
         Ok(req)
     }
 }
-
-#[async_trait::async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
@@ -560,8 +558,6 @@ fn canonicalize_query(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use async_trait::async_trait;
     use bytes::Bytes;
     use http::header;
     use reqsign_core::HttpSend;
@@ -576,8 +572,6 @@ mod tests {
     struct MockHttpSend {
         recorded: Arc<Mutex<Recorded>>,
     }
-
-    #[async_trait]
     impl HttpSend for MockHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             assert_eq!(req.method(), http::Method::POST);

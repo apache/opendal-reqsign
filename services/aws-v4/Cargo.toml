@@ -32,7 +32,6 @@ name = "aws"
 
 [dependencies]
 anyhow = { workspace = true }
-async-trait = { workspace = true }
 bytes = "1.7.2"
 form_urlencoded = { workspace = true }
 http = { workspace = true }

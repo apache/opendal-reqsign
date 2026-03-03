@@ -65,8 +65,6 @@ impl RequestSigner {
         self
     }
 }
-
-#[async_trait::async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 

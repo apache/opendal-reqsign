@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 use std::time::Duration;
@@ -45,8 +44,6 @@ impl WorkloadIdentityCredentialProvider {
         self
     }
 }
-
-#[async_trait]
 impl ProvideCredential for WorkloadIdentityCredentialProvider {
     type Credential = Credential;
 

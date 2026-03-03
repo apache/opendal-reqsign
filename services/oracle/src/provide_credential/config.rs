@@ -18,7 +18,6 @@
 #![allow(deprecated)]
 
 use crate::{Config, Credential};
-use async_trait::async_trait;
 use log::debug;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
@@ -37,8 +36,6 @@ impl ConfigCredentialProvider {
         Self { config }
     }
 }
-
-#[async_trait]
 impl ProvideCredential for ConfigCredentialProvider {
     type Credential = Credential;
 

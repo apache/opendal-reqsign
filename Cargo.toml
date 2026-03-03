@@ -42,13 +42,13 @@ reqsign-volcengine-tos = { version = "2.0.2", path = "services/volcengine-tos" }
 
 # Crates.io dependencies
 anyhow = "1"
-async-trait = "0.1"
 base64 = "0.22"
 bytes = "1"
 criterion = { version = "0.8.1", features = ["async_tokio", "html_reports"] }
 dotenvy = "0.15"
 env_logger = "0.11"
 form_urlencoded = "1"
+futures = "0.3"
 hex = "0.4"
 hmac = "0.12"
 http = "1"

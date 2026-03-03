@@ -32,7 +32,6 @@
 //!
 //! ```no_run
 //! use reqsign_core::{Context, OsEnv, ProvideCredential, Result, SignRequest, Signer, SigningCredential};
-//! use async_trait::async_trait;
 //! use http::request::Parts;
 //! use std::time::Duration;
 //!
@@ -53,7 +52,6 @@
 //! #[derive(Debug)]
 //! struct MyLoader;
 //!
-//! #[async_trait]
 //! impl ProvideCredential for MyLoader {
 //!     type Credential = MyCredential;
 //!
@@ -69,7 +67,6 @@
 //! #[derive(Debug)]
 //! struct MyBuilder;
 //!
-//! #[async_trait]
 //! impl SignRequest for MyBuilder {
 //!     type Credential = MyCredential;
 //!
@@ -88,13 +85,11 @@
 //!
 //! # async fn example() -> Result<()> {
 //! # use reqsign_core::{FileRead, HttpSend};
-//! # use async_trait::async_trait;
 //! # use bytes::Bytes;
 //! #
 //! # // Mock implementations for the example
 //! # #[derive(Debug, Clone)]
 //! # struct MockFileRead;
-//! # #[async_trait]
 //! # impl FileRead for MockFileRead {
 //! #     async fn file_read(&self, _path: &str) -> Result<Vec<u8>> {
 //! #         Ok(vec![])
@@ -103,7 +98,6 @@
 //! #
 //! # #[derive(Debug, Clone)]
 //! # struct MockHttpSend;
-//! # #[async_trait]
 //! # impl HttpSend for MockHttpSend {
 //! #     async fn http_send(&self, _req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
 //! #         Ok(http::Response::builder().status(200).body(Bytes::new())?)
@@ -157,19 +151,25 @@
 
 /// Error types for reqsign operations
 pub mod error;
+mod futures_util;
 pub mod hash;
 pub mod time;
 pub mod utils;
 
 pub use error::{Error, ErrorKind, Result};
+pub use futures_util::BoxedFuture;
+pub use futures_util::MaybeSend;
 
 mod context;
 pub use context::CommandExecute;
+pub use context::CommandExecuteDyn;
 pub use context::CommandOutput;
 pub use context::Context;
 pub use context::Env;
 pub use context::FileRead;
+pub use context::FileReadDyn;
 pub use context::HttpSend;
+pub use context::HttpSendDyn;
 pub use context::NoopCommandExecute;
 pub use context::NoopEnv;
 pub use context::NoopFileRead;
@@ -178,7 +178,12 @@ pub use context::OsEnv;
 pub use context::StaticEnv;
 
 mod api;
-pub use api::{ProvideCredential, ProvideCredentialChain, SignRequest, SigningCredential};
+pub use api::ProvideCredential;
+pub use api::ProvideCredentialChain;
+pub use api::ProvideCredentialDyn;
+pub use api::SignRequest;
+pub use api::SignRequestDyn;
+pub use api::SigningCredential;
 mod request;
 pub use request::{SigningMethod, SigningRequest};
 mod signer;

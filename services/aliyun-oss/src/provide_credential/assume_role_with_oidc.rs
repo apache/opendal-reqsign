@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::{Credential, constants::*};
-use async_trait::async_trait;
 use form_urlencoded::Serializer;
 use reqsign_core::Result;
 use reqsign_core::time::Timestamp;
@@ -79,8 +78,6 @@ impl AssumeRoleWithOidcCredentialProvider {
             .unwrap_or_else(|| "reqsign".to_string())
     }
 }
-
-#[async_trait]
 impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
     type Credential = Credential;
 
@@ -168,7 +165,6 @@ struct AssumeRoleWithOidcCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use bytes::Bytes;
     use reqsign_core::StaticEnv;
     use reqsign_core::{Context, FileRead, HttpSend};
@@ -239,8 +235,6 @@ mod tests {
         expected_path: String,
         content: Vec<u8>,
     }
-
-    #[async_trait]
     impl FileRead for TestFileRead {
         async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
             assert_eq!(path, self.expected_path);
@@ -266,8 +260,6 @@ mod tests {
             self.uri.lock().unwrap().clone()
         }
     }
-
-    #[async_trait]
     impl HttpSend for CaptureHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             *self.uri.lock().unwrap() = Some(req.uri().to_string());

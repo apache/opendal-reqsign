@@ -64,8 +64,6 @@ impl StaticCredentialProvider {
         self
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for StaticCredentialProvider {
     type Credential = Credential;
 

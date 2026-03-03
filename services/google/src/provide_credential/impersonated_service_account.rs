@@ -206,8 +206,6 @@ impl ImpersonatedServiceAccountCredentialProvider {
         })
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for ImpersonatedServiceAccountCredentialProvider {
     type Credential = Credential;
 

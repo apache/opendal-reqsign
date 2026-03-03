@@ -63,8 +63,6 @@
 //! # Ok(())
 //! # }
 //! ```
-
-use async_trait::async_trait;
 use reqsign_core::{Error, FileRead, Result};
 
 /// Tokio-based implementation of the `FileRead` trait.
@@ -75,7 +73,6 @@ use reqsign_core::{Error, FileRead, Result};
 pub struct TokioFileRead;
 
 #[cfg(not(target_family = "wasm"))]
-#[async_trait]
 impl FileRead for TokioFileRead {
     async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
         tokio::fs::read(path)
@@ -85,7 +82,6 @@ impl FileRead for TokioFileRead {
 }
 
 #[cfg(target_family = "wasm")]
-#[async_trait]
 impl FileRead for TokioFileRead {
     async fn file_read(&self, _path: &str) -> Result<Vec<u8>> {
         Err(Error::unexpected(

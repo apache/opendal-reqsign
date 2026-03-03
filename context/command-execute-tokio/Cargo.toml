@@ -29,9 +29,10 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-async-trait = { workspace = true }
 reqsign-core = { workspace = true }
-tokio = { version = "1", features = ["process", "io-util"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { version = "1", default-features = false, features = ["process", "io-util"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::credential::Credential;
-use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
@@ -265,8 +264,6 @@ struct TokenResponse {
     #[allow(dead_code)]
     token_type: String,
 }
-
-#[async_trait]
 impl ProvideCredential for ClientCertificateCredentialProvider {
     type Credential = Credential;
 

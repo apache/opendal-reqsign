@@ -15,7 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{Context, Error, ProvideCredential, Result, SignRequest, SigningCredential};
+use crate::Context;
+use crate::Error;
+use crate::ProvideCredential;
+use crate::ProvideCredentialDyn;
+use crate::Result;
+use crate::SignRequest;
+use crate::SignRequestDyn;
+use crate::SigningCredential;
 use std::any::type_name;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -24,8 +31,8 @@ use std::time::Duration;
 #[derive(Clone, Debug)]
 pub struct Signer<K: SigningCredential> {
     ctx: Context,
-    loader: Arc<dyn ProvideCredential<Credential = K>>,
-    builder: Arc<dyn SignRequest<Credential = K>>,
+    loader: Arc<dyn ProvideCredentialDyn<Credential = K>>,
+    builder: Arc<dyn SignRequestDyn<Credential = K>>,
     credential: Arc<Mutex<Option<K>>>,
 }
 
@@ -77,7 +84,7 @@ impl<K: SigningCredential> Signer<K> {
         let credential = if credential.is_valid() {
             credential
         } else {
-            let ctx = self.loader.provide_credential(&self.ctx).await?;
+            let ctx = self.loader.provide_credential_dyn(&self.ctx).await?;
             *self.credential.lock().expect("lock poisoned") = ctx.clone();
             ctx
         };
@@ -88,7 +95,7 @@ impl<K: SigningCredential> Signer<K> {
         })?;
 
         self.builder
-            .sign_request(&self.ctx, req, Some(credential_ref), expires_in)
+            .sign_request_dyn(&self.ctx, req, Some(credential_ref), expires_in)
             .await
     }
 }

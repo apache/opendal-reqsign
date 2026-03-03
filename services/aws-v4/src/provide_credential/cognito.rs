@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use http::{Method, Request, StatusCode};
 use log::debug;
 use reqsign_core::time::Timestamp;
@@ -258,8 +257,6 @@ struct CognitoCredentials {
     session_token: String,
     expiration: i64,
 }
-
-#[async_trait]
 impl ProvideCredential for CognitoIdentityCredentialProvider {
     type Credential = Credential;
 
