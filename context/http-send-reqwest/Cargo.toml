@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-http-send-reqwest"
-version = "3.0.0"
+version = "4.0.0"
 
 categories = ["asynchronous"]
 description = "Reqwest-based HTTP client implementation for reqsign."
