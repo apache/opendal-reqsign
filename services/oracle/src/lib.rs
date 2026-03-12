@@ -30,10 +30,11 @@ pub use credential::Credential;
 mod sign_request;
 pub use sign_request::RequestSigner;
 
-pub mod provide_credential;
+mod provide_credential;
 #[allow(deprecated)]
 pub use provide_credential::ConfigCredentialProvider;
 pub use provide_credential::{
-    ConfigFileCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+    ConfigFileCredentialProvider, DefaultCredentialProvider, DefaultCredentialProviderBuilder,
+    EnvCredentialProvider,
     StaticCredentialProvider,
 };
