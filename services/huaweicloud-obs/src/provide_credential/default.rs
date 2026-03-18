@@ -77,8 +77,20 @@ impl DefaultCredentialProvider {
 
 /// Builder for `DefaultCredentialProvider`.
 ///
-/// Use `env(...)` to customize the environment provider or `no_env()` to
-/// remove it from the chain, then call `build()`.
+/// Use `env(...)` to set the environment slot or `no_env()` to remove it from
+/// the chain, then call `build()`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use reqsign_huaweicloud_obs::{DefaultCredentialProvider, EnvCredentialProvider};
+///
+/// let provider = DefaultCredentialProvider::builder()
+///     .env(EnvCredentialProvider::new())
+///     .build();
+///
+/// let provider_without_env = DefaultCredentialProvider::builder().no_env().build();
+/// ```
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
 }
@@ -174,6 +186,35 @@ mod tests {
         let credential = loader.provide_credential(&ctx).await.unwrap();
 
         assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_builder_env_readds_provider_after_no_env() {
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default());
+        let ctx = ctx.with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from_iter([
+                (
+                    HUAWEI_CLOUD_ACCESS_KEY_ID.to_string(),
+                    "access_key_id".to_string(),
+                ),
+                (
+                    HUAWEI_CLOUD_SECRET_ACCESS_KEY.to_string(),
+                    "secret_access_key".to_string(),
+                ),
+            ]),
+        });
+
+        let loader = DefaultCredentialProvider::builder()
+            .no_env()
+            .env(EnvCredentialProvider::new())
+            .build();
+        let credential = loader.provide_credential(&ctx).await.unwrap().unwrap();
+
+        assert_eq!("access_key_id", credential.access_key_id);
+        assert_eq!("secret_access_key", credential.secret_access_key);
     }
 
     #[tokio::test]
