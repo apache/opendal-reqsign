@@ -13,7 +13,7 @@ use reqsign_aliyun_oss::{
     AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
     ConfigFileCredentialProvider, CredentialsFileCredentialProvider, DefaultCredentialProvider,
     EnvCredentialProvider, OssProfileCredentialProvider, RequestSigner,
-    StaticCredentialProvider,
+    SigningVersion, StaticCredentialProvider,
 };
 use reqsign_core::{Context, Result, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -41,11 +41,13 @@ async fn main() -> Result<()> {
     // );
 
     let signer = Signer::new(ctx, loader, RequestSigner::new("bucket"));
-    // For future signing versions, region can be configured in advance:
+    // Or opt into V4 signing:
     // let signer = Signer::new(
     //     ctx,
     //     loader,
-    //     RequestSigner::new("bucket").with_region("oss-cn-beijing"),
+    //     RequestSigner::new("bucket")
+    //         .with_region("cn-beijing")
+    //         .with_signing_version(SigningVersion::V4),
     // );
 
     let mut req = http::Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
@@ -61,8 +63,8 @@ async fn main() -> Result<()> {
 
 ## Features
 
-- **HMAC-SHA1 Signing**: Complete implementation of Aliyun's signing algorithm
 - **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, AssumeRole, and OIDC-based STS exchange
+- **V1 and V4 Signing**: Supports both legacy OSS V1 signatures and Signature V4
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
 
@@ -70,16 +72,17 @@ async fn main() -> Result<()> {
 
 `RequestSigner::new("bucket")` keeps the current V1 behavior.
 
-If you want to wire configuration that future signing versions will need, you
-can set the region ahead of time:
+To opt into V4 signing, configure both the region and signing version:
 
 ```rust
-use reqsign_aliyun_oss::RequestSigner;
+use reqsign_aliyun_oss::{RequestSigner, SigningVersion};
 
-let signer = RequestSigner::new("bucket").with_region("oss-cn-beijing");
+let signer = RequestSigner::new("bucket")
+    .with_region("cn-beijing")
+    .with_signing_version(SigningVersion::V4);
 ```
 
-The region is currently a no-op for V1 signing.
+The region remains a no-op for V1 signing.
 
 ## Credential Sources
 
