@@ -172,7 +172,10 @@ mod tests {
                 (ORACLE_USER.to_string(), "test_user".to_string()),
                 (ORACLE_TENANCY.to_string(), "test_tenancy".to_string()),
                 (ORACLE_KEY_FILE.to_string(), "/tmp/key.pem".to_string()),
-                (ORACLE_FINGERPRINT.to_string(), "test_fingerprint".to_string()),
+                (
+                    ORACLE_FINGERPRINT.to_string(),
+                    "test_fingerprint".to_string(),
+                ),
             ]),
         });
 

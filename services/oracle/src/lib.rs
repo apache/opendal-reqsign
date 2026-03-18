@@ -35,6 +35,5 @@ mod provide_credential;
 pub use provide_credential::ConfigCredentialProvider;
 pub use provide_credential::{
     ConfigFileCredentialProvider, DefaultCredentialProvider, DefaultCredentialProviderBuilder,
-    EnvCredentialProvider,
-    StaticCredentialProvider,
+    EnvCredentialProvider, StaticCredentialProvider,
 };
