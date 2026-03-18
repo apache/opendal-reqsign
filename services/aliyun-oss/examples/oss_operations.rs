@@ -16,8 +16,8 @@
 // under the License.
 
 use reqsign_aliyun_oss::{
-    AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
-    RequestSigner, StaticCredentialProvider,
+    AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider,
+    EnvCredentialProvider, RequestSigner, StaticCredentialProvider,
 };
 use reqsign_core::Result;
 use reqsign_core::{Context, OsEnv, Signer};
@@ -62,8 +62,9 @@ async fn main() -> Result<()> {
             StaticCredentialProvider::new("LTAI4GDemoAccessKeyId", "DemoAccessKeySecretForExample");
         Signer::new(ctx.clone(), loader, builder)
     } else {
-        // Build the default env -> oidc chain explicitly via slot APIs.
+        // Build the default assume_role -> env -> oidc chain explicitly via slot APIs.
         let loader = DefaultCredentialProvider::builder()
+            .assume_role(AssumeRoleCredentialProvider::new())
             .env(EnvCredentialProvider::new())
             .oidc(AssumeRoleWithOidcCredentialProvider::new())
             .build();

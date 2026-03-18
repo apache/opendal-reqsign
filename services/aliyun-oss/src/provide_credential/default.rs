@@ -17,8 +17,9 @@
 
 use crate::Credential;
 use crate::provide_credential::{
-    AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
-    CredentialsFileCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
+    AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
+    ConfigFileCredentialProvider, CredentialsFileCredentialProvider, EnvCredentialProvider,
+    OssProfileCredentialProvider,
 };
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
@@ -26,11 +27,12 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 ///
 /// Resolution order:
 ///
-/// 1. Environment variables
-/// 2. OSS profile file
-/// 3. Alibaba shared credentials file
-/// 4. Alibaba CLI config file
-/// 5. Assume Role with OIDC
+/// 1. AssumeRole via base AK credentials
+/// 2. Environment variables
+/// 3. OSS profile file
+/// 4. Alibaba shared credentials file
+/// 5. Alibaba CLI config file
+/// 6. Assume Role with OIDC
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -85,6 +87,7 @@ impl DefaultCredentialProvider {
 /// Use `slot(provider)` to override a default provider or `no_slot()` to
 /// remove it from the chain before calling `build()`.
 pub struct DefaultCredentialProviderBuilder {
+    assume_role: Option<AssumeRoleCredentialProvider>,
     env: Option<EnvCredentialProvider>,
     oss_profile: Option<OssProfileCredentialProvider>,
     credentials_file: Option<CredentialsFileCredentialProvider>,
@@ -95,6 +98,7 @@ pub struct DefaultCredentialProviderBuilder {
 impl Default for DefaultCredentialProviderBuilder {
     fn default() -> Self {
         Self {
+            assume_role: Some(AssumeRoleCredentialProvider::new()),
             env: Some(EnvCredentialProvider::new()),
             oss_profile: Some(OssProfileCredentialProvider::new()),
             credentials_file: Some(CredentialsFileCredentialProvider::new()),
@@ -108,6 +112,18 @@ impl DefaultCredentialProviderBuilder {
     /// Create a new builder with default state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the AssumeRole credential provider slot.
+    pub fn assume_role(mut self, provider: AssumeRoleCredentialProvider) -> Self {
+        self.assume_role = Some(provider);
+        self
+    }
+
+    /// Remove the AssumeRole credential provider slot.
+    pub fn no_assume_role(mut self) -> Self {
+        self.assume_role = None;
+        self
     }
 
     /// Set the environment credential provider slot.
@@ -172,7 +188,15 @@ impl DefaultCredentialProviderBuilder {
 
     /// Build the `DefaultCredentialProvider` with the configured options.
     pub fn build(self) -> DefaultCredentialProvider {
+        let assume_role_base_chain = ProvideCredentialChain::new()
+            .push_opt(self.env.clone())
+            .push_opt(self.oss_profile.clone())
+            .push_opt(self.credentials_file.clone())
+            .push_opt(self.config_file.clone());
         let mut chain = ProvideCredentialChain::new();
+        if let Some(p) = self.assume_role {
+            chain = chain.push(p.with_default_base_provider(assume_role_base_chain));
+        }
         if let Some(p) = self.env {
             chain = chain.push(p);
         }
@@ -191,6 +215,25 @@ impl DefaultCredentialProviderBuilder {
         DefaultCredentialProvider::with_chain(chain)
     }
 }
+
+trait PushOptionalProvider {
+    fn push_opt<P>(self, provider: Option<P>) -> Self
+    where
+        P: ProvideCredential<Credential = Credential> + 'static;
+}
+
+impl PushOptionalProvider for ProvideCredentialChain<Credential> {
+    fn push_opt<P>(self, provider: Option<P>) -> Self
+    where
+        P: ProvideCredential<Credential = Credential> + 'static,
+    {
+        match provider {
+            Some(provider) => self.push(provider),
+            None => self,
+        }
+    }
+}
+
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
@@ -387,6 +430,7 @@ access_key_secret = profile_secret_key
             });
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_oidc()
             .build()
             .provide_credential(&ctx)
@@ -397,6 +441,7 @@ access_key_secret = profile_secret_key
         assert_eq!(0, file_read.calls());
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oidc()
             .build()
@@ -409,6 +454,7 @@ access_key_secret = profile_secret_key
         assert_eq!(1, file_read.calls());
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .no_oidc()
@@ -461,7 +507,9 @@ access_key_secret = profile_secret_key
                 ]),
             });
 
-        let credential = DefaultCredentialProvider::new()
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .build()
             .provide_credential(&ctx)
             .await
             .unwrap()
@@ -518,6 +566,7 @@ access_key_secret=shared_secret_key
             });
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .no_oidc()
@@ -559,6 +608,7 @@ access_key_secret=shared_secret_key
             });
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .no_credentials_file()
@@ -601,6 +651,7 @@ access_key_secret=shared_secret_key
             });
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .no_credentials_file()
@@ -613,6 +664,7 @@ access_key_secret=shared_secret_key
         assert_eq!("config_access_key", credential.access_key_id);
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .no_credentials_file()
@@ -674,6 +726,7 @@ access_key_secret=shared_secret_key
             });
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .no_credentials_file()
@@ -720,6 +773,7 @@ access_key_secret=shared_secret_key
             });
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .oidc(AssumeRoleWithOidcCredentialProvider::new())
@@ -732,6 +786,7 @@ access_key_secret=shared_secret_key
         assert_eq!(1, http_send.calls());
 
         let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
             .no_env()
             .no_oss_profile()
             .no_oidc()
@@ -740,5 +795,129 @@ access_key_secret=shared_secret_key
             .await
             .unwrap();
         assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_assume_role_over_raw_env_credentials() {
+        let http_send = CountingHttpSend::new(
+            br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
+                .to_vec(),
+        );
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                        "base_access_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                        "base_secret_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("assumed_access_key", credential.access_key_id);
+        assert_eq!("assumed_secret_key", credential.access_key_secret);
+        assert_eq!(Some("sts_token".to_string()), credential.security_token);
+        assert_eq!(1, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_env_removes_env_from_assume_role_base_chain() {
+        let http_send = CountingHttpSend::new(
+            br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
+                .to_vec(),
+        );
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                        "base_access_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                        "base_secret_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+
+        assert!(credential.is_none());
+        assert_eq!(0, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_assume_role_removes_assume_role_provider() {
+        let http_send = CountingHttpSend::new(
+            br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
+                .to_vec(),
+        );
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                        "base_access_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                        "base_secret_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("base_access_key", credential.access_key_id);
+        assert_eq!("base_secret_key", credential.access_key_secret);
+        assert_eq!(0, http_send.calls());
     }
 }

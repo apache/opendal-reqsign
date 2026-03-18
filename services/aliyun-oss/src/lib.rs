@@ -30,9 +30,10 @@
 //!
 //! ```no_run
 //! use reqsign_aliyun_oss::{
-//!     AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
-//!     CredentialsFileCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
-//!     OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
+//!     AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
+//!     ConfigFileCredentialProvider, CredentialsFileCredentialProvider, DefaultCredentialProvider,
+//!     EnvCredentialProvider, OssProfileCredentialProvider, RequestSigner,
+//!     StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
 //! use reqsign_file_read_tokio::TokioFileRead;
@@ -45,9 +46,10 @@
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
-//!     // Create credential loader with the default env -> OSS profile ->
-//!     // shared credentials file -> config file -> oidc chain.
+//!     // Create credential loader with the default assume_role -> env ->
+//!     // OSS profile -> shared credentials file -> config file -> oidc chain.
 //!     let loader = DefaultCredentialProvider::builder()
+//!         .assume_role(AssumeRoleCredentialProvider::new())
 //!         .env(EnvCredentialProvider::new())
 //!         .oss_profile(OssProfileCredentialProvider::new())
 //!         .credentials_file(CredentialsFileCredentialProvider::new())
@@ -146,21 +148,32 @@
 //! ### STS AssumeRole
 //!
 //! ```no_run
-//! use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider};
+//! use reqsign_aliyun_oss::{
+//!     AssumeRoleCredentialProvider, DefaultCredentialProvider, StaticCredentialProvider,
+//! };
 //!
-//! // Use environment variables
-//! // Set ALIBABA_CLOUD_ROLE_ARN, ALIBABA_CLOUD_OIDC_PROVIDER_ARN, ALIBABA_CLOUD_OIDC_TOKEN_FILE
-//! // Optionally set ALIBABA_CLOUD_ROLE_SESSION_NAME
+//! // Use an explicit base access key source to call STS AssumeRole.
 //! let loader = DefaultCredentialProvider::builder()
 //!     .no_env()
 //!     .no_oss_profile()
 //!     .no_credentials_file()
 //!     .no_config_file()
-//!     .oidc(
-//!         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
+//!     .assume_role(
+//!         AssumeRoleCredentialProvider::new()
+//!             .with_base_provider(StaticCredentialProvider::new(
+//!                 "your-access-key-id",
+//!                 "your-access-key-secret",
+//!             ))
+//!             .with_role_arn("acs:ram::123456789012:role/example")
+//!             .with_role_session_name("my-session"),
 //!     )
+//!     .no_oidc()
 //!     .build();
 //! ```
+//!
+//! Or rely on the default static base chain by setting
+//! `ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET`,
+//! `ALIBABA_CLOUD_ROLE_ARN`, and optionally `ALIBABA_CLOUD_EXTERNAL_ID`.
 //!
 //! ### Custom Endpoints
 //!
