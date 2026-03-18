@@ -100,6 +100,18 @@
 //!         .with_profile("production"));
 //! ```
 //!
+//! ### Customizing DefaultCredentialProvider Slots
+//!
+//! ```no_run
+//! use reqsign_aws_v4::{DefaultCredentialProvider, ProfileCredentialProvider};
+//!
+//! let provider = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .profile(ProfileCredentialProvider::new().with_profile("production"))
+//!     .no_imds()
+//!     .build();
+//! ```
+//!
 //! ### Custom Credential Provider
 //!
 //! You can create custom credential providers by implementing the `ProvideCredential` trait:
