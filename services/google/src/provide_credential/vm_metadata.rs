@@ -35,6 +35,7 @@ struct VmMetadataTokenResponse {
 pub struct VmMetadataCredentialProvider {
     scope: Option<String>,
     endpoint: Option<String>,
+    service_account: Option<String>,
 }
 
 impl VmMetadataCredentialProvider {
@@ -54,6 +55,14 @@ impl VmMetadataCredentialProvider {
         self.endpoint = Some(endpoint.into());
         self
     }
+
+    /// Set the service account used to retrieve a token from VM metadata service.
+    ///
+    /// Defaults to `default` if not configured.
+    pub fn with_service_account(mut self, service_account: impl Into<String>) -> Self {
+        self.service_account = Some(service_account.into());
+        self
+    }
 }
 impl ProvideCredential for VmMetadataCredentialProvider {
     type Credential = Credential;
@@ -66,8 +75,7 @@ impl ProvideCredential for VmMetadataCredentialProvider {
             .or_else(|| ctx.env_var(crate::constants::GOOGLE_SCOPE))
             .unwrap_or_else(|| crate::constants::DEFAULT_SCOPE.to_string());
 
-        // Use "default" service account if not specified
-        let service_account = "default";
+        let service_account = self.service_account.as_deref().unwrap_or("default");
 
         debug!("loading token from VM metadata service for account: {service_account}");
 
@@ -110,5 +118,75 @@ impl ProvideCredential for VmMetadataCredentialProvider {
             access_token: token_resp.access_token,
             expires_at: Some(expires_at),
         })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use reqsign_core::HttpSend;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, Default)]
+    struct MockHttpSend {
+        uris: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl HttpSend for MockHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            self.uris.lock().unwrap().push(req.uri().to_string());
+
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(
+                    br#"{"access_token":"test-access-token","expires_in":3600}"#
+                        .as_slice()
+                        .into(),
+                )
+                .expect("response must build"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_vm_metadata_uses_default_service_account() -> Result<()> {
+        let http = MockHttpSend::default();
+        let ctx = Context::new().with_http_send(http.clone());
+
+        let provider = VmMetadataCredentialProvider::new().with_endpoint("127.0.0.1:8080");
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must exist");
+
+        assert!(cred.has_token());
+        assert_eq!(
+            http.uris.lock().unwrap().as_slice(),
+            &["http://127.0.0.1:8080/computeMetadata/v1/instance/service-accounts/default/token?scopes=https://www.googleapis.com/auth/cloud-platform".to_string()]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_vm_metadata_uses_configured_service_account() -> Result<()> {
+        let http = MockHttpSend::default();
+        let ctx = Context::new().with_http_send(http.clone());
+
+        let provider = VmMetadataCredentialProvider::new()
+            .with_endpoint("127.0.0.1:8080")
+            .with_service_account("custom@test-project.iam.gserviceaccount.com");
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must exist");
+
+        assert!(cred.has_token());
+        assert_eq!(
+            http.uris.lock().unwrap().as_slice(),
+            &["http://127.0.0.1:8080/computeMetadata/v1/instance/service-accounts/custom@test-project.iam.gserviceaccount.com/token?scopes=https://www.googleapis.com/auth/cloud-platform".to_string()]
+        );
+
+        Ok(())
     }
 }
