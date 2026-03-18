@@ -132,7 +132,6 @@ Reads from `~/.aliyun/config.json` by default:
 Override the file path with `ALIBABA_CLOUD_CONFIG_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
 
 Only direct static modes are loaded in this crate today: `AK` and `StsToken`.
-
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:
