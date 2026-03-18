@@ -94,7 +94,9 @@ async fn main() -> Result<()> {
         ))
         .push(LoggingProvider::new(
             "Default",
-            DefaultCredentialProvider::new(),
+            DefaultCredentialProvider::builder()
+                .env(EnvCredentialProvider::new())
+                .build(),
         ));
 
     info!("Starting credential resolution...");
