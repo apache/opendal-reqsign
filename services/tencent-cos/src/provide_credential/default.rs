@@ -77,13 +77,20 @@ impl DefaultCredentialProvider {
 
 /// Builder for `DefaultCredentialProvider`.
 ///
-/// - Use `configure_*` to customize a provider.
-/// - Use `disable_*(bool)` to disable (true) or ensure enabled (false).
-/// - Call `build()` to construct the provider in the default order.
-#[derive(Default)]
+/// Use `slot(provider)` to override a default slot or `no_slot()` to remove it
+/// from the chain before calling `build()`.
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
-    assume_role: Option<AssumeRoleWithWebIdentityCredentialProvider>,
+    web_identity: Option<AssumeRoleWithWebIdentityCredentialProvider>,
+}
+
+impl Default for DefaultCredentialProviderBuilder {
+    fn default() -> Self {
+        Self {
+            env: Some(EnvCredentialProvider::default()),
+            web_identity: Some(AssumeRoleWithWebIdentityCredentialProvider::default()),
+        }
+    }
 }
 
 impl DefaultCredentialProviderBuilder {
@@ -92,45 +99,27 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
-    /// Configure the environment credential provider.
-    pub fn configure_env<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(EnvCredentialProvider) -> EnvCredentialProvider,
-    {
-        let p = self.env.take().unwrap_or_default();
-        self.env = Some(f(p));
+    /// Set the environment credential provider slot.
+    pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
+        self.env = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the environment provider.
-    pub fn disable_env(mut self, disable: bool) -> Self {
-        if disable {
-            self.env = None;
-        } else if self.env.is_none() {
-            self.env = Some(EnvCredentialProvider::new());
-        }
+    /// Remove the environment credential provider slot.
+    pub fn no_env(mut self) -> Self {
+        self.env = None;
         self
     }
 
-    /// Configure the web-identity assume-role credential provider.
-    pub fn configure_assume_role<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(
-            AssumeRoleWithWebIdentityCredentialProvider,
-        ) -> AssumeRoleWithWebIdentityCredentialProvider,
-    {
-        let p = self.assume_role.take().unwrap_or_default();
-        self.assume_role = Some(f(p));
+    /// Set the web identity credential provider slot.
+    pub fn web_identity(mut self, provider: AssumeRoleWithWebIdentityCredentialProvider) -> Self {
+        self.web_identity = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the web-identity assume-role provider.
-    pub fn disable_assume_role(mut self, disable: bool) -> Self {
-        if disable {
-            self.assume_role = None;
-        } else if self.assume_role.is_none() {
-            self.assume_role = Some(AssumeRoleWithWebIdentityCredentialProvider::new());
-        }
+    /// Remove the web identity credential provider slot.
+    pub fn no_web_identity(mut self) -> Self {
+        self.web_identity = None;
         self
     }
 
@@ -139,13 +128,9 @@ impl DefaultCredentialProviderBuilder {
         let mut chain = ProvideCredentialChain::new();
         if let Some(p) = self.env {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(EnvCredentialProvider::new());
         }
-        if let Some(p) = self.assume_role {
+        if let Some(p) = self.web_identity {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(AssumeRoleWithWebIdentityCredentialProvider::new());
         }
 
         DefaultCredentialProvider::with_chain(chain)
@@ -230,5 +215,55 @@ mod tests {
         assert_eq!("secret_id", credential.secret_id);
         assert_eq!("secret_key", credential.secret_key);
         assert_eq!("security_token", credential.security_token.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_env_removes_env_provider() {
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(OsEnv);
+        let ctx = ctx.with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from_iter([
+                (TENCENTCLOUD_SECRET_ID.to_string(), "secret_id".to_string()),
+                (
+                    TENCENTCLOUD_SECRET_KEY.to_string(),
+                    "secret_key".to_string(),
+                ),
+            ]),
+        });
+
+        let loader = DefaultCredentialProvider::builder().no_env().build();
+        let credential = loader.provide_credential(&ctx).await.unwrap();
+
+        assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_web_identity_removes_web_identity_provider() {
+        let ctx = Context::new().with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from_iter([
+                (TENCENTCLOUD_REGION.to_string(), "ap-guangzhou".to_string()),
+                (
+                    TENCENTCLOUD_WEB_IDENTITY_TOKEN_FILE.to_string(),
+                    "/tmp/token".to_string(),
+                ),
+                (
+                    TENCENTCLOUD_ROLE_ARN.to_string(),
+                    "qcs::cam::uin/123456789:roleName/test".to_string(),
+                ),
+                (TENCENTCLOUD_PROVIDER_ID.to_string(), "provider".to_string()),
+            ]),
+        });
+
+        let loader = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_web_identity()
+            .build();
+        let credential = loader.provide_credential(&ctx).await.unwrap();
+
+        assert!(credential.is_none());
     }
 }
