@@ -34,6 +34,7 @@ const CONTENT_MD5: &str = "content-md5";
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
+    region: Option<String>,
     time: Option<Timestamp>,
 }
 
@@ -42,8 +43,20 @@ impl RequestSigner {
     pub fn new(bucket: &str) -> Self {
         Self {
             bucket: bucket.to_string(),
+            region: None,
             time: None,
         }
+    }
+
+    /// Set the OSS region.
+    ///
+    /// The current V1 signing flow does not use the region, but future signing
+    /// versions such as V4 require it. Keeping this setting on the signer lets
+    /// callers wire stable configuration now without changing the construction
+    /// flow later.
+    pub fn with_region(mut self, region: impl Into<String>) -> Self {
+        self.region = Some(region.into());
+        self
     }
 
     /// Specify the signing time.
@@ -438,3 +451,60 @@ static SUBRESOURCES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "metaQuery",
     ])
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Credential;
+
+    #[test]
+    fn test_request_signer_accepts_region_configuration() {
+        let signer = RequestSigner::new("bucket").with_region("oss-cn-beijing");
+
+        assert_eq!(signer.bucket, "bucket");
+        assert_eq!(signer.region.as_deref(), Some("oss-cn-beijing"));
+    }
+
+    #[test]
+    fn test_region_configuration_is_noop_for_v1_signature() {
+        let credential = Credential {
+            access_key_id: "access_key_id".to_string(),
+            access_key_secret: "access_key_secret".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_700_000_000).expect("timestamp must build");
+
+        let mut without_region =
+            http::Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+        RequestSigner::new("bucket")
+            .with_time(time)
+            .sign_header(&mut without_region, &credential, time)
+            .expect("signing without region must succeed");
+
+        let mut with_region =
+            http::Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+        RequestSigner::new("bucket")
+            .with_region("oss-cn-beijing")
+            .with_time(time)
+            .sign_header(&mut with_region, &credential, time)
+            .expect("signing with region must succeed");
+
+        assert_eq!(
+            without_region.headers.get(AUTHORIZATION),
+            with_region.headers.get(AUTHORIZATION)
+        );
+        assert_eq!(
+            without_region.headers.get(DATE),
+            with_region.headers.get(DATE)
+        );
+    }
+}
