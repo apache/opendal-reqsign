@@ -26,15 +26,15 @@
 //! the complete signing process along with credential loading from various sources
 //! including environment variables, configuration files, and STS tokens.
 //!
-//! `RequestSigner` defaults to V1 signing and also accepts an optional region
-//! for future signing versions that require it.
+//! `RequestSigner` defaults to V1 signing and supports opting into V4 signing
+//! when a region is configured.
 //!
 //! ## Quick Start
 //!
 //! ```no_run
 //! use reqsign_aliyun_oss::{
 //!     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
-//!     RequestSigner, StaticCredentialProvider,
+//!     RequestSigner, SigningVersion, StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
 //! use reqsign_file_read_tokio::TokioFileRead;
@@ -61,8 +61,10 @@
 //!
 //!     // Create request builder
 //!     let builder = RequestSigner::new("bucket");
-//!     // For future signing versions, region can be wired now:
-//!     // let builder = RequestSigner::new("bucket").with_region("oss-cn-beijing");
+//!     // Or opt into V4:
+//!     // let builder = RequestSigner::new("bucket")
+//!     //     .with_region("cn-beijing")
+//!     //     .with_signing_version(SigningVersion::V4);
 //!
 //!     // Create the signer
 //!     let signer = Signer::new(ctx, loader, builder);
@@ -182,7 +184,7 @@ mod credential;
 pub use credential::Credential;
 
 mod sign_request;
-pub use sign_request::RequestSigner;
+pub use sign_request::{RequestSigner, SigningVersion};
 
 mod provide_credential;
 pub use provide_credential::*;
