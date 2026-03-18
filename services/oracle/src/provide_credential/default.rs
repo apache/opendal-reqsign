@@ -88,6 +88,7 @@ impl DefaultCredentialProvider {
 ///
 /// let provider = DefaultCredentialProvider::builder()
 ///     .env(EnvCredentialProvider::new())
+///     .no_config_file()
 ///     .config_file(ConfigFileCredentialProvider::new())
 ///     .build();
 /// ```
@@ -265,7 +266,6 @@ mod tests {
         assert!(from_default.is_some());
 
         let without_config_file = DefaultCredentialProvider::builder()
-            .no_env()
             .no_config_file()
             .build()
             .provide_credential(&ctx)
