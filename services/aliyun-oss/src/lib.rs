@@ -26,12 +26,17 @@
 //! the complete signing process along with credential loading from various sources
 //! including environment variables, configuration files, and STS tokens.
 //!
+//! `RequestSigner` defaults to V1 signing and also accepts an optional region
+//! for future signing versions that require it.
+//!
 //! ## Quick Start
 //!
 //! ```no_run
 //! use reqsign_aliyun_oss::{
 //!     AssumeRoleWithOidcCredentialProvider, CredentialsUriCredentialProvider,
-//!     DefaultCredentialProvider, EcsRamRoleCredentialProvider, EnvCredentialProvider,
+//!     AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
+//!     CredentialsFileCredentialProvider, DefaultCredentialProvider,
+//!     EcsRamRoleCredentialProvider, EnvCredentialProvider,
 //!     OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
@@ -45,11 +50,14 @@
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
-//!     // Create credential loader with the default
-//!     // env -> oss_profile -> credentials_uri -> ecs_ram_role -> oidc chain.
+//!     // Create credential loader with the default env -> OSS profile ->
+//!     // shared credentials file -> config file -> credentials URI ->
+//!     // ECS RAM role -> oidc chain.
 //!     let loader = DefaultCredentialProvider::builder()
 //!         .env(EnvCredentialProvider::new())
 //!         .oss_profile(OssProfileCredentialProvider::new())
+//!         .credentials_file(CredentialsFileCredentialProvider::new())
+//!         .config_file(ConfigFileCredentialProvider::new())
 //!         .credentials_uri(CredentialsUriCredentialProvider::new())
 //!         .ecs_ram_role(EcsRamRoleCredentialProvider::new())
 //!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
@@ -63,6 +71,8 @@
 //!
 //!     // Create request builder
 //!     let builder = RequestSigner::new("bucket");
+//!     // For future signing versions, region can be wired now:
+//!     // let builder = RequestSigner::new("bucket").with_region("oss-cn-beijing");
 //!
 //!     // Create the signer
 //!     let signer = Signer::new(ctx, loader, builder);
@@ -104,8 +114,9 @@
 //!
 //! ### ECS RAM Role
 //!
-//! When running on Alibaba Cloud ECS instances with RAM roles attached,
-//! credentials are automatically obtained from the metadata service.
+//! The crate can also load static credentials from Alibaba shared SDK files
+//! (`~/.alibabacloud/credentials.ini`, `~/.aliyun/credentials.ini`) and the
+//! Alibaba CLI config file (`~/.aliyun/config.json`).
 //!
 //! ## OSS Operations
 //!
@@ -160,6 +171,8 @@
 //!     .no_oss_profile()
 //!     .no_credentials_uri()
 //!     .no_ecs_ram_role()
+//!     .no_credentials_file()
+//!     .no_config_file()
 //!     .oidc(
 //!         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
 //!     )
