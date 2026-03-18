@@ -77,11 +77,17 @@ impl DefaultCredentialProvider {
 
 /// Builder for `DefaultCredentialProvider`.
 ///
-/// Use `configure_env` to customize environment loading and
-/// `disable_env(bool)` to control participation, then `build()` to create the provider.
-#[derive(Default)]
+/// Use `env(...)` to set the environment provider slot or `no_env()` to remove it.
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
+}
+
+impl Default for DefaultCredentialProviderBuilder {
+    fn default() -> Self {
+        Self {
+            env: Some(EnvCredentialProvider::default()),
+        }
+    }
 }
 
 impl DefaultCredentialProviderBuilder {
@@ -90,23 +96,15 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
-    /// Configure the environment credential provider.
-    pub fn configure_env<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(EnvCredentialProvider) -> EnvCredentialProvider,
-    {
-        let p = self.env.take().unwrap_or_default();
-        self.env = Some(f(p));
+    /// Set the environment credential provider slot.
+    pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
+        self.env = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the environment provider.
-    pub fn disable_env(mut self, disable: bool) -> Self {
-        if disable {
-            self.env = None;
-        } else if self.env.is_none() {
-            self.env = Some(EnvCredentialProvider::new());
-        }
+    /// Remove the environment credential provider slot.
+    pub fn no_env(mut self) -> Self {
+        self.env = None;
         self
     }
 
@@ -115,8 +113,6 @@ impl DefaultCredentialProviderBuilder {
         let mut chain = ProvideCredentialChain::new();
         if let Some(p) = self.env {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(EnvCredentialProvider::new());
         }
         DefaultCredentialProvider::with_chain(chain)
     }
@@ -189,5 +185,24 @@ mod tests {
         assert_eq!("access_key_id", credential.access_key_id);
         assert_eq!("secret_access_key", credential.secret_access_key);
         assert_eq!("security_token", credential.session_token.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_with_no_env() {
+        let ctx = Context::new().with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from_iter([
+                (ENV_ACCESS_KEY_ID.to_string(), "access_key_id".to_string()),
+                (
+                    ENV_SECRET_ACCESS_KEY.to_string(),
+                    "secret_access_key".to_string(),
+                ),
+            ]),
+        });
+
+        let loader = DefaultCredentialProvider::builder().no_env().build();
+        let credential = loader.provide_credential(&ctx).await.unwrap();
+
+        assert!(credential.is_none());
     }
 }
