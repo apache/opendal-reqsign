@@ -34,9 +34,8 @@
 //! ```no_run
 //! use reqsign_aliyun_oss::{
 //!     AssumeRoleWithOidcCredentialProvider, CredentialsUriCredentialProvider,
-//!     AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
-//!     CredentialsFileCredentialProvider, DefaultCredentialProvider,
-//!     EcsRamRoleCredentialProvider, EnvCredentialProvider,
+//!     ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
+//!     DefaultCredentialProvider, EcsRamRoleCredentialProvider, EnvCredentialProvider,
 //!     OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
