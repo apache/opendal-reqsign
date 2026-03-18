@@ -264,8 +264,9 @@ impl DefaultCredentialProviderBuilder {
 
     /// Configure the VM metadata provider.
     ///
-    /// This allows setting a custom endpoint or other options for retrieving
-    /// tokens when running on Google Compute Engine or compatible environments.
+    /// This allows setting a custom endpoint, service account, or other options
+    /// for retrieving tokens when running on Google Compute Engine or
+    /// compatible environments.
     pub fn configure_vm_metadata<F>(mut self, f: F) -> Self
     where
         F: FnOnce(VmMetadataCredentialProvider) -> VmMetadataCredentialProvider,
@@ -334,9 +335,32 @@ impl DefaultCredentialProviderBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+    use reqsign_core::HttpSend;
     use reqsign_core::{Context, StaticEnv};
     use std::collections::HashMap;
     use std::env;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug, Default)]
+    struct MockHttpSend {
+        uris: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl HttpSend for MockHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            self.uris.lock().unwrap().push(req.uri().to_string());
+
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(
+                    br#"{"access_token":"test-access-token","expires_in":3600}"#
+                        .as_slice()
+                        .into(),
+                )
+                .expect("response must build"))
+        }
+    }
 
     #[tokio::test]
     async fn test_default_provider_env() {
@@ -380,5 +404,31 @@ mod tests {
             .with_file_read(reqsign_file_read_tokio::TokioFileRead)
             .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default());
         let _ = provider.provide_credential(&ctx).await;
+    }
+
+    #[tokio::test]
+    async fn test_default_provider_configures_vm_metadata_service_account() -> Result<()> {
+        let http = MockHttpSend::default();
+        let ctx = Context::new().with_http_send(http.clone());
+
+        let provider = DefaultCredentialProvider::builder()
+            .configure_vm_metadata(|p| {
+                p.with_endpoint("127.0.0.1:8080")
+                    .with_service_account("custom@test-project.iam.gserviceaccount.com")
+            })
+            .build();
+
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must exist");
+
+        assert!(cred.has_token());
+        assert_eq!(
+            http.uris.lock().unwrap().as_slice(),
+            &["http://127.0.0.1:8080/computeMetadata/v1/instance/service-accounts/custom@test-project.iam.gserviceaccount.com/token?scopes=https://www.googleapis.com/auth/cloud-platform".to_string()]
+        );
+
+        Ok(())
     }
 }
