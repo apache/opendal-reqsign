@@ -15,7 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use reqsign_aliyun_oss::{DefaultCredentialProvider, RequestSigner, StaticCredentialProvider};
+use reqsign_aliyun_oss::{
+    AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+    RequestSigner, StaticCredentialProvider,
+};
 use reqsign_core::Result;
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -59,10 +62,11 @@ async fn main() -> Result<()> {
             StaticCredentialProvider::new("LTAI4GDemoAccessKeyId", "DemoAccessKeySecretForExample");
         Signer::new(ctx.clone(), loader, builder)
     } else {
-        // This will try multiple sources:
-        // 1. Environment variables (ALIBABA_CLOUD_ACCESS_KEY_ID, ALIBABA_CLOUD_ACCESS_KEY_SECRET)
-        // 2. Assume Role with OIDC (if configured)
-        let loader = DefaultCredentialProvider::new();
+        // Build the default env -> oidc chain explicitly via slot APIs.
+        let loader = DefaultCredentialProvider::builder()
+            .env(EnvCredentialProvider::new())
+            .oidc(AssumeRoleWithOidcCredentialProvider::new())
+            .build();
         Signer::new(ctx.clone(), loader, builder)
     };
 

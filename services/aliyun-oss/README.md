@@ -9,32 +9,48 @@ This crate provides signing support for Alibaba Cloud Object Storage Service (OS
 ## Quick Start
 
 ```rust
-use reqsign_aliyun_oss::{Builder, Config, DefaultLoader};
-use reqsign_core::{Context, Signer};
+use reqsign_aliyun_oss::{
+    AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+    RequestSigner, StaticCredentialProvider,
+};
+use reqsign_core::{Context, Result, Signer};
+use reqsign_file_read_tokio::TokioFileRead;
+use reqsign_http_send_reqwest::ReqwestHttpSend;
 
-// Create context and signer
-let ctx = Context::default();
-let config = Config::default()
-    .region("oss-cn-beijing")
-    .from_env();
-let loader = DefaultLoader::new(config);
-let builder = Builder::new();
-let signer = Signer::new(ctx, loader, builder);
+#[tokio::main]
+async fn main() -> Result<()> {
+    let ctx = Context::new()
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default());
 
-// Sign requests
-let mut req = http::Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
-    .body(())
-    .unwrap()
-    .into_parts()
-    .0;
+    let loader = DefaultCredentialProvider::builder()
+        .env(EnvCredentialProvider::new())
+        .oidc(AssumeRoleWithOidcCredentialProvider::new())
+        .build();
 
-signer.sign(&mut req, None).await?;
+    // Or use static credentials:
+    // let loader = StaticCredentialProvider::new(
+    //     "your-access-key-id",
+    //     "your-access-key-secret",
+    // );
+
+    let signer = Signer::new(ctx, loader, RequestSigner::new("bucket"));
+
+    let mut req = http::Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+
+    signer.sign(&mut req, None).await?;
+    Ok(())
+}
 ```
 
 ## Features
 
 - **HMAC-SHA1 Signing**: Complete implementation of Aliyun's signing algorithm
-- **Multiple Credential Sources**: Environment, config files, ECS RAM roles
+- **Multiple Credential Sources**: Environment variables and OIDC-based STS exchange
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
 
@@ -48,44 +64,21 @@ export ALIBABA_CLOUD_ACCESS_KEY_SECRET=your-access-key-secret
 export ALIBABA_CLOUD_SECURITY_TOKEN=your-sts-token  # Optional
 ```
 
-### Configuration File
-
-Reads from `~/.aliyun/config.json`:
-
-```json
-{
-  "current": "default",
-  "profiles": [{
-    "name": "default",
-    "mode": "AK",
-    "access_key_id": "your-access-key-id",
-    "access_key_secret": "your-access-key-secret",
-    "region_id": "cn-beijing"
-  }]
-}
-```
-
-### ECS RAM Role
-
-Automatically used when running on Aliyun ECS with RAM role attached:
-
-```rust
-let config = Config::default()
-    .region("oss-cn-beijing");
-// Credentials loaded automatically from metadata service
-```
-
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:
 
 ```rust
-let config = Config::default()
-    .role_arn("acs:ram::123456789012:role/MyRole")
-    .oidc_provider_arn("acs:ram::123456789012:oidc-provider/MyProvider")
-    .oidc_token_file_path("/var/run/secrets/token");
+use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider};
 
-let loader = AssumeRoleWithOidcLoader::new(config);
+// Set ALIBABA_CLOUD_ROLE_ARN, ALIBABA_CLOUD_OIDC_PROVIDER_ARN,
+// and ALIBABA_CLOUD_OIDC_TOKEN_FILE in the environment.
+let loader = DefaultCredentialProvider::builder()
+    .no_env()
+    .oidc(
+        AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
+    )
+    .build();
 ```
 
 The session name defaults to `reqsign`. To customize it, set `ALIBABA_CLOUD_ROLE_SESSION_NAME` or use `AssumeRoleWithOidcCredentialProvider::with_role_session_name`.
@@ -201,20 +194,17 @@ Common OSS regions:
 ### Custom Credentials
 
 ```rust
-let config = Config::default()
-    .access_key_id("your-access-key-id")
-    .access_key_secret("your-access-key-secret")
-    .security_token("optional-sts-token")
-    .region("oss-cn-beijing");
+use reqsign_aliyun_oss::StaticCredentialProvider;
+
+let loader = StaticCredentialProvider::new("your-access-key-id", "your-access-key-secret");
 ```
 
 ### Force Specific Loader
 
 ```rust
-// Use only config loader
-use reqsign_aliyun_oss::ConfigLoader;
+use reqsign_aliyun_oss::DefaultCredentialProvider;
 
-let loader = ConfigLoader::new(config);
+let loader = DefaultCredentialProvider::builder().no_oidc().build();
 ```
 
 ## License

@@ -29,7 +29,10 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use reqsign_aliyun_oss::{RequestSigner, DefaultCredentialProvider, StaticCredentialProvider};
+//! use reqsign_aliyun_oss::{
+//!     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+//!     RequestSigner, StaticCredentialProvider,
+//! };
 //! use reqsign_core::{Context, Signer, Result};
 //! use reqsign_file_read_tokio::TokioFileRead;
 //! use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -41,8 +44,11 @@
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
-//!     // Create credential loader - uses environment variables by default
-//!     let loader = DefaultCredentialProvider::new();
+//!     // Create credential loader with the default env -> oidc chain.
+//!     let loader = DefaultCredentialProvider::builder()
+//!         .env(EnvCredentialProvider::new())
+//!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
+//!         .build();
 //!
 //!     // Or use static credentials
 //!     // let loader = StaticCredentialProvider::new(
@@ -131,13 +137,17 @@
 //! ### STS AssumeRole
 //!
 //! ```no_run
-//! use reqsign_aliyun_oss::AssumeRoleWithOidcCredentialProvider;
+//! use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider};
 //!
 //! // Use environment variables
 //! // Set ALIBABA_CLOUD_ROLE_ARN, ALIBABA_CLOUD_OIDC_PROVIDER_ARN, ALIBABA_CLOUD_OIDC_TOKEN_FILE
 //! // Optionally set ALIBABA_CLOUD_ROLE_SESSION_NAME
-//! let loader = AssumeRoleWithOidcCredentialProvider::new()
-//!     .with_role_session_name("my-session");
+//! let loader = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .oidc(
+//!         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
+//!     )
+//!     .build();
 //! ```
 //!
 //! ### Custom Endpoints
