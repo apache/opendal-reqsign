@@ -27,14 +27,24 @@
 //! including environment variables, configuration files, and STS tokens.
 //!
 //! `RequestSigner` defaults to V1 signing and supports opting into V4 signing
+<<<<<<< HEAD
 //! when a region is configured.
+=======
+//! when both region and signing version are configured.
+>>>>>>> origin/main
 //!
 //! ## Quick Start
 //!
 //! ```no_run
 //! use reqsign_aliyun_oss::{
+<<<<<<< HEAD
 //!     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
 //!     RequestSigner, SigningVersion, StaticCredentialProvider,
+=======
+//!     AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
+//!     CredentialsFileCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+//!     OssProfileCredentialProvider, RequestSigner, SigningVersion, StaticCredentialProvider,
+>>>>>>> origin/main
 //! };
 //! use reqsign_core::{Context, Signer, Result};
 //! use reqsign_file_read_tokio::TokioFileRead;
@@ -47,9 +57,13 @@
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
-//!     // Create credential loader with the default env -> oidc chain.
+//!     // Create credential loader with the default env -> OSS profile ->
+//!     // shared credentials file -> config file -> oidc chain.
 //!     let loader = DefaultCredentialProvider::builder()
 //!         .env(EnvCredentialProvider::new())
+//!         .oss_profile(OssProfileCredentialProvider::new())
+//!         .credentials_file(CredentialsFileCredentialProvider::new())
+//!         .config_file(ConfigFileCredentialProvider::new())
 //!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
 //!         .build();
 //!
@@ -89,17 +103,21 @@
 //! export ALIBABA_CLOUD_ACCESS_KEY_ID=your-access-key-id
 //! export ALIBABA_CLOUD_ACCESS_KEY_SECRET=your-access-key-secret
 //! export ALIBABA_CLOUD_SECURITY_TOKEN=your-sts-token  # Optional, for STS
+//! export OSS_ACCESS_KEY_ID=your-access-key-id         # Alias
+//! export OSS_ACCESS_KEY_SECRET=your-access-key-secret # Alias
+//! export OSS_SESSION_TOKEN=your-sts-token             # Alias
 //! ```
 //!
-//! ### Configuration File
+//! ### OSS Profile File
 //!
-//! The crate can load credentials from the Aliyun CLI configuration file
-//! (typically `~/.aliyun/config.json`).
+//! The crate can load credentials from the OSS profile file
+//! (typically `~/.oss/credentials`).
 //!
-//! ### ECS RAM Role
+//! ### Alibaba Shared Credential and Config Files
 //!
-//! When running on Alibaba Cloud ECS instances with RAM roles attached,
-//! credentials are automatically obtained from the metadata service.
+//! The crate can also load static credentials from Alibaba shared SDK files
+//! (`~/.alibabacloud/credentials.ini`, `~/.aliyun/credentials.ini`) and the
+//! Alibaba CLI config file (`~/.aliyun/config.json`).
 //!
 //! ## OSS Operations
 //!
@@ -151,6 +169,9 @@
 //! // Optionally set ALIBABA_CLOUD_ROLE_SESSION_NAME
 //! let loader = DefaultCredentialProvider::builder()
 //!     .no_env()
+//!     .no_oss_profile()
+//!     .no_credentials_file()
+//!     .no_config_file()
 //!     .oidc(
 //!         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
 //!     )

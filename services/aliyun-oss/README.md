@@ -10,8 +10,14 @@ This crate provides signing support for Alibaba Cloud Object Storage Service (OS
 
 ```rust
 use reqsign_aliyun_oss::{
+<<<<<<< HEAD
     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
     RequestSigner, SigningVersion, StaticCredentialProvider,
+=======
+    AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
+    CredentialsFileCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+    OssProfileCredentialProvider, RequestSigner, SigningVersion, StaticCredentialProvider,
+>>>>>>> origin/main
 };
 use reqsign_core::{Context, Result, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -25,6 +31,9 @@ async fn main() -> Result<()> {
 
     let loader = DefaultCredentialProvider::builder()
         .env(EnvCredentialProvider::new())
+        .oss_profile(OssProfileCredentialProvider::new())
+        .credentials_file(CredentialsFileCredentialProvider::new())
+        .config_file(ConfigFileCredentialProvider::new())
         .oidc(AssumeRoleWithOidcCredentialProvider::new())
         .build();
 
@@ -58,7 +67,12 @@ async fn main() -> Result<()> {
 ## Features
 
 - **V1 and V4 Signing**: Supports both legacy OSS V1 signatures and Signature V4
+<<<<<<< HEAD
 - **Multiple Credential Sources**: Environment variables and OIDC-based STS exchange
+=======
+- **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, and OIDC-based STS exchange
+- **V1 and V4 Signing**: Supports both legacy OSS V1 signatures and Signature V4
+>>>>>>> origin/main
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
 
@@ -86,8 +100,72 @@ The region remains a no-op for V1 signing.
 export ALIBABA_CLOUD_ACCESS_KEY_ID=your-access-key-id
 export ALIBABA_CLOUD_ACCESS_KEY_SECRET=your-access-key-secret
 export ALIBABA_CLOUD_SECURITY_TOKEN=your-sts-token  # Optional
+export OSS_ACCESS_KEY_ID=your-access-key-id         # Alias
+export OSS_ACCESS_KEY_SECRET=your-access-key-secret # Alias
+export OSS_SESSION_TOKEN=your-sts-token             # Alias
 ```
 
+### OSS Profile File
+
+Reads from `~/.oss/credentials` by default:
+
+```ini
+[default]
+access_key_id = your-access-key-id
+access_key_secret = your-access-key-secret
+session_token = optional-session-token
+
+[prod]
+access_key_id = prod-access-key-id
+access_key_secret = prod-access-key-secret
+```
+
+Override the file path with `OSS_CREDENTIAL_PROFILES_FILE` and the selected profile with `OSS_PROFILE`.
+
+### Alibaba Shared Credentials File
+
+Reads from `~/.alibabacloud/credentials.ini` first and falls back to `~/.aliyun/credentials.ini`:
+
+```ini
+[default]
+enable = true
+type = access_key
+access_key_id = your-access-key-id
+access_key_secret = your-access-key-secret
+
+[prod]
+enable = true
+type = sts_token
+access_key_id = prod-access-key-id
+access_key_secret = prod-access-key-secret
+sts_token = optional-session-token
+```
+
+Override the file path with `ALIBABA_CLOUD_CREDENTIALS_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
+
+Only direct static modes are loaded in this crate today: `access_key` and `sts_token`.
+
+### Alibaba CLI Config File
+
+Reads from `~/.aliyun/config.json` by default:
+
+```json
+{
+  "current": "default",
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "your-access-key-id",
+      "access_key_secret": "your-access-key-secret"
+    }
+  ]
+}
+```
+
+Override the file path with `ALIBABA_CLOUD_CONFIG_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
+
+Only direct static modes are loaded in this crate today: `AK` and `StsToken`.
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:
@@ -99,6 +177,9 @@ use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredential
 // and ALIBABA_CLOUD_OIDC_TOKEN_FILE in the environment.
 let loader = DefaultCredentialProvider::builder()
     .no_env()
+    .no_oss_profile()
+    .no_credentials_file()
+    .no_config_file()
     .oidc(
         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
     )
