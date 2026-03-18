@@ -86,20 +86,34 @@ impl DefaultCredentialProvider {
 
 /// Builder for `DefaultCredentialProvider`.
 ///
-/// Use `configure_*` to customize provider behavior and `disable_*(bool)` to
-/// include or exclude providers from the default chain. Call `build()` to
-/// construct the provider.
-#[derive(Default)]
+/// Use `slot(provider)` to override a default slot and `no_slot()` to remove it
+/// from the default chain. Call `build()` to construct the provider.
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
     profile: Option<ProfileCredentialProvider>,
     #[cfg(not(target_arch = "wasm32"))]
     sso: Option<SSOCredentialProvider>,
-    assume_role: Option<AssumeRoleWithWebIdentityCredentialProvider>,
+    web_identity: Option<AssumeRoleWithWebIdentityCredentialProvider>,
     #[cfg(not(target_arch = "wasm32"))]
     process: Option<ProcessCredentialProvider>,
     ecs: Option<ECSCredentialProvider>,
     imds: Option<IMDSv2CredentialProvider>,
+}
+
+impl Default for DefaultCredentialProviderBuilder {
+    fn default() -> Self {
+        Self {
+            env: Some(EnvCredentialProvider::default()),
+            profile: Some(ProfileCredentialProvider::default()),
+            #[cfg(not(target_arch = "wasm32"))]
+            sso: Some(SSOCredentialProvider::default()),
+            web_identity: Some(AssumeRoleWithWebIdentityCredentialProvider::default()),
+            #[cfg(not(target_arch = "wasm32"))]
+            process: Some(ProcessCredentialProvider::default()),
+            ecs: Some(ECSCredentialProvider::default()),
+            imds: Some(IMDSv2CredentialProvider::default()),
+        }
+    }
 }
 
 impl DefaultCredentialProviderBuilder {
@@ -108,168 +122,91 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
-    /// Configure the environment credential provider.
-    pub fn configure_env<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(EnvCredentialProvider) -> EnvCredentialProvider,
-    {
-        let p = self.env.take().unwrap_or_default();
-        self.env = Some(f(p));
+    /// Override the environment credential provider slot.
+    pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
+        self.env = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the environment provider.
-    pub fn disable_env(mut self, disable: bool) -> Self {
-        if disable {
-            self.env = None;
-        } else if self.env.is_none() {
-            self.env = Some(EnvCredentialProvider::new());
-        }
+    /// Remove the environment credential provider from the chain.
+    pub fn no_env(mut self) -> Self {
+        self.env = None;
         self
     }
 
-    /// Configure the profile credential provider.
-    pub fn configure_profile<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(ProfileCredentialProvider) -> ProfileCredentialProvider,
-    {
-        let p = self.profile.take().unwrap_or_default();
-        self.profile = Some(f(p));
+    /// Override the profile credential provider slot.
+    pub fn profile(mut self, provider: ProfileCredentialProvider) -> Self {
+        self.profile = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the profile provider.
-    pub fn disable_profile(mut self, disable: bool) -> Self {
-        if disable {
-            self.profile = None;
-        } else if self.profile.is_none() {
-            self.profile = Some(ProfileCredentialProvider::new());
-        }
+    /// Remove the profile credential provider from the chain.
+    pub fn no_profile(mut self) -> Self {
+        self.profile = None;
         self
     }
 
-    /// Configure the SSO credential provider.
-    ///
-    /// This customizes how AWS SSO (IAM Identity Center) credentials are
-    /// discovered and exchanged from local SSO caches. Typical use cases
-    /// include setting an alternative endpoint for testing, or overriding the
-    /// profile-derived values. This method is only available for non-wasm32
-    /// targets where process and filesystem access is supported.
+    /// Override the SSO credential provider slot.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn configure_sso<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(SSOCredentialProvider) -> SSOCredentialProvider,
-    {
-        let p = self.sso.take().unwrap_or_default();
-        self.sso = Some(f(p));
+    pub fn sso(mut self, provider: SSOCredentialProvider) -> Self {
+        self.sso = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the SSO provider.
-    ///
-    /// Use this to explicitly remove SSO from the default credential
-    /// resolution chain (disable = true) or ensure it participates (disable = false).
-    /// This is useful in controlled environments (e.g., CI) or when SSO is
-    /// not configured. Only available on non-wasm32 targets.
+    /// Remove the SSO credential provider from the chain.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn disable_sso(mut self, disable: bool) -> Self {
-        if disable {
-            self.sso = None;
-        } else if self.sso.is_none() {
-            self.sso = Some(SSOCredentialProvider::new());
-        }
+    pub fn no_sso(mut self) -> Self {
+        self.sso = None;
         self
     }
 
-    /// Configure the web-identity assume-role credential provider.
-    pub fn configure_assume_role<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(
-            AssumeRoleWithWebIdentityCredentialProvider,
-        ) -> AssumeRoleWithWebIdentityCredentialProvider,
-    {
-        let p = self.assume_role.take().unwrap_or_default();
-        self.assume_role = Some(f(p));
+    /// Override the web-identity credential provider slot.
+    pub fn web_identity(mut self, provider: AssumeRoleWithWebIdentityCredentialProvider) -> Self {
+        self.web_identity = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the assume role provider.
-    pub fn disable_assume_role(mut self, disable: bool) -> Self {
-        if disable {
-            self.assume_role = None;
-        } else if self.assume_role.is_none() {
-            self.assume_role = Some(AssumeRoleWithWebIdentityCredentialProvider::new());
-        }
+    /// Remove the web-identity credential provider from the chain.
+    pub fn no_web_identity(mut self) -> Self {
+        self.web_identity = None;
         self
     }
 
-    /// Configure the external process credential provider.
-    ///
-    /// This allows overriding the profile-derived command used to obtain
-    /// credentials via `credential_process`. Only available on non-wasm32
-    /// targets.
+    /// Override the external process credential provider slot.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn configure_process<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(ProcessCredentialProvider) -> ProcessCredentialProvider,
-    {
-        let p = self.process.take().unwrap_or_default();
-        self.process = Some(f(p));
+    pub fn process(mut self, provider: ProcessCredentialProvider) -> Self {
+        self.process = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the process provider.
-    ///
-    /// Use this to explicitly remove the external process credential source
-    /// (disable = true) or ensure it participates (disable = false). This is
-    /// only meaningful on non-wasm32 targets.
+    /// Remove the external process credential provider from the chain.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn disable_process(mut self, disable: bool) -> Self {
-        if disable {
-            self.process = None;
-        } else if self.process.is_none() {
-            self.process = Some(ProcessCredentialProvider::new());
-        }
+    pub fn no_process(mut self) -> Self {
+        self.process = None;
         self
     }
 
-    /// Configure the ECS (container/task) credential provider.
-    pub fn configure_ecs<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(ECSCredentialProvider) -> ECSCredentialProvider,
-    {
-        let p = self.ecs.take().unwrap_or_default();
-        self.ecs = Some(f(p));
+    /// Override the ECS credential provider slot.
+    pub fn ecs(mut self, provider: ECSCredentialProvider) -> Self {
+        self.ecs = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the ECS provider.
-    pub fn disable_ecs(mut self, disable: bool) -> Self {
-        if disable {
-            self.ecs = None;
-        } else if self.ecs.is_none() {
-            self.ecs = Some(ECSCredentialProvider::new());
-        }
+    /// Remove the ECS credential provider from the chain.
+    pub fn no_ecs(mut self) -> Self {
+        self.ecs = None;
         self
     }
 
-    /// Configure the EC2 IMDSv2 credential provider.
-    pub fn configure_imds<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(IMDSv2CredentialProvider) -> IMDSv2CredentialProvider,
-    {
-        let p = self.imds.take().unwrap_or_default();
-        self.imds = Some(f(p));
+    /// Override the EC2 IMDSv2 credential provider slot.
+    pub fn imds(mut self, provider: IMDSv2CredentialProvider) -> Self {
+        self.imds = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the IMDSv2 provider.
-    pub fn disable_imds(mut self, disable: bool) -> Self {
-        if disable {
-            self.imds = None;
-        } else if self.imds.is_none() {
-            self.imds = Some(IMDSv2CredentialProvider::new());
-        }
+    /// Remove the EC2 IMDSv2 credential provider from the chain.
+    pub fn no_imds(mut self) -> Self {
+        self.imds = None;
         self
     }
 
@@ -279,50 +216,36 @@ impl DefaultCredentialProviderBuilder {
 
         if let Some(p) = self.env {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(EnvCredentialProvider::new());
         }
 
         if let Some(p) = self.profile {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(ProfileCredentialProvider::new());
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(p) = self.sso {
                 chain = chain.push(p);
-            } else {
-                chain = chain.push(SSOCredentialProvider::new());
             }
         }
 
-        if let Some(p) = self.assume_role {
+        if let Some(p) = self.web_identity {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(AssumeRoleWithWebIdentityCredentialProvider::new());
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(p) = self.process {
                 chain = chain.push(p);
-            } else {
-                chain = chain.push(ProcessCredentialProvider::new());
             }
         }
 
         if let Some(p) = self.ecs {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(ECSCredentialProvider::new());
         }
 
         if let Some(p) = self.imds {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(IMDSv2CredentialProvider::new());
         }
 
         DefaultCredentialProvider::with_chain(chain)
@@ -361,7 +284,17 @@ mod tests {
             envs: HashMap::new(),
         });
 
-        let l = DefaultCredentialProvider::new();
+        let builder = DefaultCredentialProvider::builder()
+            .no_profile()
+            .no_web_identity()
+            .no_ecs()
+            .no_imds();
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.no_sso().no_process();
+        #[cfg(target_arch = "wasm32")]
+        let builder = builder;
+
+        let l = builder.build();
         let x = l.provide_credential(&ctx).await.expect("load must succeed");
         assert!(x.is_none());
     }
@@ -391,6 +324,45 @@ mod tests {
         let x = x.expect("must load succeed");
         assert_eq!("access_key_id", x.access_key_id);
         assert_eq!("secret_access_key", x.secret_access_key);
+    }
+
+    #[tokio::test]
+    async fn test_default_credential_provider_no_env_removes_slot() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(OsEnv);
+        let ctx = ctx.with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from_iter([
+                (AWS_ACCESS_KEY_ID.to_string(), "access_key_id".to_string()),
+                (
+                    AWS_SECRET_ACCESS_KEY.to_string(),
+                    "secret_access_key".to_string(),
+                ),
+            ]),
+        });
+
+        let builder = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_profile()
+            .no_imds()
+            .no_ecs()
+            .no_web_identity();
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.no_sso().no_process();
+        #[cfg(target_arch = "wasm32")]
+        let builder = builder;
+
+        let provider = builder.build();
+
+        let cred = provider
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed");
+        assert!(cred.is_none());
     }
 
     #[tokio::test]
@@ -508,7 +480,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_default_credential_provider_configure_imds() {
+    async fn test_default_credential_provider_no_profile_removes_slot() {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let ctx = Context::new()
@@ -517,31 +489,40 @@ mod tests {
             .with_env(OsEnv);
         let ctx = ctx.with_env(StaticEnv {
             home_dir: None,
-            envs: HashMap::new(),
+            envs: HashMap::from_iter([
+                (
+                    AWS_CONFIG_FILE.to_string(),
+                    format!(
+                        "{}/testdata/default_config",
+                        env::current_dir()
+                            .expect("current_dir must exist")
+                            .to_string_lossy()
+                    ),
+                ),
+                (
+                    AWS_SHARED_CREDENTIALS_FILE.to_string(),
+                    format!(
+                        "{}/testdata/not_exist",
+                        env::current_dir()
+                            .expect("current_dir must exist")
+                            .to_string_lossy()
+                    ),
+                ),
+            ]),
         });
 
-        // Build a custom chain with IMDS disabled
-        let mut chain = ProvideCredentialChain::new()
-            .push(EnvCredentialProvider::new())
-            .push(ProfileCredentialProvider::new());
-
+        let builder = DefaultCredentialProvider::builder()
+            .no_profile()
+            .no_imds()
+            .no_ecs()
+            .no_web_identity();
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            chain = chain.push(SSOCredentialProvider::new());
-        }
+        let builder = builder.no_sso().no_process();
+        #[cfg(target_arch = "wasm32")]
+        let builder = builder;
 
-        chain = chain.push(AssumeRoleWithWebIdentityCredentialProvider::new());
+        let provider = builder.build();
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            chain = chain.push(ProcessCredentialProvider::new());
-        }
-
-        chain = chain.push(ECSCredentialProvider::new());
-
-        let provider = DefaultCredentialProvider::with_chain(chain);
-
-        // Even though IMDS is the last provider, it should return None when disabled
         let cred = provider
             .provide_credential(&ctx)
             .await
@@ -550,7 +531,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_default_credential_provider_configure_profile() {
+    async fn test_default_credential_provider_custom_profile_slot() {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let ctx = Context::new()
@@ -570,34 +551,14 @@ mod tests {
                 .to_string_lossy()
         );
 
-        let mut chain = ProvideCredentialChain::new().push(EnvCredentialProvider::new());
+        let provider = DefaultCredentialProvider::builder()
+            .profile(ProfileCredentialProvider::new().with_config_file(custom_config))
+            .build();
 
-        chain = chain.push(ProfileCredentialProvider::new().with_config_file(custom_config));
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            chain = chain.push(SSOCredentialProvider::new());
-        }
-
-        chain = chain.push(AssumeRoleWithWebIdentityCredentialProvider::new());
-
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            chain = chain.push(ProcessCredentialProvider::new());
-        }
-
-        chain = chain
-            .push(ECSCredentialProvider::new())
-            .push(IMDSv2CredentialProvider::new());
-
-        let provider = DefaultCredentialProvider::with_chain(chain);
-
-        // Should load from the custom config
         let cred = provider
             .provide_credential(&ctx)
             .await
             .expect("load must succeed");
-        // The testdata/default_config has credentials
         let cred = cred.expect("credential should exist");
         assert_eq!("config_access_key_id", cred.access_key_id);
         assert_eq!("config_secret_access_key", cred.secret_access_key);
