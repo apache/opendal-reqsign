@@ -97,6 +97,20 @@
 //! let loader = DefaultCredentialProvider::new();
 //! ```
 //!
+//! Customize the default chain with slot-based builder APIs:
+//!
+//! ```no_run
+//! use reqsign_azure_storage::{
+//!     ClientSecretCredentialProvider, DefaultCredentialProvider,
+//! };
+//!
+//! let loader = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .client_secret(ClientSecretCredentialProvider::new().with_tenant_id("tenant-id"))
+//!     .no_imds()
+//!     .build();
+//! ```
+//!
 //! ## Storage Services
 //!
 //! ### Blob Storage

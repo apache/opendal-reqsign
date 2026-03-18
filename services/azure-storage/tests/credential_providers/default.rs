@@ -16,9 +16,10 @@
 // under the License.
 
 use reqsign_azure_storage::{Credential, DefaultCredentialProvider};
-use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result};
+use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result, StaticEnv};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn is_test_enabled() -> bool {
@@ -145,4 +146,38 @@ async fn test_chain_returns_none_when_all_fail() {
     // Verify all providers were called
     assert_eq!(*count1.lock().unwrap(), 1);
     assert_eq!(*count2.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn test_builder_no_env_removes_provider() {
+    let ctx = Context::new()
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from([
+                (
+                    "AZURE_STORAGE_ACCOUNT_NAME".to_string(),
+                    "testaccount".to_string(),
+                ),
+                (
+                    "AZURE_STORAGE_ACCOUNT_KEY".to_string(),
+                    "dGVzdGtleQ==".to_string(),
+                ),
+            ]),
+        });
+
+    let builder = DefaultCredentialProvider::builder()
+        .no_env()
+        .no_client_secret()
+        .no_azure_pipelines()
+        .no_workload_identity()
+        .no_imds();
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder.no_azure_cli().no_client_certificate();
+
+    let provider = builder.build();
+    let result = provider.provide_credential(&ctx).await.unwrap();
+
+    assert!(result.is_none());
 }
