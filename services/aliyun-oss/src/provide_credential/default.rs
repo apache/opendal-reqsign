@@ -17,10 +17,9 @@
 
 use crate::Credential;
 use crate::provide_credential::{
-    AssumeRoleWithOidcCredentialProvider, CredentialsUriCredentialProvider,
     AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
-    CredentialsFileCredentialProvider, EcsRamRoleCredentialProvider, EnvCredentialProvider,
-    OssProfileCredentialProvider,
+    CredentialsFileCredentialProvider, CredentialsUriCredentialProvider,
+    EcsRamRoleCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
 };
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 

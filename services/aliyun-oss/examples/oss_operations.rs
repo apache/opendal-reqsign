@@ -17,9 +17,9 @@
 
 use reqsign_aliyun_oss::{
     AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
-    CredentialsFileCredentialProvider, CredentialsUriCredentialProvider,
-    DefaultCredentialProvider, EcsRamRoleCredentialProvider, EnvCredentialProvider,
-    OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
+    CredentialsFileCredentialProvider, CredentialsUriCredentialProvider, DefaultCredentialProvider,
+    EcsRamRoleCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
+    RequestSigner, StaticCredentialProvider,
 };
 use reqsign_core::Result;
 use reqsign_core::{Context, OsEnv, Signer};
