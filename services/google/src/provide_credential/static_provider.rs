@@ -19,13 +19,9 @@ use log::debug;
 
 use reqsign_core::{Context, ProvideCredential, Result, hash::base64_decode};
 
-use crate::credential::{Credential, CredentialFile};
+use crate::credential::Credential;
 
-use super::{
-    authorized_user::AuthorizedUserCredentialProvider,
-    external_account::ExternalAccountCredentialProvider,
-    impersonated_service_account::ImpersonatedServiceAccountCredentialProvider,
-};
+use super::parse::parse_credential_bytes;
 
 /// StaticCredentialProvider loads credentials from a JSON string provided at construction time.
 #[derive(Debug, Clone)]
@@ -70,40 +66,12 @@ impl ProvideCredential for StaticCredentialProvider {
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
         debug!("loading credential from static content");
 
-        let cred_file = CredentialFile::from_slice(self.content.as_bytes()).map_err(|err| {
-            debug!("failed to parse credential from content: {err:?}");
-            err
-        })?;
-
-        // Get scope from instance or environment
-        let scope = self
-            .scope
-            .clone()
-            .or_else(|| ctx.env_var(crate::constants::GOOGLE_SCOPE))
-            .unwrap_or_else(|| crate::constants::DEFAULT_SCOPE.to_string());
-
-        match cred_file {
-            CredentialFile::ServiceAccount(sa) => {
-                debug!("loaded service account credential");
-                Ok(Some(Credential::with_service_account(sa)))
-            }
-            CredentialFile::ExternalAccount(ea) => {
-                debug!("loaded external account credential, exchanging for token");
-                let provider = ExternalAccountCredentialProvider::new(ea).with_scope(&scope);
-                provider.provide_credential(ctx).await
-            }
-            CredentialFile::ImpersonatedServiceAccount(isa) => {
-                debug!("loaded impersonated service account credential, exchanging for token");
-                let provider =
-                    ImpersonatedServiceAccountCredentialProvider::new(isa).with_scope(&scope);
-                provider.provide_credential(ctx).await
-            }
-            CredentialFile::AuthorizedUser(au) => {
-                debug!("loaded authorized user credential, exchanging for token");
-                let provider = AuthorizedUserCredentialProvider::new(au);
-                provider.provide_credential(ctx).await
-            }
-        }
+        parse_credential_bytes(ctx, self.content.as_bytes(), self.scope.clone())
+            .await
+            .map_err(|err| {
+                debug!("failed to parse credential from content: {err:?}");
+                err
+            })
     }
 }
 

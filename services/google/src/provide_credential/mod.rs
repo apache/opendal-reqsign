@@ -19,11 +19,19 @@ mod default;
 #[allow(unused_imports)]
 pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
 
+mod file;
+pub use file::FileCredentialProvider;
+
+mod parse;
+
 mod vm_metadata;
 pub use vm_metadata::VmMetadataCredentialProvider;
 
 mod static_provider;
 pub use static_provider::StaticCredentialProvider;
+
+mod token;
+pub use token::TokenCredentialProvider;
 
 // Internal providers - not exported
 mod authorized_user;

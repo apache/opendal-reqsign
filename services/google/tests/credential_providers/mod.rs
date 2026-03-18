@@ -18,8 +18,10 @@
 mod authorized_user;
 mod default;
 mod external_account;
+mod file;
 mod impersonated_service_account;
 mod static_provider;
+mod token;
 mod vm_metadata;
 
 use reqsign_core::{Context, OsEnv, StaticEnv};
