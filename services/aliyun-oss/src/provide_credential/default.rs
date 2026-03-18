@@ -17,7 +17,8 @@
 
 use crate::Credential;
 use crate::provide_credential::{
-    AssumeRoleWithOidcCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
+    AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
+    CredentialsFileCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
 };
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
@@ -27,7 +28,9 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 ///
 /// 1. Environment variables
 /// 2. OSS profile file
-/// 3. Assume Role with OIDC
+/// 3. Alibaba shared credentials file
+/// 4. Alibaba CLI config file
+/// 5. Assume Role with OIDC
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -84,6 +87,8 @@ impl DefaultCredentialProvider {
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
     oss_profile: Option<OssProfileCredentialProvider>,
+    credentials_file: Option<CredentialsFileCredentialProvider>,
+    config_file: Option<ConfigFileCredentialProvider>,
     oidc: Option<AssumeRoleWithOidcCredentialProvider>,
 }
 
@@ -92,6 +97,8 @@ impl Default for DefaultCredentialProviderBuilder {
         Self {
             env: Some(EnvCredentialProvider::new()),
             oss_profile: Some(OssProfileCredentialProvider::new()),
+            credentials_file: Some(CredentialsFileCredentialProvider::new()),
+            config_file: Some(ConfigFileCredentialProvider::new()),
             oidc: Some(AssumeRoleWithOidcCredentialProvider::new()),
         }
     }
@@ -127,6 +134,29 @@ impl DefaultCredentialProviderBuilder {
         self
     }
 
+    /// Set the Alibaba shared credentials file provider slot.
+    pub fn credentials_file(mut self, provider: CredentialsFileCredentialProvider) -> Self {
+        self.credentials_file = Some(provider);
+        self
+    }
+
+    /// Remove the Alibaba shared credentials file provider slot.
+    pub fn no_credentials_file(mut self) -> Self {
+        self.credentials_file = None;
+        self
+    }
+
+    /// Set the Alibaba config file provider slot.
+    pub fn config_file(mut self, provider: ConfigFileCredentialProvider) -> Self {
+        self.config_file = Some(provider);
+        self
+    }
+
+    /// Remove the Alibaba config file provider slot.
+    pub fn no_config_file(mut self) -> Self {
+        self.config_file = None;
+        self
+    }
     /// Set the OIDC credential provider slot.
     pub fn oidc(mut self, provider: AssumeRoleWithOidcCredentialProvider) -> Self {
         self.oidc = Some(provider);
@@ -146,6 +176,12 @@ impl DefaultCredentialProviderBuilder {
             chain = chain.push(p);
         }
         if let Some(p) = self.oss_profile {
+            chain = chain.push(p);
+        }
+        if let Some(p) = self.credentials_file {
+            chain = chain.push(p);
+        }
+        if let Some(p) = self.config_file {
             chain = chain.push(p);
         }
         if let Some(p) = self.oidc {
@@ -432,6 +468,222 @@ access_key_secret = profile_secret_key
         assert_eq!("profile_access_key", credential.access_key_id);
         assert_eq!("profile_secret_key", credential.access_key_secret);
         assert_eq!(1, file_read.calls());
+        assert_eq!(0, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_credentials_file_over_config_file() {
+        let file_read = CountingFileRead::new(HashMap::from([
+            (
+                "/mock/credentials.ini".to_string(),
+                br#"[default]
+enable=true
+type=access_key
+access_key_id=shared_access_key
+access_key_secret=shared_secret_key
+"#
+                .to_vec(),
+            ),
+            (
+                "/mock/config.json".to_string(),
+                br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+                .to_vec(),
+            ),
+        ]));
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_CREDENTIALS_FILE.to_string(),
+                        "/mock/credentials.ini".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                        "/mock/config.json".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("shared_access_key", credential.access_key_id);
+        assert_eq!("shared_secret_key", credential.access_key_secret);
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_credentials_file_removes_credentials_file_provider() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/config.json".to_string(),
+            br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+            .to_vec(),
+        )]));
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([(
+                    ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                    "/mock/config.json".to_string(),
+                )]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("config_access_key", credential.access_key_id);
+        assert_eq!("config_secret_key", credential.access_key_secret);
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_config_file_removes_config_file_provider() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/config.json".to_string(),
+            br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+            .to_vec(),
+        )]));
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([(
+                    ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                    "/mock/config.json".to_string(),
+                )]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("config_access_key", credential.access_key_id);
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+        assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_config_file_over_oidc() {
+        let file_read = CountingFileRead::new(HashMap::from([
+            (
+                "/mock/config.json".to_string(),
+                br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+                .to_vec(),
+            ),
+            ("/mock/token".to_string(), b"token".to_vec()),
+        ]));
+        let http_send = CountingHttpSend::new(
+            br#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"oidc_secret_key","AccessKeyId":"oidc_access_key"}}"#
+                .to_vec(),
+        );
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                        "/mock/config.json".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        "/mock/token".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("config_access_key", credential.access_key_id);
+        assert_eq!("config_secret_key", credential.access_key_secret);
         assert_eq!(0, http_send.calls());
     }
 

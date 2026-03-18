@@ -33,7 +33,8 @@
 //!
 //! ```no_run
 //! use reqsign_aliyun_oss::{
-//!     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+//!     AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
+//!     CredentialsFileCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
 //!     OssProfileCredentialProvider, RequestSigner, SigningVersion, StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
@@ -47,10 +48,13 @@
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
-//!     // Create credential loader with the default env -> oidc chain.
+//!     // Create credential loader with the default env -> OSS profile ->
+//!     // shared credentials file -> config file -> oidc chain.
 //!     let loader = DefaultCredentialProvider::builder()
 //!         .env(EnvCredentialProvider::new())
 //!         .oss_profile(OssProfileCredentialProvider::new())
+//!         .credentials_file(CredentialsFileCredentialProvider::new())
+//!         .config_file(ConfigFileCredentialProvider::new())
 //!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
 //!         .build();
 //!
@@ -100,10 +104,11 @@
 //! The crate can load credentials from the OSS profile file
 //! (typically `~/.oss/credentials`).
 //!
-//! ### ECS RAM Role
+//! ### Alibaba Shared Credential and Config Files
 //!
-//! When running on Alibaba Cloud ECS instances with RAM roles attached,
-//! credentials are automatically obtained from the metadata service.
+//! The crate can also load static credentials from Alibaba shared SDK files
+//! (`~/.alibabacloud/credentials.ini`, `~/.aliyun/credentials.ini`) and the
+//! Alibaba CLI config file (`~/.aliyun/config.json`).
 //!
 //! ## OSS Operations
 //!
@@ -155,6 +160,9 @@
 //! // Optionally set ALIBABA_CLOUD_ROLE_SESSION_NAME
 //! let loader = DefaultCredentialProvider::builder()
 //!     .no_env()
+//!     .no_oss_profile()
+//!     .no_credentials_file()
+//!     .no_config_file()
 //!     .oidc(
 //!         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
 //!     )
