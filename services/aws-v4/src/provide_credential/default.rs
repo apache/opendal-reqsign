@@ -265,6 +265,8 @@ mod tests {
     use crate::constants::{
         AWS_ACCESS_KEY_ID, AWS_CONFIG_FILE, AWS_SECRET_ACCESS_KEY, AWS_SHARED_CREDENTIALS_FILE,
     };
+    #[cfg(not(target_arch = "wasm32"))]
+    use reqsign_command_execute_tokio::TokioCommandExecute;
     use reqsign_core::{OsEnv, StaticEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -562,6 +564,87 @@ mod tests {
         let cred = cred.expect("credential should exist");
         assert_eq!("config_access_key_id", cred.access_key_id);
         assert_eq!("config_secret_access_key", cred.secret_access_key);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_default_credential_provider_custom_process_slot() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_command_execute(TokioCommandExecute)
+            .with_env(OsEnv);
+        let ctx = ctx.with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::new(),
+        });
+
+        let helper = format!(
+            "{}/tests/mocks/credential_process_helper.py",
+            env::current_dir()
+                .expect("current_dir must exist")
+                .to_string_lossy()
+        );
+
+        let provider = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_profile()
+            .no_sso()
+            .no_web_identity()
+            .no_ecs()
+            .no_imds()
+            .process(ProcessCredentialProvider::new().with_command(format!("python3 {helper}")))
+            .build();
+
+        let cred = provider
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed")
+            .expect("credential should exist");
+        assert_eq!("ASIAPROCESSEXAMPLE", cred.access_key_id);
+        assert_eq!("process/secret/key/EXAMPLE", cred.secret_access_key);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_default_credential_provider_no_process_removes_slot() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_command_execute(TokioCommandExecute)
+            .with_env(OsEnv);
+        let ctx = ctx.with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::new(),
+        });
+
+        let helper = format!(
+            "{}/tests/mocks/credential_process_helper.py",
+            env::current_dir()
+                .expect("current_dir must exist")
+                .to_string_lossy()
+        );
+
+        let provider = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_profile()
+            .no_sso()
+            .no_web_identity()
+            .no_ecs()
+            .no_imds()
+            .process(ProcessCredentialProvider::new().with_command(format!("python3 {helper}")))
+            .no_process()
+            .build();
+
+        let cred = provider
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed");
+        assert!(cred.is_none());
     }
 
     /// AWS_SHARED_CREDENTIALS_FILE should be taken first.
