@@ -11,7 +11,7 @@ This crate provides signing support for Alibaba Cloud Object Storage Service (OS
 ```rust
 use reqsign_aliyun_oss::{
     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
-    RequestSigner, SigningVersion, StaticCredentialProvider,
+    OssProfileCredentialProvider, RequestSigner, SigningVersion, StaticCredentialProvider,
 };
 use reqsign_core::{Context, Result, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -25,6 +25,7 @@ async fn main() -> Result<()> {
 
     let loader = DefaultCredentialProvider::builder()
         .env(EnvCredentialProvider::new())
+        .oss_profile(OssProfileCredentialProvider::new())
         .oidc(AssumeRoleWithOidcCredentialProvider::new())
         .build();
 
@@ -58,7 +59,7 @@ async fn main() -> Result<()> {
 ## Features
 
 - **V1 and V4 Signing**: Supports both legacy OSS V1 signatures and Signature V4
-- **Multiple Credential Sources**: Environment variables and OIDC-based STS exchange
+- **Multiple Credential Sources**: Environment variables, OSS profile files, and OIDC-based STS exchange
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
 
@@ -86,7 +87,27 @@ The region remains a no-op for V1 signing.
 export ALIBABA_CLOUD_ACCESS_KEY_ID=your-access-key-id
 export ALIBABA_CLOUD_ACCESS_KEY_SECRET=your-access-key-secret
 export ALIBABA_CLOUD_SECURITY_TOKEN=your-sts-token  # Optional
+export OSS_ACCESS_KEY_ID=your-access-key-id         # Alias
+export OSS_ACCESS_KEY_SECRET=your-access-key-secret # Alias
+export OSS_SESSION_TOKEN=your-sts-token             # Alias
 ```
+
+### OSS Profile File
+
+Reads from `~/.oss/credentials` by default:
+
+```ini
+[default]
+access_key_id = your-access-key-id
+access_key_secret = your-access-key-secret
+session_token = optional-session-token
+
+[prod]
+access_key_id = prod-access-key-id
+access_key_secret = prod-access-key-secret
+```
+
+Override the file path with `OSS_CREDENTIAL_PROFILES_FILE` and the selected profile with `OSS_PROFILE`.
 
 ### STS AssumeRole with OIDC
 
@@ -99,6 +120,7 @@ use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredential
 // and ALIBABA_CLOUD_OIDC_TOKEN_FILE in the environment.
 let loader = DefaultCredentialProvider::builder()
     .no_env()
+    .no_oss_profile()
     .oidc(
         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
     )
