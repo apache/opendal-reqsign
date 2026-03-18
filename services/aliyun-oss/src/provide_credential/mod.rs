@@ -18,6 +18,12 @@
 mod assume_role_with_oidc;
 pub use assume_role_with_oidc::AssumeRoleWithOidcCredentialProvider;
 
+mod config_file;
+pub use config_file::ConfigFileCredentialProvider;
+
+mod credentials_file;
+pub use credentials_file::CredentialsFileCredentialProvider;
+
 mod default;
 pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
 

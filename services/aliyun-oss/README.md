@@ -10,7 +10,8 @@ This crate provides signing support for Alibaba Cloud Object Storage Service (OS
 
 ```rust
 use reqsign_aliyun_oss::{
-    AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+    AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
+    CredentialsFileCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
     OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
 };
 use reqsign_core::{Context, Result, Signer};
@@ -26,6 +27,8 @@ async fn main() -> Result<()> {
     let loader = DefaultCredentialProvider::builder()
         .env(EnvCredentialProvider::new())
         .oss_profile(OssProfileCredentialProvider::new())
+        .credentials_file(CredentialsFileCredentialProvider::new())
+        .config_file(ConfigFileCredentialProvider::new())
         .oidc(AssumeRoleWithOidcCredentialProvider::new())
         .build();
 
@@ -51,7 +54,7 @@ async fn main() -> Result<()> {
 ## Features
 
 - **HMAC-SHA1 Signing**: Complete implementation of Aliyun's signing algorithm
-- **Multiple Credential Sources**: Environment variables, OSS profile files, and OIDC-based STS exchange
+- **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, and OIDC-based STS exchange
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
 
@@ -85,6 +88,51 @@ access_key_secret = prod-access-key-secret
 
 Override the file path with `OSS_CREDENTIAL_PROFILES_FILE` and the selected profile with `OSS_PROFILE`.
 
+### Alibaba Shared Credentials File
+
+Reads from `~/.alibabacloud/credentials.ini` first and falls back to `~/.aliyun/credentials.ini`:
+
+```ini
+[default]
+enable = true
+type = access_key
+access_key_id = your-access-key-id
+access_key_secret = your-access-key-secret
+
+[prod]
+enable = true
+type = sts_token
+access_key_id = prod-access-key-id
+access_key_secret = prod-access-key-secret
+sts_token = optional-session-token
+```
+
+Override the file path with `ALIBABA_CLOUD_CREDENTIALS_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
+
+Only direct static modes are loaded in this crate today: `access_key` and `sts_token`.
+
+### Alibaba CLI Config File
+
+Reads from `~/.aliyun/config.json` by default:
+
+```json
+{
+  "current": "default",
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "your-access-key-id",
+      "access_key_secret": "your-access-key-secret"
+    }
+  ]
+}
+```
+
+Override the file path with `ALIBABA_CLOUD_CONFIG_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
+
+Only direct static modes are loaded in this crate today: `AK` and `StsToken`.
+
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:
@@ -97,6 +145,8 @@ use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredential
 let loader = DefaultCredentialProvider::builder()
     .no_env()
     .no_oss_profile()
+    .no_credentials_file()
+    .no_config_file()
     .oidc(
         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
     )
