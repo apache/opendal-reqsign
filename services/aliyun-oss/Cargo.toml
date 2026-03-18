@@ -33,6 +33,7 @@ http = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }
+rust-ini = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

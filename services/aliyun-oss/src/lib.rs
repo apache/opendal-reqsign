@@ -31,7 +31,7 @@
 //! ```no_run
 //! use reqsign_aliyun_oss::{
 //!     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
-//!     RequestSigner, StaticCredentialProvider,
+//!     OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
 //! use reqsign_file_read_tokio::TokioFileRead;
@@ -47,6 +47,7 @@
 //!     // Create credential loader with the default env -> oidc chain.
 //!     let loader = DefaultCredentialProvider::builder()
 //!         .env(EnvCredentialProvider::new())
+//!         .oss_profile(OssProfileCredentialProvider::new())
 //!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
 //!         .build();
 //!
@@ -82,12 +83,15 @@
 //! export ALIBABA_CLOUD_ACCESS_KEY_ID=your-access-key-id
 //! export ALIBABA_CLOUD_ACCESS_KEY_SECRET=your-access-key-secret
 //! export ALIBABA_CLOUD_SECURITY_TOKEN=your-sts-token  # Optional, for STS
+//! export OSS_ACCESS_KEY_ID=your-access-key-id         # Alias
+//! export OSS_ACCESS_KEY_SECRET=your-access-key-secret # Alias
+//! export OSS_SESSION_TOKEN=your-sts-token             # Alias
 //! ```
 //!
-//! ### Configuration File
+//! ### OSS Profile File
 //!
-//! The crate can load credentials from the Aliyun CLI configuration file
-//! (typically `~/.aliyun/config.json`).
+//! The crate can load credentials from the OSS profile file
+//! (typically `~/.oss/credentials`).
 //!
 //! ### ECS RAM Role
 //!
