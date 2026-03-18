@@ -75,13 +75,21 @@ impl DefaultCredentialProvider {
 
 /// Builder for `DefaultCredentialProvider`.
 ///
-/// Use `configure_env` / `configure_config_file` to customize providers, and
-/// `disable_env(bool)` / `disable_config_file(bool)` to control participation.
-/// Finish with `build()` to construct the provider.
-#[derive(Default)]
+/// Use `env` / `config_file` to customize providers, `no_env` /
+/// `no_config_file` to remove them from the chain, and `build()` to construct
+/// the provider.
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
     config_file: Option<ConfigFileCredentialProvider>,
+}
+
+impl Default for DefaultCredentialProviderBuilder {
+    fn default() -> Self {
+        Self {
+            env: Some(EnvCredentialProvider::default()),
+            config_file: Some(ConfigFileCredentialProvider::default()),
+        }
+    }
 }
 
 impl DefaultCredentialProviderBuilder {
@@ -90,43 +98,27 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
-    /// Configure the environment credential provider.
-    pub fn configure_env<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(EnvCredentialProvider) -> EnvCredentialProvider,
-    {
-        let p = self.env.take().unwrap_or_default();
-        self.env = Some(f(p));
+    /// Set the environment credential provider slot.
+    pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
+        self.env = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the environment provider.
-    pub fn disable_env(mut self, disable: bool) -> Self {
-        if disable {
-            self.env = None;
-        } else if self.env.is_none() {
-            self.env = Some(EnvCredentialProvider::new());
-        }
+    /// Remove the environment credential provider slot.
+    pub fn no_env(mut self) -> Self {
+        self.env = None;
         self
     }
 
-    /// Configure the config-file credential provider.
-    pub fn configure_config_file<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(ConfigFileCredentialProvider) -> ConfigFileCredentialProvider,
-    {
-        let p = self.config_file.take().unwrap_or_default();
-        self.config_file = Some(f(p));
+    /// Set the config-file credential provider slot.
+    pub fn config_file(mut self, provider: ConfigFileCredentialProvider) -> Self {
+        self.config_file = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the config-file provider.
-    pub fn disable_config_file(mut self, disable: bool) -> Self {
-        if disable {
-            self.config_file = None;
-        } else if self.config_file.is_none() {
-            self.config_file = Some(ConfigFileCredentialProvider::new());
-        }
+    /// Remove the config-file credential provider slot.
+    pub fn no_config_file(mut self) -> Self {
+        self.config_file = None;
         self
     }
 
@@ -135,13 +127,9 @@ impl DefaultCredentialProviderBuilder {
         let mut chain = ProvideCredentialChain::new();
         if let Some(p) = self.env {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(EnvCredentialProvider::new());
         }
         if let Some(p) = self.config_file {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(ConfigFileCredentialProvider::new());
         }
         DefaultCredentialProvider::with_chain(chain)
     }
@@ -157,9 +145,15 @@ impl ProvideCredential for DefaultCredentialProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{ORACLE_FINGERPRINT, ORACLE_KEY_FILE, ORACLE_TENANCY, ORACLE_USER};
+    use crate::constants::{
+        ORACLE_CONFIG_FILE, ORACLE_FINGERPRINT, ORACLE_KEY_FILE, ORACLE_TENANCY, ORACLE_USER,
+    };
     use reqsign_core::{Context, StaticEnv};
+    use reqsign_file_read_tokio::TokioFileRead;
+    use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[tokio::test]
     async fn test_default_matches_new() {
@@ -193,5 +187,80 @@ mod tests {
         assert_eq!(from_default.fingerprint, from_new.fingerprint);
         assert!(from_default.expires_in.is_some());
         assert!(from_new.expires_in.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_env_removes_env_provider() {
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: Some("/tmp".into()),
+                envs: HashMap::from([
+                    (ORACLE_USER.to_string(), "test_user".to_string()),
+                    (ORACLE_TENANCY.to_string(), "test_tenancy".to_string()),
+                    (ORACLE_KEY_FILE.to_string(), "/tmp/key.pem".to_string()),
+                    (
+                        ORACLE_FINGERPRINT.to_string(),
+                        "test_fingerprint".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed");
+
+        assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_config_file_removes_config_file_provider() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time must be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("reqsign-oracle-default-provider-{unique}"));
+        let config_dir = root.join(".oci");
+        let config_path = config_dir.join("config");
+
+        fs::create_dir_all(&config_dir).expect("create config dir must succeed");
+        fs::write(
+            &config_path,
+            "[DEFAULT]\ntenancy=test_tenancy\nuser=test_user\nkey_file=/tmp/key.pem\nfingerprint=test_fingerprint\n",
+        )
+        .expect("write config file must succeed");
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: Some(root.clone()),
+                envs: HashMap::from([(
+                    ORACLE_CONFIG_FILE.to_string(),
+                    "~/.oci/config".to_string(),
+                )]),
+            });
+
+        let from_default = DefaultCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed");
+        assert!(from_default.is_some());
+
+        let without_config_file = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_config_file()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .expect("load must succeed");
+
+        assert!(without_config_file.is_none());
+
+        fs::remove_dir_all(&root).expect("cleanup temp dir must succeed");
     }
 }
