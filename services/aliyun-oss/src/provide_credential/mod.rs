@@ -18,8 +18,14 @@
 mod assume_role_with_oidc;
 pub use assume_role_with_oidc::AssumeRoleWithOidcCredentialProvider;
 
+mod credentials_uri;
+pub use credentials_uri::CredentialsUriCredentialProvider;
+
 mod default;
 pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
+
+mod ecs_ram_role;
+pub use ecs_ram_role::EcsRamRoleCredentialProvider;
 
 mod env;
 pub use env::EnvCredentialProvider;

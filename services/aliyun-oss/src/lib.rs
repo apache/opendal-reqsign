@@ -30,7 +30,8 @@
 //!
 //! ```no_run
 //! use reqsign_aliyun_oss::{
-//!     AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+//!     AssumeRoleWithOidcCredentialProvider, CredentialsUriCredentialProvider,
+//!     DefaultCredentialProvider, EcsRamRoleCredentialProvider, EnvCredentialProvider,
 //!     OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
@@ -44,10 +45,13 @@
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
-//!     // Create credential loader with the default env -> oidc chain.
+//!     // Create credential loader with the default
+//!     // env -> oss_profile -> credentials_uri -> ecs_ram_role -> oidc chain.
 //!     let loader = DefaultCredentialProvider::builder()
 //!         .env(EnvCredentialProvider::new())
 //!         .oss_profile(OssProfileCredentialProvider::new())
+//!         .credentials_uri(CredentialsUriCredentialProvider::new())
+//!         .ecs_ram_role(EcsRamRoleCredentialProvider::new())
 //!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
 //!         .build();
 //!
@@ -92,6 +96,11 @@
 //!
 //! The crate can load credentials from the OSS profile file
 //! (typically `~/.oss/credentials`).
+//!
+//! ### Credentials URI
+//!
+//! The crate can load temporary credentials from
+//! `ALIBABA_CLOUD_CREDENTIALS_URI`.
 //!
 //! ### ECS RAM Role
 //!
@@ -148,6 +157,9 @@
 //! // Optionally set ALIBABA_CLOUD_ROLE_SESSION_NAME
 //! let loader = DefaultCredentialProvider::builder()
 //!     .no_env()
+//!     .no_oss_profile()
+//!     .no_credentials_uri()
+//!     .no_ecs_ram_role()
 //!     .oidc(
 //!         AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
 //!     )
@@ -173,7 +185,6 @@
 //!
 //! Check out the examples directory:
 //! - [Basic OSS operations](examples/oss_operations.rs)
-//! - [STS authentication](examples/sts_auth.rs)
 
 mod constants;
 
