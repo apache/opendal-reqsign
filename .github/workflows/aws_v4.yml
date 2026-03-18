@@ -60,12 +60,12 @@ jobs:
       - name: Check if secrets are available
         id: check
         run: |
-          if [[ "${{ github.event_name }}" == "push" || ( "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.fork }}" == "false" ) ]]; then
+          if [[ "${{ github.event_name }}" == "push" || ( "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.fork }}" == "false" && "${{ github.actor }}" != "dependabot[bot]" ) ]]; then
             echo "has_secrets=true" >> $GITHUB_OUTPUT
-            echo "::notice::Integration tests will be executed (base repository)"
+            echo "::notice::Integration tests will be executed (base repository and non-dependabot PR)"
           else
             echo "has_secrets=false" >> $GITHUB_OUTPUT
-            echo "::warning::Integration tests will be skipped (forked repository or no secrets available)"
+            echo "::warning::Integration tests will be skipped (forked repository, dependabot PR, or no secrets available)"
           fi
 
   # Signing tests - test signature algorithm with static credentials
