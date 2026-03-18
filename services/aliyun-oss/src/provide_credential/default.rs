@@ -157,7 +157,6 @@ impl DefaultCredentialProviderBuilder {
         self.ecs_ram_role = None;
         self
     }
-
     /// Set the OIDC credential provider slot.
     pub fn oidc(mut self, provider: AssumeRoleWithOidcCredentialProvider) -> Self {
         self.oidc = Some(provider);

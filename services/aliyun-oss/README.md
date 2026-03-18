@@ -109,7 +109,6 @@ export ALIBABA_CLOUD_ECS_METADATA_SERVICE_ENDPOINT=http://127.0.0.1  # Optional 
 ```
 
 If `ALIBABA_CLOUD_ECS_METADATA` is unset, the provider resolves the role name from metadata first and then fetches the credentials.
-
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:
