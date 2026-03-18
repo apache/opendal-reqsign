@@ -39,14 +39,28 @@ impl ProvideCredential for EnvCredentialProvider {
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
         let envs = ctx.env_vars();
 
-        let access_key_id = envs.get(ALIBABA_CLOUD_ACCESS_KEY_ID);
-        let access_key_secret = envs.get(ALIBABA_CLOUD_ACCESS_KEY_SECRET);
+        let (access_key_id, access_key_secret, security_token) = if let (Some(ak), Some(sk)) = (
+            envs.get(ALIBABA_CLOUD_ACCESS_KEY_ID),
+            envs.get(ALIBABA_CLOUD_ACCESS_KEY_SECRET),
+        ) {
+            (
+                Some(ak),
+                Some(sk),
+                envs.get(ALIBABA_CLOUD_SECURITY_TOKEN).cloned(),
+            )
+        } else {
+            (
+                envs.get(OSS_ACCESS_KEY_ID),
+                envs.get(OSS_ACCESS_KEY_SECRET),
+                envs.get(OSS_SESSION_TOKEN).cloned(),
+            )
+        };
 
         match (access_key_id, access_key_secret) {
             (Some(ak), Some(sk)) => Ok(Some(Credential {
                 access_key_id: ak.clone(),
                 access_key_secret: sk.clone(),
-                security_token: envs.get(ALIBABA_CLOUD_SECURITY_TOKEN).cloned(),
+                security_token,
                 expires_in: None,
             })),
             _ => Ok(None),
@@ -129,6 +143,89 @@ mod tests {
         assert_eq!(cred.access_key_id, "test_access_key");
         assert_eq!(cred.access_key_secret, "test_secret_key");
         assert_eq!(cred.security_token, Some("test_security_token".to_string()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_env_credential_provider_supports_oss_aliases() -> anyhow::Result<()> {
+        let envs = HashMap::from([
+            (OSS_ACCESS_KEY_ID.to_string(), "oss_access_key".to_string()),
+            (
+                OSS_ACCESS_KEY_SECRET.to_string(),
+                "oss_secret_key".to_string(),
+            ),
+            (
+                OSS_SESSION_TOKEN.to_string(),
+                "oss_session_token".to_string(),
+            ),
+        ]);
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(OsEnv)
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs,
+            });
+
+        let provider = EnvCredentialProvider::new();
+        let cred = provider.provide_credential(&ctx).await?;
+        assert!(cred.is_some());
+        let cred = cred.unwrap();
+        assert_eq!(cred.access_key_id, "oss_access_key");
+        assert_eq!(cred.access_key_secret, "oss_secret_key");
+        assert_eq!(cred.security_token, Some("oss_session_token".to_string()));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_env_credential_provider_prefers_alibaba_cloud_variables() -> anyhow::Result<()> {
+        let envs = HashMap::from([
+            (
+                ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                "alibaba_access_key".to_string(),
+            ),
+            (
+                ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                "alibaba_secret_key".to_string(),
+            ),
+            (
+                ALIBABA_CLOUD_SECURITY_TOKEN.to_string(),
+                "alibaba_security_token".to_string(),
+            ),
+            (OSS_ACCESS_KEY_ID.to_string(), "oss_access_key".to_string()),
+            (
+                OSS_ACCESS_KEY_SECRET.to_string(),
+                "oss_secret_key".to_string(),
+            ),
+            (
+                OSS_SESSION_TOKEN.to_string(),
+                "oss_session_token".to_string(),
+            ),
+        ]);
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(OsEnv)
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs,
+            });
+
+        let provider = EnvCredentialProvider::new();
+        let cred = provider.provide_credential(&ctx).await?;
+        assert!(cred.is_some());
+        let cred = cred.unwrap();
+        assert_eq!(cred.access_key_id, "alibaba_access_key");
+        assert_eq!(cred.access_key_secret, "alibaba_secret_key");
+        assert_eq!(
+            cred.security_token,
+            Some("alibaba_security_token".to_string())
+        );
 
         Ok(())
     }

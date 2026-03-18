@@ -24,5 +24,8 @@ pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
 mod env;
 pub use env::EnvCredentialProvider;
 
+mod oss_profile;
+pub use oss_profile::OssProfileCredentialProvider;
+
 mod r#static;
 pub use r#static::StaticCredentialProvider;
