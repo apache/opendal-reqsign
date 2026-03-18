@@ -34,6 +34,7 @@ const CONTENT_MD5: &str = "content-md5";
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
+    region: Option<String>,
     time: Option<Timestamp>,
 }
 
@@ -42,8 +43,20 @@ impl RequestSigner {
     pub fn new(bucket: &str) -> Self {
         Self {
             bucket: bucket.to_string(),
+            region: None,
             time: None,
         }
+    }
+
+    /// Set the OSS region.
+    ///
+    /// The current V1 signing flow does not use the region, but future signing
+    /// versions such as V4 require it. Keeping this setting on the signer lets
+    /// callers wire stable configuration now without changing the construction
+    /// flow later.
+    pub fn with_region(mut self, region: impl Into<String>) -> Self {
+        self.region = Some(region.into());
+        self
     }
 
     /// Specify the signing time.
@@ -230,12 +243,9 @@ impl RequestSigner {
             }
         }
 
-        // Canonicalized OSS Headers (only for header signing)
-        if expires.is_none() {
-            let canonicalized_headers = self.canonicalize_headers(req, cred);
-            if !canonicalized_headers.is_empty() {
-                writeln!(&mut s, "{canonicalized_headers}")?;
-            }
+        let canonicalized_headers = self.canonicalize_headers(req, expires.is_none(), cred);
+        if !canonicalized_headers.is_empty() {
+            writeln!(&mut s, "{canonicalized_headers}")?;
         }
 
         // Canonicalized Resource
@@ -248,7 +258,12 @@ impl RequestSigner {
         Ok(s)
     }
 
-    fn canonicalize_headers(&self, req: &http::request::Parts, cred: &Credential) -> String {
+    fn canonicalize_headers(
+        &self,
+        req: &http::request::Parts,
+        include_implicit_security_token: bool,
+        cred: &Credential,
+    ) -> String {
         let mut oss_headers = Vec::new();
 
         // Collect x-oss-* headers
@@ -261,9 +276,12 @@ impl RequestSigner {
             }
         }
 
-        // Add security token for header signing
-        if let Some(token) = &cred.security_token {
-            oss_headers.push(("x-oss-security-token".to_string(), token.clone()));
+        // Header signing implicitly adds the security token header after the
+        // string-to-sign is computed, so it must already participate in canonicalization.
+        if include_implicit_security_token {
+            if let Some(token) = &cred.security_token {
+                oss_headers.push(("x-oss-security-token".to_string(), token.clone()));
+            }
         }
 
         // Sort by header name
@@ -438,3 +456,142 @@ static SUBRESOURCES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
         "metaQuery",
     ])
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::Request;
+
+    fn test_signer() -> RequestSigner {
+        RequestSigner::new("bucket")
+    }
+
+    fn test_credential(security_token: Option<&str>) -> Credential {
+        Credential {
+            access_key_id: "access_key_id".to_string(),
+            access_key_secret: "access_key_secret".to_string(),
+            security_token: security_token.map(ToString::to_string),
+            expires_in: None,
+        }
+    }
+
+    fn test_time() -> Timestamp {
+        Timestamp::from_second(1_717_332_000).expect("timestamp must be valid")
+    }
+
+    #[test]
+    fn test_header_string_to_sign_includes_implicit_security_token_header() {
+        let req = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+            .header("x-oss-meta-color", "blue")
+            .body(())
+            .expect("request must build");
+        let (parts, _) = req.into_parts();
+
+        let string_to_sign = test_signer()
+            .build_string_to_sign(
+                &parts,
+                &test_credential(Some("sts-token")),
+                test_time(),
+                None,
+            )
+            .expect("string to sign must build");
+
+        assert_eq!(
+            string_to_sign,
+            "GET\n\n\nSun, 02 Jun 2024 12:40:00 GMT\nx-oss-meta-color:blue\nx-oss-security-token:sts-token\n/bucket/object.txt"
+        );
+    }
+
+    #[test]
+    fn test_presign_string_to_sign_includes_x_oss_headers() {
+        let req = Request::get(
+            "https://bucket.oss-cn-beijing.aliyuncs.com/object.txt?x-oss-process=style/test",
+        )
+        .header("x-oss-meta-color", "blue")
+        .body(())
+        .expect("request must build");
+        let (parts, _) = req.into_parts();
+
+        let string_to_sign = test_signer()
+            .build_string_to_sign(
+                &parts,
+                &test_credential(None),
+                test_time(),
+                Some(Duration::from_secs(60)),
+            )
+            .expect("string to sign must build");
+
+        assert_eq!(
+            string_to_sign,
+            "GET\n\n\n1717332060\nx-oss-meta-color:blue\n/bucket/object.txt?x-oss-process=style/test"
+        );
+    }
+
+    #[test]
+    fn test_presign_string_to_sign_uses_query_security_token_without_header_duplication() {
+        let req = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+            .body(())
+            .expect("request must build");
+        let (parts, _) = req.into_parts();
+
+        let string_to_sign = test_signer()
+            .build_string_to_sign(
+                &parts,
+                &test_credential(Some("sts-token")),
+                test_time(),
+                Some(Duration::from_secs(60)),
+            )
+            .expect("string to sign must build");
+
+        assert_eq!(
+            string_to_sign,
+            "GET\n\n\n1717332060\n/bucket/object.txt?security-token=sts-token"
+        );
+        assert!(!string_to_sign.contains("x-oss-security-token:sts-token"));
+    }
+
+    #[test]
+    fn test_request_signer_accepts_region_configuration() {
+        let signer = RequestSigner::new("bucket").with_region("oss-cn-beijing");
+
+        assert_eq!(signer.bucket, "bucket");
+        assert_eq!(signer.region.as_deref(), Some("oss-cn-beijing"));
+    }
+
+    #[test]
+    fn test_region_configuration_is_noop_for_v1_signature() {
+        let credential = test_credential(None);
+        let time = Timestamp::from_second(1_700_000_000).expect("timestamp must build");
+
+        let mut without_region =
+            Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+        RequestSigner::new("bucket")
+            .with_time(time)
+            .sign_header(&mut without_region, &credential, time)
+            .expect("signing without region must succeed");
+
+        let mut with_region = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+        RequestSigner::new("bucket")
+            .with_region("oss-cn-beijing")
+            .with_time(time)
+            .sign_header(&mut with_region, &credential, time)
+            .expect("signing with region must succeed");
+
+        assert_eq!(
+            without_region.headers.get(AUTHORIZATION),
+            with_region.headers.get(AUTHORIZATION)
+        );
+        assert_eq!(
+            without_region.headers.get(DATE),
+            with_region.headers.get(DATE)
+        );
+    }
+}

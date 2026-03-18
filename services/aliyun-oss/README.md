@@ -41,6 +41,12 @@ async fn main() -> Result<()> {
     // );
 
     let signer = Signer::new(ctx, loader, RequestSigner::new("bucket"));
+    // For future signing versions, region can be configured in advance:
+    // let signer = Signer::new(
+    //     ctx,
+    //     loader,
+    //     RequestSigner::new("bucket").with_region("oss-cn-beijing"),
+    // );
 
     let mut req = http::Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
         .body(())
@@ -59,6 +65,21 @@ async fn main() -> Result<()> {
 - **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, AssumeRole, and OIDC-based STS exchange
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
+
+## Signer Configuration
+
+`RequestSigner::new("bucket")` keeps the current V1 behavior.
+
+If you want to wire configuration that future signing versions will need, you
+can set the region ahead of time:
+
+```rust
+use reqsign_aliyun_oss::RequestSigner;
+
+let signer = RequestSigner::new("bucket").with_region("oss-cn-beijing");
+```
+
+The region is currently a no-op for V1 signing.
 
 ## Credential Sources
 
@@ -134,7 +155,6 @@ Reads from `~/.aliyun/config.json` by default:
 Override the file path with `ALIBABA_CLOUD_CONFIG_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
 
 Only direct static modes are loaded in this crate today: `AK` and `StsToken`.
-
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:

@@ -26,6 +26,9 @@
 //! the complete signing process along with credential loading from various sources
 //! including environment variables, configuration files, and STS tokens.
 //!
+//! `RequestSigner` defaults to V1 signing and also accepts an optional region
+//! for future signing versions that require it.
+//!
 //! ## Quick Start
 //!
 //! ```no_run
@@ -65,6 +68,8 @@
 //!
 //!     // Create request builder
 //!     let builder = RequestSigner::new("bucket");
+//!     // For future signing versions, region can be wired now:
+//!     // let builder = RequestSigner::new("bucket").with_region("oss-cn-beijing");
 //!
 //!     // Create the signer
 //!     let signer = Signer::new(ctx, loader, builder);
