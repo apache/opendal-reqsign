@@ -17,7 +17,10 @@
 
 mod default;
 #[allow(unused_imports)]
-pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
+pub use default::{
+    DefaultCredentialProvider, DefaultCredentialProviderBuilder, EnvCredentialProvider,
+    WellKnownCredentialProvider,
+};
 
 mod file;
 pub use file::FileCredentialProvider;
