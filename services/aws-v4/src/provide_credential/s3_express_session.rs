@@ -16,11 +16,10 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, header};
 use log::debug;
-use reqsign_core::{Context, Error, ProvideCredential, Result, SignRequest};
+use reqsign_core::{Context, Error, ProvideCredential, ProvideCredentialDyn, Result, SignRequest};
 use serde::Deserialize;
 
 /// S3 Express One Zone session provider that creates session credentials.
@@ -55,7 +54,7 @@ use serde::Deserialize;
 #[derive(Debug)]
 pub struct S3ExpressSessionProvider {
     bucket: String,
-    base_provider: Box<dyn ProvideCredential<Credential = Credential>>,
+    base_provider: Box<dyn ProvideCredentialDyn<Credential = Credential>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -198,8 +197,6 @@ impl S3ExpressSessionProvider {
         Ok(region.to_string())
     }
 }
-
-#[async_trait]
 impl ProvideCredential for S3ExpressSessionProvider {
     type Credential = Credential;
 
@@ -207,7 +204,7 @@ impl ProvideCredential for S3ExpressSessionProvider {
         debug!("Creating S3 Express session for bucket: {}", self.bucket);
 
         // Get base credentials - required for S3 Express
-        let base_cred = self.base_provider.provide_credential(ctx).await?
+        let base_cred = self.base_provider.provide_credential_dyn(ctx).await?
             .ok_or_else(|| {
                 Error::unexpected(
                     "No base credentials found. S3 Express requires valid AWS credentials to create sessions"

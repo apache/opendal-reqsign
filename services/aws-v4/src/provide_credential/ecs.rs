@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use http::{HeaderValue, Method, Request, StatusCode};
 use log::debug;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
@@ -216,8 +215,6 @@ struct ECSCredentialResponse {
     token: String,
     expiration: String,
 }
-
-#[async_trait]
 impl ProvideCredential for ECSCredentialProvider {
     type Credential = Credential;
 

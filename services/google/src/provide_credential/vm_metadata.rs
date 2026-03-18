@@ -55,8 +55,6 @@ impl VmMetadataCredentialProvider {
         self
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for VmMetadataCredentialProvider {
     type Credential = Credential;
 

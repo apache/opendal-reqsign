@@ -19,7 +19,6 @@ use crate::EMPTY_STRING_SHA256;
 use crate::constants::X_AMZ_CONTENT_SHA_256;
 use crate::credential::Credential;
 use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
-use async_trait::async_trait;
 use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
@@ -153,8 +152,6 @@ impl AssumeRoleCredentialProvider {
         Some(provider)
     }
 }
-
-#[async_trait]
 impl ProvideCredential for AssumeRoleCredentialProvider {
     type Credential = Credential;
 

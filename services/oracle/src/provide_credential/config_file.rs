@@ -19,7 +19,6 @@ use crate::Credential;
 use crate::constants::{
     ORACLE_CONFIG_FILE, ORACLE_CONFIG_PATH, ORACLE_DEFAULT_PROFILE, ORACLE_PROFILE,
 };
-use async_trait::async_trait;
 use log::debug;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
@@ -40,8 +39,6 @@ impl ConfigFileCredentialProvider {
         Self {}
     }
 }
-
-#[async_trait]
 impl ProvideCredential for ConfigFileCredentialProvider {
     type Credential = Credential;
 

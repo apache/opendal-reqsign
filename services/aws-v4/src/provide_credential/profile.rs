@@ -18,7 +18,6 @@
 use crate::Credential;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::constants::*;
-use async_trait::async_trait;
 #[cfg(not(target_arch = "wasm32"))]
 use ini::Ini;
 #[cfg(not(target_arch = "wasm32"))]
@@ -202,8 +201,6 @@ impl ProfileCredentialProvider {
         }
     }
 }
-
-#[async_trait]
 impl ProvideCredential for ProfileCredentialProvider {
     type Credential = Credential;
 

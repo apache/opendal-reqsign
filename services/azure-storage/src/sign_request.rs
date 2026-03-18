@@ -17,7 +17,6 @@
 
 use crate::Credential;
 use crate::constants::*;
-use async_trait::async_trait;
 use http::request::Parts;
 use http::{HeaderValue, header};
 use log::debug;
@@ -181,8 +180,6 @@ impl Default for RequestSigner {
         Self::new()
     }
 }
-
-#[async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
@@ -677,7 +674,6 @@ fn canonicalize_resource(ctx: &mut SigningRequest, account_name: &str) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use bytes::Bytes;
     use http::Request;
     use reqsign_core::{Context, HttpSend, OsEnv};
@@ -806,8 +802,6 @@ mod tests {
 
     #[derive(Debug)]
     struct MockUserDelegationHttpSend;
-
-    #[async_trait]
     impl HttpSend for MockUserDelegationHttpSend {
         async fn http_send(
             &self,

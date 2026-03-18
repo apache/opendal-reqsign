@@ -112,8 +112,6 @@ impl DefaultCredentialProvider {
             .build()
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
@@ -139,8 +137,6 @@ impl EnvAdcCredentialProvider {
         self
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for EnvAdcCredentialProvider {
     type Credential = Credential;
 
@@ -178,8 +174,6 @@ impl WellKnownAdcCredentialProvider {
         self
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for WellKnownAdcCredentialProvider {
     type Credential = Credential;
 

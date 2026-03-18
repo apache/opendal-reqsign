@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::credential::Credential;
-use async_trait::async_trait;
 use http::HeaderValue;
 use http::header::{AUTHORIZATION, CONTENT_TYPE, DATE};
 use percent_encoding::utf8_percent_encode;
@@ -63,8 +62,6 @@ impl RequestSigner {
         self.time.unwrap_or_else(Timestamp::now)
     }
 }
-
-#[async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 

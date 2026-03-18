@@ -22,7 +22,6 @@ use crate::provide_credential::{
     AzurePipelinesCredentialProvider, ClientSecretCredentialProvider, EnvCredentialProvider,
     ImdsCredentialProvider, WorkloadIdentityCredentialProvider,
 };
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
 /// Default loader that tries multiple credential sources in order.
@@ -327,8 +326,6 @@ impl DefaultCredentialProviderBuilder {
         DefaultCredentialProvider::with_chain(chain)
     }
 }
-
-#[async_trait]
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
@@ -406,8 +403,6 @@ mod tests {
     // Mock implementations for testing
     #[derive(Debug)]
     struct MockFileRead;
-
-    #[async_trait]
     impl reqsign_core::FileRead for MockFileRead {
         async fn file_read(&self, _path: &str) -> Result<Vec<u8>> {
             Ok(Vec::new())
@@ -416,8 +411,6 @@ mod tests {
 
     #[derive(Debug)]
     struct MockHttpSend;
-
-    #[async_trait]
     impl reqsign_core::HttpSend for MockHttpSend {
         async fn http_send(
             &self,

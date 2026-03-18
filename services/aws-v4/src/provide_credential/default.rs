@@ -22,7 +22,6 @@ use crate::provide_credential::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::provide_credential::{ProcessCredentialProvider, SSOCredentialProvider};
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
 /// DefaultCredentialProvider is a loader that will try to load credential via default chains.
@@ -329,8 +328,6 @@ impl DefaultCredentialProviderBuilder {
         DefaultCredentialProvider::with_chain(chain)
     }
 }
-
-#[async_trait]
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 

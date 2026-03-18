@@ -53,8 +53,6 @@ impl AuthorizedUserCredentialProvider {
         Self { oauth2_credentials }
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for AuthorizedUserCredentialProvider {
     type Credential = Credential;
 

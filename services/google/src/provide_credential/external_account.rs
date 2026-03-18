@@ -287,8 +287,6 @@ impl ExternalAccountCredentialProvider {
         }))
     }
 }
-
-#[async_trait::async_trait]
 impl ProvideCredential for ExternalAccountCredentialProvider {
     type Credential = Credential;
 
@@ -355,8 +353,6 @@ fn resolve_template(ctx: &Context, input: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use async_trait::async_trait;
     use bytes::Bytes;
     use http::header::{AUTHORIZATION, CONTENT_TYPE};
     use reqsign_core::{Env, FileRead, HttpSend};
@@ -400,8 +396,6 @@ mod tests {
             self
         }
     }
-
-    #[async_trait]
     impl FileRead for MockFileRead {
         async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
             self.files.get(path).cloned().ok_or_else(|| {
@@ -419,8 +413,6 @@ mod tests {
         expected_subject_token_type: String,
         access_token: String,
     }
-
-    #[async_trait]
     impl HttpSend for CaptureStsHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             assert_eq!(req.method(), http::Method::POST);
@@ -480,8 +472,6 @@ mod tests {
         expected_post_url: String,
         expected_subject_token: String,
     }
-
-    #[async_trait]
     impl HttpSend for UrlThenStsHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             match *req.method() {

@@ -17,7 +17,6 @@
 
 use crate::Credential;
 use crate::constants::TENCENT_URI_ENCODE_SET;
-use async_trait::async_trait;
 use http::header::{AUTHORIZATION, DATE};
 use http::request::Parts;
 use log::debug;
@@ -53,8 +52,6 @@ impl RequestSigner {
         self
     }
 }
-
-#[async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 

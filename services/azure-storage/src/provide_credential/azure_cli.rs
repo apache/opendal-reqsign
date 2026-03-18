@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::credential::Credential;
-use async_trait::async_trait;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
@@ -79,8 +78,6 @@ struct AzureCliToken {
     #[allow(dead_code)]
     token_type: String,
 }
-
-#[async_trait]
 impl ProvideCredential for AzureCliCredentialProvider {
     type Credential = Credential;
 

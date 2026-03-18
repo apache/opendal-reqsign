@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential, Result};
 
 /// StaticCredentialProvider provides static Aliyun credentials.
@@ -46,8 +45,6 @@ impl StaticCredentialProvider {
         self
     }
 }
-
-#[async_trait]
 impl ProvideCredential for StaticCredentialProvider {
     type Credential = Credential;
 

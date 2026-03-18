@@ -16,8 +16,6 @@
 // under the License.
 
 //! Example of using ProvideCredentialChain with logging to see credential resolution
-
-use async_trait::async_trait;
 use log::{debug, info};
 use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -41,8 +39,6 @@ impl<P> LoggingProvider<P> {
         }
     }
 }
-
-#[async_trait]
 impl<P> ProvideCredential for LoggingProvider<P>
 where
     P: ProvideCredential<Credential = Credential> + Send + Sync,

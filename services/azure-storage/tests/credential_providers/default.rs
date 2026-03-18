@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use async_trait::async_trait;
 use reqsign_azure_storage::{Credential, DefaultCredentialProvider};
 use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -33,8 +32,6 @@ struct CountingProvider {
     return_credential: Option<Credential>,
     call_count: Arc<std::sync::Mutex<usize>>,
 }
-
-#[async_trait]
 impl ProvideCredential for CountingProvider {
     type Credential = Credential;
 

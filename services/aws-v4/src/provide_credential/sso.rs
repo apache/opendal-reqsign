@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
 use http::{Method, Request, StatusCode};
 use ini::Ini;
 use log::{debug, warn};
@@ -325,8 +324,6 @@ struct RoleCredentials {
     session_token: String,
     expiration: i64,
 }
-
-#[async_trait]
 impl ProvideCredential for SSOCredentialProvider {
     type Credential = Credential;
 

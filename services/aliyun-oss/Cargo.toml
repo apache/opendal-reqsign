@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-aliyun-oss"
-version = "2.0.2"
+version = "3.0.0"
 
 description = "Aliyun OSS signing implementation for reqsign."
 
@@ -28,7 +28,6 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-async-trait = { workspace = true }
 form_urlencoded = { workspace = true }
 http = { workspace = true }
 log = { workspace = true }

@@ -20,7 +20,6 @@ use crate::constants::{
     AWS_QUERY_ENCODE_SET, X_AMZ_CONTENT_SHA_256, X_AMZ_DATE, X_AMZ_S3_SESSION_TOKEN,
     X_AMZ_SECURITY_TOKEN,
 };
-use async_trait::async_trait;
 use http::request::Parts;
 use http::{HeaderValue, header};
 use log::debug;
@@ -65,8 +64,6 @@ impl RequestSigner {
         self
     }
 }
-
-#[async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
