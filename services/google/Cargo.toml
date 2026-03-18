@@ -32,7 +32,6 @@ http = { workspace = true }
 jsonwebtoken = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
-rand = { workspace = true }
 reqsign-core = { workspace = true }
 rsa = { workspace = true }
 serde = { workspace = true }
