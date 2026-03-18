@@ -19,13 +19,18 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use form_urlencoded::Serializer;
-use http::header::{ACCEPT, CONTENT_TYPE};
+use http::Method;
+use http::header::{ACCEPT, CONTENT_LENGTH, CONTENT_TYPE};
 use log::{debug, error};
+use reqsign_aws_v4::{
+    Credential as AwsCredential, EnvCredentialProvider as AwsEnvCredentialProvider,
+    RequestSigner as AwsRequestSigner,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::credential::{Credential, ExternalAccount, Token, external_account};
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, ProvideCredential, Result};
+use reqsign_core::{Context, ProvideCredential, Result, SignRequest};
 
 /// The maximum impersonated token lifetime allowed, 1 hour.
 const MAX_LIFETIME: Duration = Duration::from_secs(3600);
@@ -42,6 +47,19 @@ const EXECUTABLE_RESPONSE_VERSION: u64 = 1;
 const TOKEN_TYPE_JWT: &str = "urn:ietf:params:oauth:token-type:jwt";
 const TOKEN_TYPE_ID_TOKEN: &str = "urn:ietf:params:oauth:token-type:id_token";
 const TOKEN_TYPE_SAML2: &str = "urn:ietf:params:oauth:token-type:saml2";
+const TOKEN_TYPE_AWS4_REQUEST: &str = "urn:ietf:params:aws:token-type:aws4_request";
+const AWS_REGION: &str = "AWS_REGION";
+const AWS_DEFAULT_REGION: &str = "AWS_DEFAULT_REGION";
+#[cfg(test)]
+const AWS_ACCESS_KEY_ID: &str = "AWS_ACCESS_KEY_ID";
+#[cfg(test)]
+const AWS_SECRET_ACCESS_KEY: &str = "AWS_SECRET_ACCESS_KEY";
+#[cfg(test)]
+const AWS_SESSION_TOKEN: &str = "AWS_SESSION_TOKEN";
+const AWS_EC2_METADATA_DISABLED: &str = "AWS_EC2_METADATA_DISABLED";
+const AWS_IMDSV2_TOKEN_HEADER: &str = "x-aws-ec2-metadata-token";
+const AWS_IMDSV2_TTL_HEADER: &str = "x-aws-ec2-metadata-token-ttl-seconds";
+const AWS_IMDSV2_TTL_SECONDS: &str = "300";
 
 /// STS token response.
 #[derive(Deserialize)]
@@ -88,6 +106,37 @@ struct ExecutableSubjectToken {
     expires_at: Option<Timestamp>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct AwsMetadataCredentialResponse {
+    #[serde(default)]
+    access_key_id: String,
+    #[serde(default)]
+    secret_access_key: String,
+    #[serde(default)]
+    token: Option<String>,
+    #[serde(default)]
+    expiration: Option<String>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Serialize)]
+struct AwsSignedRequest {
+    url: String,
+    method: String,
+    headers: Vec<AwsSignedHeader>,
+    body: String,
+}
+
+#[derive(Serialize)]
+struct AwsSignedHeader {
+    key: String,
+    value: String,
+}
+
 /// ExternalAccountCredentialProvider exchanges external account credentials for access tokens.
 #[derive(Debug, Clone)]
 pub struct ExternalAccountCredentialProvider {
@@ -119,6 +168,7 @@ impl ExternalAccountCredentialProvider {
 
     async fn load_oidc_token(&self, ctx: &Context) -> Result<String> {
         match &self.external_account.credential_source {
+            external_account::Source::Aws(source) => self.load_aws_subject_token(ctx, source).await,
             external_account::Source::File(source) => {
                 self.load_file_sourced_token(ctx, source).await
             }
@@ -194,6 +244,293 @@ impl ExternalAccountCredentialProvider {
 
     fn resolved_subject_token_type(&self, ctx: &Context) -> Result<String> {
         resolve_template(ctx, &self.external_account.subject_token_type)
+    }
+
+    fn validate_aws_source(
+        &self,
+        ctx: &Context,
+        source: &external_account::AwsSource,
+    ) -> Result<ResolvedAwsSource> {
+        if source.environment_id != "aws1" {
+            return Err(reqsign_core::Error::config_invalid(format!(
+                "unsupported AWS external_account environment_id: {}",
+                source.environment_id
+            )));
+        }
+
+        let region_url = source
+            .region_url
+            .as_deref()
+            .map(|v| resolve_template(ctx, v))
+            .transpose()?;
+        let url = source
+            .url
+            .as_deref()
+            .map(|v| resolve_template(ctx, v))
+            .transpose()?;
+        let regional_cred_verification_url =
+            resolve_template(ctx, &source.regional_cred_verification_url)?;
+        let imdsv2_session_token_url = source
+            .imdsv2_session_token_url
+            .as_deref()
+            .map(|v| resolve_template(ctx, v))
+            .transpose()?;
+
+        for (field, value) in [
+            ("credential_source.region_url", region_url.as_deref()),
+            ("credential_source.url", url.as_deref()),
+            (
+                "credential_source.imdsv2_session_token_url",
+                imdsv2_session_token_url.as_deref(),
+            ),
+        ] {
+            if let Some(value) = value {
+                validate_aws_metadata_url(field, value)?;
+            }
+        }
+
+        Ok(ResolvedAwsSource {
+            region_url,
+            url,
+            regional_cred_verification_url,
+            imdsv2_session_token_url,
+        })
+    }
+
+    async fn load_aws_subject_token(
+        &self,
+        ctx: &Context,
+        source: &external_account::AwsSource,
+    ) -> Result<String> {
+        let subject_token_type = self.resolved_subject_token_type(ctx)?;
+        if subject_token_type != TOKEN_TYPE_AWS4_REQUEST {
+            return Err(reqsign_core::Error::config_invalid(format!(
+                "AWS credential_source requires subject_token_type {TOKEN_TYPE_AWS4_REQUEST}, got {subject_token_type}"
+            )));
+        }
+
+        let source = self.validate_aws_source(ctx, source)?;
+        let metadata_token = self.load_aws_imdsv2_token_if_needed(ctx, &source).await?;
+        let region = self
+            .resolve_aws_region(ctx, &source, metadata_token.as_deref())
+            .await?;
+        let credential = self
+            .resolve_aws_credential(ctx, &source, metadata_token.as_deref())
+            .await?;
+        self.build_aws_subject_token(ctx, &source, &region, credential)
+            .await
+    }
+
+    async fn resolve_aws_region(
+        &self,
+        ctx: &Context,
+        source: &ResolvedAwsSource,
+        metadata_token: Option<&str>,
+    ) -> Result<String> {
+        if let Some(region) = ctx
+            .env_var(AWS_REGION)
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                ctx.env_var(AWS_DEFAULT_REGION)
+                    .filter(|v| !v.trim().is_empty())
+            })
+        {
+            return Ok(region);
+        }
+
+        let region_url = source.region_url.as_deref().ok_or_else(|| {
+            reqsign_core::Error::config_invalid(
+                "credential_source.region_url is required when AWS region env vars are absent",
+            )
+        })?;
+        let zone = fetch_aws_metadata_text(ctx, region_url, metadata_token).await?;
+        availability_zone_to_region(zone.trim())
+    }
+
+    async fn resolve_aws_credential(
+        &self,
+        ctx: &Context,
+        source: &ResolvedAwsSource,
+        metadata_token: Option<&str>,
+    ) -> Result<AwsCredential> {
+        if let Some(credential) = AwsEnvCredentialProvider::new()
+            .provide_credential(ctx)
+            .await?
+        {
+            return Ok(credential);
+        }
+
+        let credentials_url = source.url.as_deref().ok_or_else(|| {
+            reqsign_core::Error::config_invalid(
+                "credential_source.url is required when AWS credential env vars are absent",
+            )
+        })?;
+        let role_name = fetch_aws_metadata_text(ctx, credentials_url, metadata_token).await?;
+        let role_name = role_name.trim();
+        if role_name.is_empty() {
+            return Err(reqsign_core::Error::credential_invalid(
+                "AWS metadata credentials role name is empty",
+            ));
+        }
+
+        let credentials_url = format!("{}/{}", credentials_url.trim_end_matches('/'), role_name);
+        let content = fetch_aws_metadata_text(ctx, &credentials_url, metadata_token).await?;
+        let response: AwsMetadataCredentialResponse = serde_json::from_str(content.trim())
+            .map_err(|e| {
+                reqsign_core::Error::unexpected("failed to parse AWS metadata credentials response")
+                    .with_source(e)
+            })?;
+
+        if let Some(code) = response.code.as_deref() {
+            if code != "Success" {
+                return Err(reqsign_core::Error::credential_invalid(format!(
+                    "AWS metadata credentials response returned [{}] {}",
+                    code,
+                    response.message.as_deref().unwrap_or_default()
+                )));
+            }
+        }
+        if response.access_key_id.is_empty() || response.secret_access_key.is_empty() {
+            return Err(reqsign_core::Error::credential_invalid(
+                "AWS metadata credentials response is missing access key id or secret access key",
+            ));
+        }
+
+        Ok(AwsCredential {
+            access_key_id: response.access_key_id,
+            secret_access_key: response.secret_access_key,
+            session_token: response.token.filter(|v| !v.trim().is_empty()),
+            expires_in: response
+                .expiration
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(|v| {
+                    v.parse().map_err(|e| {
+                        reqsign_core::Error::unexpected(
+                            "failed to parse AWS metadata credential expiration",
+                        )
+                        .with_source(e)
+                    })
+                })
+                .transpose()?,
+        })
+    }
+
+    async fn load_aws_imdsv2_token_if_needed(
+        &self,
+        ctx: &Context,
+        source: &ResolvedAwsSource,
+    ) -> Result<Option<String>> {
+        let needs_metadata_region = ctx
+            .env_var(AWS_REGION)
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                ctx.env_var(AWS_DEFAULT_REGION)
+                    .filter(|v| !v.trim().is_empty())
+            })
+            .is_none()
+            && source.region_url.is_some();
+        let needs_metadata_cred = AwsEnvCredentialProvider::new()
+            .provide_credential(ctx)
+            .await?
+            .is_none()
+            && source.url.is_some();
+
+        let Some(token_url) = source.imdsv2_session_token_url.as_deref() else {
+            return Ok(None);
+        };
+        if !needs_metadata_region && !needs_metadata_cred {
+            return Ok(None);
+        }
+        if ctx
+            .env_var(AWS_EC2_METADATA_DISABLED)
+            .as_deref()
+            .is_some_and(|v| v.eq_ignore_ascii_case("true"))
+        {
+            return Err(reqsign_core::Error::config_invalid(
+                "AWS metadata access is disabled by AWS_EC2_METADATA_DISABLED",
+            ));
+        }
+        let req = http::Request::builder()
+            .method(Method::PUT)
+            .uri(token_url)
+            .header(CONTENT_LENGTH, "0")
+            .header(AWS_IMDSV2_TTL_HEADER, AWS_IMDSV2_TTL_SECONDS)
+            .body(Vec::<u8>::new().into())
+            .map_err(|e| {
+                reqsign_core::Error::unexpected("failed to build AWS IMDSv2 token request")
+                    .with_source(e)
+            })?;
+        let resp = ctx.http_send_as_string(req).await?;
+        if resp.status() != http::StatusCode::OK {
+            return Err(reqsign_core::Error::unexpected(format!(
+                "failed to fetch AWS IMDSv2 session token: {}",
+                resp.body()
+            )));
+        }
+        let token = resp.into_body();
+        if token.trim().is_empty() {
+            return Err(reqsign_core::Error::credential_invalid(
+                "AWS IMDSv2 session token is empty",
+            ));
+        }
+        Ok(Some(token))
+    }
+
+    async fn build_aws_subject_token(
+        &self,
+        ctx: &Context,
+        source: &ResolvedAwsSource,
+        region: &str,
+        credential: AwsCredential,
+    ) -> Result<String> {
+        let audience = resolve_template(ctx, &self.external_account.audience)?;
+        let verification_url = source
+            .regional_cred_verification_url
+            .replace("{region}", region);
+
+        let req = http::Request::builder()
+            .method(Method::POST)
+            .uri(&verification_url)
+            .header("x-goog-cloud-target-resource", audience)
+            .body(())
+            .map_err(|e| {
+                reqsign_core::Error::unexpected("failed to build AWS subject token request")
+                    .with_source(e)
+            })?;
+        let (mut parts, _body) = req.into_parts();
+        AwsRequestSigner::new("sts", region)
+            .sign_request(ctx, &mut parts, Some(&credential), None)
+            .await?;
+
+        let mut headers = parts
+            .headers
+            .iter()
+            .map(|(key, value)| {
+                Ok(AwsSignedHeader {
+                    key: aws_subject_header_name(key.as_str()),
+                    value: value
+                        .to_str()
+                        .map_err(|e| {
+                            reqsign_core::Error::unexpected("AWS signed header is not valid UTF-8")
+                                .with_source(e)
+                        })?
+                        .to_string(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        headers.sort_by(|a, b| a.key.cmp(&b.key));
+
+        serde_json::to_string(&AwsSignedRequest {
+            url: parts.uri.to_string(),
+            method: parts.method.as_str().to_string(),
+            headers,
+            body: String::new(),
+        })
+        .map_err(|e| {
+            reqsign_core::Error::unexpected("failed to serialize AWS subject token").with_source(e)
+        })
     }
 
     fn build_executable_env(
@@ -661,6 +998,77 @@ fn parse_impersonated_service_account_email(url: &str) -> Result<String> {
     Ok(email.into_owned())
 }
 
+struct ResolvedAwsSource {
+    region_url: Option<String>,
+    url: Option<String>,
+    regional_cred_verification_url: String,
+    imdsv2_session_token_url: Option<String>,
+}
+
+fn validate_aws_metadata_url(field: &str, value: &str) -> Result<()> {
+    let uri: http::Uri = value.parse().map_err(|e| {
+        reqsign_core::Error::config_invalid(format!("{field} is not a valid URI")).with_source(e)
+    })?;
+    let host = uri.host().ok_or_else(|| {
+        reqsign_core::Error::config_invalid(format!("{field} is missing a host: {value}"))
+    })?;
+    if !matches!(host, "169.254.169.254" | "fd00:ec2::254") {
+        return Err(reqsign_core::Error::config_invalid(format!(
+            "{field} host must be 169.254.169.254 or fd00:ec2::254, got {host}"
+        )));
+    }
+    Ok(())
+}
+
+fn availability_zone_to_region(zone: &str) -> Result<String> {
+    let mut chars = zone.chars();
+    let last = chars
+        .next_back()
+        .ok_or_else(|| reqsign_core::Error::credential_invalid("AWS availability zone is empty"))?;
+    if !last.is_ascii_alphabetic() {
+        return Err(reqsign_core::Error::credential_invalid(format!(
+            "AWS availability zone must end with an alphabetic suffix, got {zone}"
+        )));
+    }
+    let region = chars.as_str();
+    if region.is_empty() {
+        return Err(reqsign_core::Error::credential_invalid(format!(
+            "failed to derive AWS region from availability zone {zone}"
+        )));
+    }
+    Ok(region.to_string())
+}
+
+async fn fetch_aws_metadata_text(
+    ctx: &Context,
+    url: &str,
+    session_token: Option<&str>,
+) -> Result<String> {
+    let mut req = http::Request::builder().method(Method::GET).uri(url);
+    if let Some(token) = session_token {
+        req = req.header(AWS_IMDSV2_TOKEN_HEADER, token);
+    }
+    let req = req.body(Vec::<u8>::new().into()).map_err(|e| {
+        reqsign_core::Error::unexpected("failed to build AWS metadata request").with_source(e)
+    })?;
+    let resp = ctx.http_send_as_string(req).await?;
+    if resp.status() != http::StatusCode::OK {
+        return Err(reqsign_core::Error::unexpected(format!(
+            "AWS metadata request to {url} failed: {}",
+            resp.body()
+        )));
+    }
+    Ok(resp.into_body())
+}
+
+fn aws_subject_header_name(name: &str) -> String {
+    if name.eq_ignore_ascii_case("authorization") {
+        "Authorization".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 async fn execute_command_with_env(
     ctx: &Context,
     command: &str,
@@ -952,6 +1360,80 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct AwsMetadataHttpSend {
+        imdsv2_session_token_url: String,
+        region_url: String,
+        credentials_url: String,
+        session_token: String,
+        region_response: String,
+        role_name: String,
+    }
+
+    impl HttpSend for AwsMetadataHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            let uri = req.uri().to_string();
+            match (req.method().clone(), uri.as_str()) {
+                (Method::PUT, url) if url == self.imdsv2_session_token_url => {
+                    Ok(http::Response::builder()
+                        .status(http::StatusCode::OK)
+                        .body(self.session_token.clone().into_bytes().into())
+                        .expect("response must build"))
+                }
+                (Method::GET, url) if url == self.region_url => {
+                    assert_eq!(
+                        req.headers()
+                            .get(AWS_IMDSV2_TOKEN_HEADER)
+                            .expect("imdsv2 token header must exist")
+                            .to_str()
+                            .expect("imdsv2 token header must be valid"),
+                        self.session_token
+                    );
+                    Ok(http::Response::builder()
+                        .status(http::StatusCode::OK)
+                        .body(self.region_response.clone().into_bytes().into())
+                        .expect("response must build"))
+                }
+                (Method::GET, url) if url == self.credentials_url => {
+                    assert_eq!(
+                        req.headers()
+                            .get(AWS_IMDSV2_TOKEN_HEADER)
+                            .expect("imdsv2 token header must exist")
+                            .to_str()
+                            .expect("imdsv2 token header must be valid"),
+                        self.session_token
+                    );
+                    Ok(http::Response::builder()
+                        .status(http::StatusCode::OK)
+                        .body(self.role_name.clone().into_bytes().into())
+                        .expect("response must build"))
+                }
+                (Method::GET, url)
+                    if url == format!("{}/{}", self.credentials_url, self.role_name) =>
+                {
+                    assert_eq!(
+                        req.headers()
+                            .get(AWS_IMDSV2_TOKEN_HEADER)
+                            .expect("imdsv2 token header must exist")
+                            .to_str()
+                            .expect("imdsv2 token header must be valid"),
+                        self.session_token
+                    );
+                    let body = serde_json::json!({
+                        "AccessKeyId": "metadata-access-key",
+                        "SecretAccessKey": "metadata-secret-key",
+                        "Token": "metadata-session-token"
+                    });
+                    Ok(http::Response::builder()
+                        .status(http::StatusCode::OK)
+                        .body(serde_json::to_vec(&body).expect("json must encode").into())
+                        .expect("response must build"))
+                }
+                _ => panic!("unexpected AWS metadata request: {} {}", req.method(), uri),
+            }
+        }
+    }
+
     #[test]
     fn test_resolve_template() {
         let ctx = Context::new().with_env(MockEnv::default().with_var("FOO", "bar"));
@@ -1033,6 +1515,160 @@ mod tests {
         assert!(cred.has_token());
         assert!(cred.has_valid_token());
         Ok(())
+    }
+
+    fn aws_source() -> external_account::AwsSource {
+        external_account::AwsSource {
+            environment_id: "aws1".to_string(),
+            region_url: Some(
+                "http://169.254.169.254/latest/meta-data/placement/availability-zone".to_string(),
+            ),
+            url: Some(
+                "http://169.254.169.254/latest/meta-data/iam/security-credentials".to_string(),
+            ),
+            regional_cred_verification_url:
+                "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15"
+                    .to_string(),
+            imdsv2_session_token_url: Some("http://169.254.169.254/latest/api/token".to_string()),
+        }
+    }
+
+    fn aws_account(source: external_account::AwsSource) -> ExternalAccount {
+        ExternalAccount {
+            audience:
+                "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/pool/providers/provider"
+                    .to_string(),
+            subject_token_type: TOKEN_TYPE_AWS4_REQUEST.to_string(),
+            token_url: "https://sts.googleapis.com/v1/token".to_string(),
+            credential_source: external_account::Source::Aws(source),
+            service_account_impersonation_url: None,
+            service_account_impersonation: None,
+        }
+    }
+
+    fn parse_aws_subject_token(token: &str) -> serde_json::Value {
+        serde_json::from_str(token).expect("aws subject token must be valid json")
+    }
+
+    fn header_value<'a>(headers: &'a [serde_json::Value], key: &str) -> Option<&'a str> {
+        headers.iter().find_map(|entry| {
+            let current = entry.get("key")?.as_str()?;
+            if current.eq_ignore_ascii_case(key) {
+                entry.get("value")?.as_str()
+            } else {
+                None
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn test_aws_source_uses_env_region_and_credentials() -> Result<()> {
+        let env = MockEnv::default()
+            .with_var(AWS_REGION, "us-east-1")
+            .with_var(AWS_ACCESS_KEY_ID, "test-access-key")
+            .with_var(AWS_SECRET_ACCESS_KEY, "test-secret-key")
+            .with_var(AWS_SESSION_TOKEN, "test-session-token");
+        let ctx = Context::new().with_env(env);
+        let provider = ExternalAccountCredentialProvider::new(aws_account(aws_source()));
+
+        let token = provider.load_oidc_token(&ctx).await?;
+        let json = parse_aws_subject_token(&token);
+        assert_eq!(json.get("method").and_then(|v| v.as_str()), Some("POST"));
+        assert_eq!(json.get("body").and_then(|v| v.as_str()), Some(""));
+        assert_eq!(
+            json.get("url").and_then(|v| v.as_str()),
+            Some(
+                "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15",
+            )
+        );
+        let headers = json
+            .get("headers")
+            .and_then(|v| v.as_array())
+            .expect("headers must be an array");
+        assert_eq!(
+            header_value(headers, "x-goog-cloud-target-resource"),
+            Some(
+                "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/pool/providers/provider"
+            )
+        );
+        assert_eq!(
+            header_value(headers, "x-amz-security-token"),
+            Some("test-session-token")
+        );
+        assert!(
+            header_value(headers, "Authorization")
+                .expect("authorization header must exist")
+                .starts_with("AWS4-HMAC-SHA256 Credential=test-access-key/")
+        );
+        assert!(header_value(headers, "x-amz-date").is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_aws_source_falls_back_to_metadata_with_imdsv2() -> Result<()> {
+        let http = AwsMetadataHttpSend {
+            imdsv2_session_token_url: "http://169.254.169.254/latest/api/token".to_string(),
+            region_url: "http://169.254.169.254/latest/meta-data/placement/availability-zone"
+                .to_string(),
+            credentials_url: "http://169.254.169.254/latest/meta-data/iam/security-credentials"
+                .to_string(),
+            session_token: "imdsv2-token".to_string(),
+            region_response: "us-west-2b".to_string(),
+            role_name: "test-role".to_string(),
+        };
+        let ctx = Context::new().with_http_send(http);
+        let provider = ExternalAccountCredentialProvider::new(aws_account(aws_source()));
+
+        let token = provider.load_oidc_token(&ctx).await?;
+        let json = parse_aws_subject_token(&token);
+        assert_eq!(
+            json.get("url").and_then(|v| v.as_str()),
+            Some(
+                "https://sts.us-west-2.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15",
+            )
+        );
+        assert_eq!(json.get("body").and_then(|v| v.as_str()), Some(""));
+        let headers = json
+            .get("headers")
+            .and_then(|v| v.as_array())
+            .expect("headers must be an array");
+        assert_eq!(
+            header_value(headers, "x-amz-security-token"),
+            Some("metadata-session-token")
+        );
+        assert!(
+            header_value(headers, "Authorization")
+                .expect("authorization header must exist")
+                .starts_with("AWS4-HMAC-SHA256 Credential=metadata-access-key/")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_aws_source_rejects_unsupported_environment_id() {
+        let mut source = aws_source();
+        source.environment_id = "aws2".to_string();
+
+        let provider = ExternalAccountCredentialProvider::new(aws_account(source));
+        let err = provider
+            .load_oidc_token(&Context::new())
+            .await
+            .expect_err("unsupported AWS environment_id must fail");
+        assert!(err.to_string().contains("aws2"));
+    }
+
+    #[tokio::test]
+    async fn test_aws_source_rejects_invalid_metadata_host() {
+        let mut source = aws_source();
+        source.region_url =
+            Some("http://example.com/latest/meta-data/placement/availability-zone".to_string());
+
+        let provider = ExternalAccountCredentialProvider::new(aws_account(source));
+        let err = provider
+            .load_oidc_token(&Context::new())
+            .await
+            .expect_err("invalid metadata host must fail");
+        assert!(err.to_string().contains("169.254.169.254"));
     }
 
     fn executable_source(
