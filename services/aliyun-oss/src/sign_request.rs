@@ -67,6 +67,13 @@ static OSS_V2_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
+static OSS_V2_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    .remove(b'+');
+
 const OSS_V2_DEFAULT_ADDITIONAL_HEADERS: &[&str] = &[IF_MODIFIED_SINCE, RANGE];
 
 /// SigningVersion controls which OSS signing algorithm the signer uses.
@@ -196,8 +203,13 @@ impl RequestSigner {
 
         let additional_headers = self.v2_additional_headers(req, false);
         let query_pairs = self.query_pairs(req);
-        let string_to_sign =
-            self.build_v2_string_to_sign(req, &query_pairs, &date, &additional_headers)?;
+        let string_to_sign = self.build_v2_string_to_sign(
+            req,
+            &query_pairs,
+            query_pairs.len(),
+            &date,
+            &additional_headers,
+        )?;
         let signature =
             base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
 
@@ -230,6 +242,7 @@ impl RequestSigner {
         let expiration_time = (signing_time + expires).as_second().to_string();
         let additional_headers = self.v2_additional_headers(req, true);
         let mut query_pairs = self.query_pairs(req);
+        let existing_query_count = query_pairs.len();
         query_pairs.push((
             X_OSS_SIGNATURE_VERSION.to_string(),
             OSS_V2_ALGORITHM.to_string(),
@@ -246,13 +259,18 @@ impl RequestSigner {
             query_pairs.push(("security-token".to_string(), token.clone()));
         }
 
-        let string_to_sign =
-            self.build_v2_string_to_sign(req, &query_pairs, &expiration_time, &additional_headers)?;
+        let string_to_sign = self.build_v2_string_to_sign(
+            req,
+            &query_pairs,
+            existing_query_count,
+            &expiration_time,
+            &additional_headers,
+        )?;
         let signature =
             base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
         query_pairs.push((X_OSS_SIGNATURE.to_string(), signature));
 
-        self.apply_query_pairs(req, &query_pairs)
+        self.apply_query_pairs(req, &query_pairs, existing_query_count)
     }
 
     fn sign_header(
@@ -359,6 +377,7 @@ impl RequestSigner {
         &self,
         req: &http::request::Parts,
         query_pairs: &[(String, String)],
+        existing_query_count: usize,
         date_or_expires: &str,
         additional_headers: &[String],
     ) -> Result<String> {
@@ -390,7 +409,7 @@ impl RequestSigner {
         write!(
             &mut s,
             "{}",
-            self.v2_canonicalized_resource(req, query_pairs)?
+            self.v2_canonicalized_resource(req, query_pairs, existing_query_count)?
         )?;
 
         Ok(s)
@@ -821,6 +840,7 @@ impl RequestSigner {
         &self,
         req: &http::request::Parts,
         query_pairs: &[(String, String)],
+        existing_query_count: usize,
     ) -> Result<String> {
         let decoded_path = percent_decode_str(req.uri.path())
             .decode_utf8()
@@ -833,7 +853,7 @@ impl RequestSigner {
         };
 
         let mut resource = utf8_percent_encode(&resource_path, &OSS_V2_ENCODE_SET).to_string();
-        let canonical_query = self.v2_canonicalized_query(query_pairs);
+        let canonical_query = self.v2_canonicalized_query(query_pairs, existing_query_count);
         if !canonical_query.is_empty() {
             resource.push('?');
             resource.push_str(&canonical_query);
@@ -842,15 +862,20 @@ impl RequestSigner {
         Ok(resource)
     }
 
-    fn v2_canonicalized_query(&self, query_pairs: &[(String, String)]) -> String {
+    fn v2_canonicalized_query(
+        &self,
+        query_pairs: &[(String, String)],
+        existing_query_count: usize,
+    ) -> String {
         let mut encoded_pairs = query_pairs
             .iter()
             .enumerate()
             .map(|(idx, (key, value))| {
+                let preserve_plus = idx < existing_query_count;
                 (
                     idx,
-                    utf8_percent_encode(key, &OSS_V2_ENCODE_SET).to_string(),
-                    utf8_percent_encode(value, &OSS_V2_ENCODE_SET).to_string(),
+                    self.v2_encode_query_component(key, preserve_plus),
+                    self.v2_encode_query_component(value, preserve_plus),
                 )
             })
             .collect::<Vec<_>>();
@@ -872,27 +897,49 @@ impl RequestSigner {
     fn query_pairs(&self, req: &http::request::Parts) -> Vec<(String, String)> {
         req.uri
             .query()
-            .map(|query| {
-                form_urlencoded::parse(query.as_bytes())
-                    .map(|(key, value)| (key.into_owned(), value.into_owned()))
-                    .collect()
-            })
+            .map(|query| self.parse_v2_query_pairs(query))
             .unwrap_or_default()
+    }
+
+    fn parse_v2_query_pairs(&self, query: &str) -> Vec<(String, String)> {
+        query
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| {
+                if let Some((key, value)) = pair.split_once('=') {
+                    (
+                        percent_decode_str(key).decode_utf8_lossy().into_owned(),
+                        percent_decode_str(value).decode_utf8_lossy().into_owned(),
+                    )
+                } else {
+                    (
+                        percent_decode_str(pair).decode_utf8_lossy().into_owned(),
+                        String::new(),
+                    )
+                }
+            })
+            .collect()
     }
 
     fn apply_query_pairs(
         &self,
         req: &mut http::request::Parts,
         query_pairs: &[(String, String)],
+        existing_query_count: usize,
     ) -> Result<()> {
         let query_string = query_pairs
             .iter()
-            .map(|(key, value)| {
-                let key = utf8_percent_encode(key, &OSS_V2_ENCODE_SET).to_string();
+            .enumerate()
+            .map(|(idx, (key, value))| {
+                let preserve_plus = idx < existing_query_count;
+                let key = self.v2_encode_query_component(key, preserve_plus);
                 if value.is_empty() {
                     key
                 } else {
-                    format!("{key}={}", utf8_percent_encode(value, &OSS_V2_ENCODE_SET))
+                    format!(
+                        "{key}={}",
+                        self.v2_encode_query_component(value, preserve_plus)
+                    )
                 }
             })
             .collect::<Vec<_>>()
@@ -909,6 +956,14 @@ impl RequestSigner {
         req.uri = http::Uri::from_parts(parts)?;
 
         Ok(())
+    }
+
+    fn v2_encode_query_component(&self, value: &str, preserve_plus: bool) -> String {
+        if preserve_plus {
+            utf8_percent_encode(value, &OSS_V2_QUERY_ENCODE_SET).to_string()
+        } else {
+            utf8_percent_encode(value, &OSS_V2_ENCODE_SET).to_string()
+        }
     }
 
     fn canonicalize_headers(
@@ -1286,6 +1341,7 @@ mod tests {
             .build_v2_string_to_sign(
                 &req,
                 &signer.query_pairs(&req),
+                signer.query_pairs(&req).len(),
                 "Wed, 15 Feb 2017 09:37:11 GMT",
                 &additional_headers,
             )
@@ -1354,6 +1410,7 @@ mod tests {
             .build_v2_string_to_sign(
                 &req,
                 &signer.query_pairs(&req),
+                signer.query_pairs(&req).len(),
                 "Thu, 16 Feb 2017 02:09:39 GMT",
                 &additional_headers,
             )
@@ -1417,7 +1474,7 @@ mod tests {
         ));
         let additional_headers = signer.v2_additional_headers(&req, true);
         let string_to_sign = signer
-            .build_v2_string_to_sign(&req, &query_pairs, &expiration_time, &additional_headers)
+            .build_v2_string_to_sign(&req, &query_pairs, 0, &expiration_time, &additional_headers)
             .expect("string to sign must build");
         assert_eq!(
             string_to_sign,
@@ -1468,7 +1525,13 @@ mod tests {
         .into_parts()
         .0;
         let string_to_sign = signer
-            .build_v2_string_to_sign(&req, &signer.query_pairs(&req), "1487211619", &[])
+            .build_v2_string_to_sign(
+                &req,
+                &signer.query_pairs(&req),
+                signer.query_pairs(&req).len(),
+                "1487211619",
+                &[],
+            )
             .expect("string to sign must build");
         assert_eq!(
             string_to_sign,
@@ -1492,6 +1555,76 @@ mod tests {
                 "extra-query=1&x-oss-signature-version=OSS2&x-oss-expires=1487211619&x-oss-access-key-id=44CF9590006BF252F707&x-oss-signature=wsARTPqvZdbdPjYpZfDZ%2FjisUaacYq7gGOdB3f1BgTE%3D"
             )
         );
+    }
+
+    #[test]
+    fn test_v2_presign_preserves_literal_plus_in_existing_query() {
+        let credential = Credential {
+            access_key_id: "44CF9590006BF252F707".to_string(),
+            access_key_secret: "OtxrzxIsfpFjA7SwPzILwy8Bw21TLhquhboDYROV".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_487_151_431).expect("timestamp must build");
+        let signer = RequestSigner::new("oss-example")
+            .with_signing_version(SigningVersion::V2)
+            .with_time(time);
+
+        let req = http::Request::get(
+            "https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson?response-content-disposition=attachment+filename",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+        assert_eq!(
+            signer.query_pairs(&req),
+            vec![(
+                "response-content-disposition".to_string(),
+                "attachment+filename".to_string()
+            )]
+        );
+
+        let expiration_time = "1487152431".to_string();
+        let mut query_pairs = signer.query_pairs(&req);
+        query_pairs.push((
+            X_OSS_SIGNATURE_VERSION.to_string(),
+            OSS_V2_ALGORITHM.to_string(),
+        ));
+        query_pairs.push((X_OSS_EXPIRES.to_string(), expiration_time.clone()));
+        query_pairs.push((
+            X_OSS_ACCESS_KEY_ID.to_string(),
+            credential.access_key_id.clone(),
+        ));
+        let string_to_sign = signer
+            .build_v2_string_to_sign(&req, &query_pairs, 1, &expiration_time, &[])
+            .expect("string to sign must build");
+        assert!(
+            string_to_sign
+                .contains("response-content-disposition=attachment+filename&x-oss-access-key-id=")
+        );
+        assert!(!string_to_sign.contains("attachment%20filename"));
+
+        let mut signed_req = http::Request::get(
+            "https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson?response-content-disposition=attachment+filename",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+        signer
+            .sign_v2_query(
+                &mut signed_req,
+                &credential,
+                time,
+                Duration::from_secs(1_000),
+            )
+            .expect("v2 presign must succeed");
+
+        let query = signed_req.uri.query().expect("query must exist");
+        assert!(query.contains("response-content-disposition=attachment+filename"));
+        assert!(!query.contains("attachment%20filename"));
     }
 
     #[tokio::test]
