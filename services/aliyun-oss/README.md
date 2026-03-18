@@ -10,11 +10,11 @@ This crate provides signing support for Alibaba Cloud Object Storage Service (OS
 
 ```rust
 use reqsign_aliyun_oss::{
-    AssumeRoleWithOidcCredentialProvider, CredentialsUriCredentialProvider,
-    AssumeRoleWithOidcCredentialProvider, ConfigFileCredentialProvider,
-    CredentialsFileCredentialProvider, DefaultCredentialProvider,
-    EcsRamRoleCredentialProvider, EnvCredentialProvider,
-    OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
+    AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
+    ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
+    CredentialsUriCredentialProvider, DefaultCredentialProvider,
+    EcsRamRoleCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
+    RequestSigner, SigningVersion, StaticCredentialProvider,
 };
 use reqsign_core::{Context, Result, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -27,6 +27,7 @@ async fn main() -> Result<()> {
         .with_http_send(ReqwestHttpSend::default());
 
     let loader = DefaultCredentialProvider::builder()
+        .assume_role(AssumeRoleCredentialProvider::new())
         .env(EnvCredentialProvider::new())
         .oss_profile(OssProfileCredentialProvider::new())
         .credentials_file(CredentialsFileCredentialProvider::new())
@@ -43,11 +44,13 @@ async fn main() -> Result<()> {
     // );
 
     let signer = Signer::new(ctx, loader, RequestSigner::new("bucket"));
-    // For future signing versions, region can be configured in advance:
+    // Or opt into V4 signing:
     // let signer = Signer::new(
     //     ctx,
     //     loader,
-    //     RequestSigner::new("bucket").with_region("oss-cn-beijing"),
+    //     RequestSigner::new("bucket")
+    //         .with_region("cn-beijing")
+    //         .with_signing_version(SigningVersion::V4),
     // );
 
     let mut req = http::Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
@@ -63,8 +66,9 @@ async fn main() -> Result<()> {
 
 ## Features
 
-- **HMAC-SHA1 Signing**: Complete implementation of Aliyun's signing algorithm
-- **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, credentials URI, ECS RAM role metadata, and OIDC-based STS exchange
+- **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, AssumeRole, and OIDC-based STS exchange
+- **V1 and V4 Signing**: Supports both legacy OSS V1 signatures and Signature V4
+- **Runtime Credential Sources**: Credentials URI, ECS RAM role metadata, and OIDC-based STS exchange
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
 
@@ -72,16 +76,17 @@ async fn main() -> Result<()> {
 
 `RequestSigner::new("bucket")` keeps the current V1 behavior.
 
-If you want to wire configuration that future signing versions will need, you
-can set the region ahead of time:
+To opt into V4 signing, configure both the region and signing version:
 
 ```rust
-use reqsign_aliyun_oss::RequestSigner;
+use reqsign_aliyun_oss::{RequestSigner, SigningVersion};
 
-let signer = RequestSigner::new("bucket").with_region("oss-cn-beijing");
+let signer = RequestSigner::new("bucket")
+    .with_region("cn-beijing")
+    .with_signing_version(SigningVersion::V4);
 ```
 
-The region is currently a no-op for V1 signing.
+The region remains a no-op for V1 signing.
 
 ## Credential Sources
 
@@ -179,6 +184,7 @@ Reads from `~/.aliyun/config.json` by default:
 Override the file path with `ALIBABA_CLOUD_CONFIG_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
 
 Only direct static modes are loaded in this crate today: `AK` and `StsToken`.
+
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:
@@ -202,6 +208,36 @@ let loader = DefaultCredentialProvider::builder()
 ```
 
 The session name defaults to `reqsign`. To customize it, set `ALIBABA_CLOUD_ROLE_SESSION_NAME` or use `AssumeRoleWithOidcCredentialProvider::with_role_session_name`.
+
+### STS AssumeRole with Base AK Credentials
+
+```rust
+use reqsign_aliyun_oss::{
+    AssumeRoleCredentialProvider, DefaultCredentialProvider, StaticCredentialProvider,
+};
+
+// Use an explicit base access key source to call STS AssumeRole.
+let loader = DefaultCredentialProvider::builder()
+    .no_env()
+    .no_oss_profile()
+    .no_credentials_file()
+    .no_config_file()
+    .assume_role(
+        AssumeRoleCredentialProvider::new()
+            .with_base_provider(StaticCredentialProvider::new(
+                "your-access-key-id",
+                "your-access-key-secret",
+            ))
+            .with_role_arn("acs:ram::123456789012:role/example")
+            .with_role_session_name("my-session"),
+    )
+    .no_oidc()
+    .build();
+```
+
+Or rely on the default static base chain by setting
+`ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET`,
+`ALIBABA_CLOUD_ROLE_ARN`, and optionally `ALIBABA_CLOUD_EXTERNAL_ID`.
 
 ## OSS Operations
 
