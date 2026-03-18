@@ -27,6 +27,6 @@ pub use sign_request::RequestSigner;
 
 mod provide_credential;
 pub use provide_credential::{
-    DefaultCredentialProvider, DefaultCredentialProviderBuilder, StaticCredentialProvider,
-    VmMetadataCredentialProvider,
+    DefaultCredentialProvider, DefaultCredentialProviderBuilder, FileCredentialProvider,
+    StaticCredentialProvider, TokenCredentialProvider, VmMetadataCredentialProvider,
 };

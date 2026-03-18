@@ -19,15 +19,10 @@ use log::debug;
 
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
-use crate::constants::{DEFAULT_SCOPE, GOOGLE_APPLICATION_CREDENTIALS, GOOGLE_SCOPE};
-use crate::credential::{Credential, CredentialFile};
+use crate::constants::GOOGLE_APPLICATION_CREDENTIALS;
+use crate::credential::Credential;
 
-use super::{
-    authorized_user::AuthorizedUserCredentialProvider,
-    external_account::ExternalAccountCredentialProvider,
-    impersonated_service_account::ImpersonatedServiceAccountCredentialProvider,
-    vm_metadata::VmMetadataCredentialProvider,
-};
+use super::{parse::parse_credential_bytes, vm_metadata::VmMetadataCredentialProvider};
 
 /// Default credential provider for Google Cloud Storage (GCS).
 ///
@@ -203,41 +198,6 @@ impl ProvideCredential for WellKnownAdcCredentialProvider {
         match parse_credential_bytes(ctx, &content, self.scope.clone()).await {
             Ok(v) => Ok(v),
             Err(_) => Ok(None),
-        }
-    }
-}
-
-async fn parse_credential_bytes(
-    ctx: &Context,
-    content: &[u8],
-    scope_override: Option<String>,
-) -> Result<Option<Credential>> {
-    let cred_file = CredentialFile::from_slice(content)?;
-
-    let scope = scope_override
-        .or_else(|| ctx.env_var(GOOGLE_SCOPE))
-        .unwrap_or_else(|| DEFAULT_SCOPE.to_string());
-
-    match cred_file {
-        CredentialFile::ServiceAccount(sa) => {
-            debug!("loaded service account credential");
-            Ok(Some(Credential::with_service_account(sa)))
-        }
-        CredentialFile::ExternalAccount(ea) => {
-            debug!("loaded external account credential, exchanging for token");
-            let provider = ExternalAccountCredentialProvider::new(ea).with_scope(&scope);
-            provider.provide_credential(ctx).await
-        }
-        CredentialFile::ImpersonatedServiceAccount(isa) => {
-            debug!("loaded impersonated service account credential, exchanging for token");
-            let provider =
-                ImpersonatedServiceAccountCredentialProvider::new(isa).with_scope(&scope);
-            provider.provide_credential(ctx).await
-        }
-        CredentialFile::AuthorizedUser(au) => {
-            debug!("loaded authorized user credential, exchanging for token");
-            let provider = AuthorizedUserCredentialProvider::new(au);
-            provider.provide_credential(ctx).await
         }
     }
 }
