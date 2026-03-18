@@ -1088,10 +1088,10 @@ access_key_secret=shared_secret_key
 
     #[tokio::test]
     async fn test_default_loader_prefers_assume_role_over_raw_env_credentials() {
-        let http_send = CountingHttpSend::new(
+        let http_send = CountingHttpSend::new([
             br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
                 .to_vec(),
-        );
+        ]);
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
@@ -1129,10 +1129,10 @@ access_key_secret=shared_secret_key
 
     #[tokio::test]
     async fn test_builder_no_env_removes_env_from_assume_role_base_chain() {
-        let http_send = CountingHttpSend::new(
+        let http_send = CountingHttpSend::new([
             br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
                 .to_vec(),
-        );
+        ]);
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
@@ -1159,6 +1159,7 @@ access_key_secret=shared_secret_key
             .no_oss_profile()
             .no_credentials_file()
             .no_config_file()
+            .no_ecs_ram_role()
             .no_oidc()
             .build()
             .provide_credential(&ctx)
@@ -1171,10 +1172,10 @@ access_key_secret=shared_secret_key
 
     #[tokio::test]
     async fn test_builder_no_assume_role_removes_assume_role_provider() {
-        let http_send = CountingHttpSend::new(
+        let http_send = CountingHttpSend::new([
             br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
                 .to_vec(),
-        );
+        ]);
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())

@@ -16,10 +16,10 @@
 // under the License.
 
 use reqsign_aliyun_oss::{
-    AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider,
+    AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
     ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
-    CredentialsUriCredentialProvider, EcsRamRoleCredentialProvider, EnvCredentialProvider,
-    OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
+    CredentialsUriCredentialProvider, DefaultCredentialProvider, EcsRamRoleCredentialProvider,
+    EnvCredentialProvider, OssProfileCredentialProvider, RequestSigner, StaticCredentialProvider,
 };
 use reqsign_core::Result;
 use reqsign_core::{Context, OsEnv, Signer};
