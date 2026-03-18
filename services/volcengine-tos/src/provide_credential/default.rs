@@ -85,7 +85,7 @@ pub struct DefaultCredentialProviderBuilder {
 impl Default for DefaultCredentialProviderBuilder {
     fn default() -> Self {
         Self {
-            env: Some(EnvCredentialProvider::default()),
+            env: Some(EnvCredentialProvider),
         }
     }
 }
