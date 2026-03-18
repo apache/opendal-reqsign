@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use form_urlencoded::Serializer;
@@ -28,6 +29,19 @@ use reqsign_core::{Context, ProvideCredential, Result};
 
 /// The maximum impersonated token lifetime allowed, 1 hour.
 const MAX_LIFETIME: Duration = Duration::from_secs(3600);
+/// Default timeout declared by AIP-4117 for executable sources.
+const DEFAULT_EXECUTABLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Gate required by AIP-4117 before executable sources may be used.
+const GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES: &str = "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES";
+const GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE: &str = "GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE";
+const GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE: &str = "GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE";
+const GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL: &str =
+    "GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL";
+const GOOGLE_EXTERNAL_ACCOUNT_OUTPUT_FILE: &str = "GOOGLE_EXTERNAL_ACCOUNT_OUTPUT_FILE";
+const EXECUTABLE_RESPONSE_VERSION: u64 = 1;
+const TOKEN_TYPE_JWT: &str = "urn:ietf:params:oauth:token-type:jwt";
+const TOKEN_TYPE_ID_TOKEN: &str = "urn:ietf:params:oauth:token-type:id_token";
+const TOKEN_TYPE_SAML2: &str = "urn:ietf:params:oauth:token-type:saml2";
 
 /// STS token response.
 #[derive(Deserialize)]
@@ -49,6 +63,29 @@ struct ImpersonatedTokenResponse {
 struct ImpersonationRequest {
     scope: Vec<String>,
     lifetime: String,
+}
+
+#[derive(Deserialize)]
+struct ExecutableResponse {
+    version: u64,
+    success: bool,
+    #[serde(default)]
+    token_type: Option<String>,
+    #[serde(default)]
+    id_token: Option<String>,
+    #[serde(default)]
+    saml_response: Option<String>,
+    #[serde(default)]
+    expiration_time: Option<i64>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+struct ExecutableSubjectToken {
+    token: String,
+    expires_at: Option<Timestamp>,
 }
 
 /// ExternalAccountCredentialProvider exchanges external account credentials for access tokens.
@@ -86,6 +123,9 @@ impl ExternalAccountCredentialProvider {
                 self.load_file_sourced_token(ctx, source).await
             }
             external_account::Source::Url(source) => self.load_url_sourced_token(ctx, source).await,
+            external_account::Source::Executable(source) => {
+                self.load_executable_sourced_token(ctx, source).await
+            }
         }
     }
 
@@ -150,6 +190,246 @@ impl ExternalAccountCredentialProvider {
         }
 
         Ok(token)
+    }
+
+    fn resolved_subject_token_type(&self, ctx: &Context) -> Result<String> {
+        resolve_template(ctx, &self.external_account.subject_token_type)
+    }
+
+    fn build_executable_env(
+        &self,
+        ctx: &Context,
+        output_file: Option<&str>,
+    ) -> Result<BTreeMap<String, String>> {
+        let mut envs = BTreeMap::new();
+        envs.insert(
+            GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE.to_string(),
+            resolve_template(ctx, &self.external_account.audience)?,
+        );
+        envs.insert(
+            GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE.to_string(),
+            self.resolved_subject_token_type(ctx)?,
+        );
+
+        if let Some(url) = &self.external_account.service_account_impersonation_url {
+            let url = resolve_template(ctx, url)?;
+            let email = parse_impersonated_service_account_email(&url)?;
+            envs.insert(
+                GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL.to_string(),
+                email,
+            );
+        }
+
+        if let Some(path) = output_file {
+            envs.insert(
+                GOOGLE_EXTERNAL_ACCOUNT_OUTPUT_FILE.to_string(),
+                path.to_string(),
+            );
+        }
+
+        Ok(envs)
+    }
+
+    fn validate_executable_usage(
+        &self,
+        ctx: &Context,
+        source: &external_account::ExecutableSource,
+    ) -> Result<(String, Duration, Option<String>)> {
+        if ctx
+            .env_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES)
+            .as_deref()
+            != Some("1")
+        {
+            return Err(reqsign_core::Error::config_invalid(
+                "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES must be set to 1 to use executable-sourced external accounts",
+            ));
+        }
+
+        let command = resolve_template(ctx, &source.executable.command)?;
+        let command = command.trim().to_string();
+        if command.is_empty() {
+            return Err(reqsign_core::Error::config_invalid(
+                "credential_source.executable.command must not be empty",
+            ));
+        }
+
+        let timeout = match source.executable.timeout_millis {
+            Some(0) => {
+                return Err(reqsign_core::Error::config_invalid(
+                    "credential_source.executable.timeout_millis must be positive",
+                ));
+            }
+            Some(v) => Duration::from_millis(v),
+            None => DEFAULT_EXECUTABLE_TIMEOUT,
+        };
+
+        let output_file = source
+            .executable
+            .output_file
+            .as_deref()
+            .map(|v| resolve_template(ctx, v))
+            .transpose()?;
+
+        Ok((command, timeout, output_file))
+    }
+
+    fn parse_executable_response(
+        &self,
+        ctx: &Context,
+        body: &[u8],
+        require_expiration: bool,
+        require_unexpired: bool,
+    ) -> Result<ExecutableSubjectToken> {
+        let response: ExecutableResponse = serde_json::from_slice(body).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to parse executable response").with_source(e)
+        })?;
+
+        if response.version != EXECUTABLE_RESPONSE_VERSION {
+            return Err(reqsign_core::Error::credential_invalid(format!(
+                "unsupported executable response version: {}",
+                response.version
+            )));
+        }
+
+        if !response.success {
+            let message = match (response.code.as_deref(), response.message.as_deref()) {
+                (Some(code), Some(message)) => {
+                    format!("executable credential source failed with code {code}: {message}")
+                }
+                (None, Some(message)) => {
+                    format!("executable credential source failed: {message}")
+                }
+                (Some(code), None) => {
+                    format!("executable credential source failed with code {code}")
+                }
+                (None, None) => "executable credential source failed".to_string(),
+            };
+            return Err(reqsign_core::Error::credential_invalid(message));
+        }
+
+        let token_type = response.token_type.as_deref().ok_or_else(|| {
+            reqsign_core::Error::credential_invalid(
+                "successful executable response missing token_type",
+            )
+        })?;
+        if !matches!(
+            token_type,
+            TOKEN_TYPE_JWT | TOKEN_TYPE_ID_TOKEN | TOKEN_TYPE_SAML2
+        ) {
+            return Err(reqsign_core::Error::credential_invalid(format!(
+                "unsupported executable response token_type: {token_type}"
+            )));
+        }
+
+        let expected = self.resolved_subject_token_type(ctx)?;
+        if token_type != expected {
+            return Err(reqsign_core::Error::credential_invalid(format!(
+                "executable response token_type {token_type} does not match configured subject_token_type {expected}"
+            )));
+        }
+
+        let token = if token_type == TOKEN_TYPE_SAML2 {
+            response.saml_response.as_deref().ok_or_else(|| {
+                reqsign_core::Error::credential_invalid(
+                    "successful SAML executable response missing saml_response",
+                )
+            })?
+        } else {
+            response.id_token.as_deref().ok_or_else(|| {
+                reqsign_core::Error::credential_invalid(
+                    "successful executable response missing id_token",
+                )
+            })?
+        };
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err(reqsign_core::Error::credential_invalid(
+                "executable response subject token is empty",
+            ));
+        }
+
+        let expires_at = response
+            .expiration_time
+            .map(Timestamp::from_second)
+            .transpose()?;
+
+        if require_expiration && expires_at.is_none() {
+            return Err(reqsign_core::Error::credential_invalid(
+                "executable response missing expiration_time required by output_file",
+            ));
+        }
+
+        if let Some(expires_at) = expires_at {
+            if require_unexpired && Timestamp::now() >= expires_at {
+                return Err(reqsign_core::Error::credential_invalid(
+                    "executable response is expired",
+                ));
+            }
+        }
+
+        Ok(ExecutableSubjectToken { token, expires_at })
+    }
+
+    async fn load_executable_sourced_token(
+        &self,
+        ctx: &Context,
+        source: &external_account::ExecutableSource,
+    ) -> Result<String> {
+        let (command, timeout, output_file) = self.validate_executable_usage(ctx, source)?;
+
+        if let Some(path) = output_file.as_deref() {
+            if let Ok(content) = ctx.file_read(path).await {
+                debug!("loading executable credential response from output file: {path}");
+                let subject = self.parse_executable_response(ctx, &content, true, false)?;
+                if subject
+                    .expires_at
+                    .is_some_and(|expires_at| Timestamp::now() < expires_at)
+                {
+                    return Ok(subject.token);
+                }
+            }
+        }
+
+        let envs = self.build_executable_env(ctx, output_file.as_deref())?;
+        debug!(
+            "executing external account credential command with declared timeout {:?}",
+            timeout
+        );
+        let output = execute_command_with_env(ctx, &command, &envs, timeout).await?;
+        let parsed =
+            self.parse_executable_response(ctx, &output.stdout, output_file.is_some(), true);
+        let subject = if output.success() {
+            parsed?
+        } else {
+            match parsed {
+                Err(err) if err.kind() == reqsign_core::ErrorKind::CredentialInvalid => {
+                    return Err(err);
+                }
+                Ok(_) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let detail = if stderr.is_empty() {
+                        format!("command exited with status {}", output.status)
+                    } else {
+                        format!("command exited with status {}: {}", output.status, stderr)
+                    };
+                    return Err(reqsign_core::Error::credential_invalid(format!(
+                        "executable credential source failed: {detail}"
+                    )));
+                }
+                Err(_) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    let detail = if stderr.is_empty() {
+                        format!("command exited with status {}", output.status)
+                    } else {
+                        format!("command exited with status {}: {}", output.status, stderr)
+                    };
+                    return Err(reqsign_core::Error::credential_invalid(format!(
+                        "executable credential source failed: {detail}"
+                    )));
+                }
+            }
+        };
+        Ok(subject.token)
     }
 
     async fn exchange_sts_token(&self, ctx: &Context, oidc_token: &str) -> Result<Token> {
@@ -350,14 +630,112 @@ fn resolve_template(ctx: &Context, input: &str) -> Result<String> {
     }
 }
 
+fn parse_impersonated_service_account_email(url: &str) -> Result<String> {
+    let marker = "/serviceAccounts/";
+    let start = url.find(marker).ok_or_else(|| {
+        reqsign_core::Error::config_invalid(format!(
+            "service_account_impersonation_url missing {marker}: {url}"
+        ))
+    })?;
+    let rest = &url[start + marker.len()..];
+    let end = rest.find(':').ok_or_else(|| {
+        reqsign_core::Error::config_invalid(format!(
+            "service_account_impersonation_url missing action separator: {url}"
+        ))
+    })?;
+
+    let email = percent_encoding::percent_decode_str(&rest[..end])
+        .decode_utf8()
+        .map_err(|e| {
+            reqsign_core::Error::config_invalid(
+                "service_account_impersonation_url contains invalid UTF-8 email",
+            )
+            .with_source(e)
+        })?;
+    if email.is_empty() {
+        return Err(reqsign_core::Error::config_invalid(
+            "service_account_impersonation_url resolved empty service account email",
+        ));
+    }
+
+    Ok(email.into_owned())
+}
+
+async fn execute_command_with_env(
+    ctx: &Context,
+    command: &str,
+    envs: &BTreeMap<String, String>,
+    timeout: Duration,
+) -> Result<reqsign_core::CommandOutput> {
+    #[cfg(windows)]
+    {
+        let mut script = String::new();
+        for (k, v) in envs {
+            script.push_str("set \"");
+            script.push_str(k);
+            script.push('=');
+            script.push_str(&quote_for_cmd_set(v));
+            script.push_str("\" && ");
+        }
+        script.push_str(command);
+
+        let args = ["/C", script.as_str()];
+        tokio::time::timeout(timeout, ctx.command_execute("cmd", &args))
+            .await
+            .map_err(|_| {
+                reqsign_core::Error::credential_invalid(format!(
+                    "executable credential source timed out after {}ms",
+                    timeout.as_millis()
+                ))
+            })?
+    }
+
+    #[cfg(not(windows))]
+    {
+        let mut script = String::new();
+        for (k, v) in envs {
+            script.push_str(k);
+            script.push('=');
+            script.push_str(&quote_for_sh(v));
+            script.push(' ');
+        }
+        script.push_str("exec ");
+        script.push_str(command);
+
+        let args = ["-c", script.as_str()];
+        tokio::time::timeout(timeout, ctx.command_execute("sh", &args))
+            .await
+            .map_err(|_| {
+                reqsign_core::Error::credential_invalid(format!(
+                    "executable credential source timed out after {}ms",
+                    timeout.as_millis()
+                ))
+            })?
+    }
+}
+
+#[cfg(windows)]
+fn quote_for_cmd_set(value: &str) -> String {
+    value.replace('^', "^^").replace('"', "^\"")
+}
+
+#[cfg(not(windows))]
+fn quote_for_sh(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bytes::Bytes;
     use http::header::{AUTHORIZATION, CONTENT_TYPE};
-    use reqsign_core::{Env, FileRead, HttpSend};
+    use reqsign_core::{CommandExecute, CommandOutput, Env, FileRead, HttpSend};
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     #[derive(Debug, Default)]
     struct MockEnv {
@@ -401,6 +779,66 @@ mod tests {
             self.files.get(path).cloned().ok_or_else(|| {
                 reqsign_core::Error::config_invalid(format!("file not found: {path}"))
             })
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordedCommand {
+        program: Option<String>,
+        args: Vec<String>,
+    }
+
+    #[derive(Clone, Debug)]
+    struct MockCommandExecute {
+        recorded: Arc<Mutex<RecordedCommand>>,
+        output: CommandOutput,
+    }
+
+    impl MockCommandExecute {
+        fn success(stdout: impl Into<Vec<u8>>) -> Self {
+            Self {
+                recorded: Arc::new(Mutex::new(RecordedCommand::default())),
+                output: CommandOutput {
+                    status: 0,
+                    stdout: stdout.into(),
+                    stderr: Vec::new(),
+                },
+            }
+        }
+
+        fn failure(stderr: impl Into<Vec<u8>>) -> Self {
+            Self {
+                recorded: Arc::new(Mutex::new(RecordedCommand::default())),
+                output: CommandOutput {
+                    status: 1,
+                    stdout: Vec::new(),
+                    stderr: stderr.into(),
+                },
+            }
+        }
+
+        fn with_status(
+            status: i32,
+            stdout: impl Into<Vec<u8>>,
+            stderr: impl Into<Vec<u8>>,
+        ) -> Self {
+            Self {
+                recorded: Arc::new(Mutex::new(RecordedCommand::default())),
+                output: CommandOutput {
+                    status,
+                    stdout: stdout.into(),
+                    stderr: stderr.into(),
+                },
+            }
+        }
+    }
+
+    impl CommandExecute for MockCommandExecute {
+        async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
+            let mut recorded = self.recorded.lock().expect("lock must succeed");
+            recorded.program = Some(program.to_string());
+            recorded.args = args.iter().map(|v| (*v).to_string()).collect();
+            Ok(self.output.clone())
         }
     }
 
@@ -595,5 +1033,338 @@ mod tests {
         assert!(cred.has_token());
         assert!(cred.has_valid_token());
         Ok(())
+    }
+
+    fn executable_source(
+        command: &str,
+        output_file: Option<&str>,
+    ) -> external_account::ExecutableSource {
+        external_account::ExecutableSource {
+            executable: external_account::ExecutableConfig {
+                command: command.to_string(),
+                timeout_millis: Some(5000),
+                output_file: output_file.map(|v| v.to_string()),
+            },
+        }
+    }
+
+    fn executable_account(
+        source: external_account::ExecutableSource,
+        subject_token_type: &str,
+    ) -> ExternalAccount {
+        ExternalAccount {
+            audience: "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/pool/providers/provider".to_string(),
+            subject_token_type: subject_token_type.to_string(),
+            token_url: "https://sts.googleapis.com/v1/token".to_string(),
+            credential_source: external_account::Source::Executable(source),
+            service_account_impersonation_url: Some(
+                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/test%40example.com:generateAccessToken"
+                    .to_string(),
+            ),
+            service_account_impersonation: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_uses_cached_output_file() -> Result<()> {
+        let external_account = executable_account(
+            executable_source("/bin/example --flag", Some("/tmp/exec-cache.json")),
+            TOKEN_TYPE_ID_TOKEN,
+        );
+        let cache = serde_json::json!({
+            "version": 1,
+            "success": true,
+            "token_type": TOKEN_TYPE_ID_TOKEN,
+            "id_token": "cached-token",
+            "expiration_time": Timestamp::now().as_second() + 3600,
+        });
+        let fs = MockFileRead::default().with_file(
+            "/tmp/exec-cache.json",
+            serde_json::to_vec(&cache).expect("json"),
+        );
+        let ctx = Context::new()
+            .with_file_read(fs)
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(MockCommandExecute::success(br#"{"unexpected":true}"#));
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let token = provider.load_oidc_token(&ctx).await?;
+        assert_eq!(token, "cached-token");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_runs_command_with_required_env() -> Result<()> {
+        let external_account = executable_account(
+            executable_source(
+                "/bin/example --arg=value",
+                Some("/tmp/cache-${SUFFIX}.json"),
+            ),
+            TOKEN_TYPE_ID_TOKEN,
+        );
+        let command = MockCommandExecute::success(
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "success": true,
+                "token_type": TOKEN_TYPE_ID_TOKEN,
+                "id_token": "exec-token",
+                "expiration_time": Timestamp::now().as_second() + 3600,
+            }))
+            .expect("json"),
+        );
+        let recorded = command.recorded.clone();
+        let env = MockEnv::default()
+            .with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1")
+            .with_var("SUFFIX", "value");
+        let ctx = Context::new().with_env(env).with_command_execute(command);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let token = provider.load_oidc_token(&ctx).await?;
+        assert_eq!(token, "exec-token");
+
+        let recorded = recorded.lock().expect("lock must succeed");
+        #[cfg(windows)]
+        {
+            assert_eq!(recorded.program.as_deref(), Some("cmd"));
+            let script = recorded.args.get(1).expect("cmd script must exist");
+            assert!(script.contains("GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE="));
+            assert!(script.contains("GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE="));
+            assert!(script.contains("GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL=test@example.com"));
+            assert!(script.contains("GOOGLE_EXTERNAL_ACCOUNT_OUTPUT_FILE=/tmp/cache-value.json"));
+            assert!(script.contains("/bin/example --arg=value"));
+        }
+        #[cfg(not(windows))]
+        {
+            assert_eq!(recorded.program.as_deref(), Some("sh"));
+            let script = recorded.args.get(1).expect("sh script must exist");
+            assert!(script.contains("GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE='//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/pool/providers/provider'"));
+            assert!(script.contains(
+                "GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE='urn:ietf:params:oauth:token-type:id_token'"
+            ));
+            assert!(
+                script.contains("GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL='test@example.com'")
+            );
+            assert!(script.contains("GOOGLE_EXTERNAL_ACCOUNT_OUTPUT_FILE='/tmp/cache-value.json'"));
+            assert!(script.ends_with("exec /bin/example --arg=value"));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_requires_opt_in() {
+        let external_account =
+            executable_account(executable_source("/bin/example", None), TOKEN_TYPE_ID_TOKEN);
+        let ctx = Context::new().with_command_execute(MockCommandExecute::success(Vec::new()));
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let err = provider
+            .load_oidc_token(&ctx)
+            .await
+            .expect_err("missing opt-in must fail");
+        assert!(
+            err.to_string()
+                .contains("GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_rejects_error_response() {
+        let external_account =
+            executable_account(executable_source("/bin/example", None), TOKEN_TYPE_ID_TOKEN);
+        let command = MockCommandExecute::with_status(
+            1,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "success": false,
+                "code": "401",
+                "message": "Caller not authorized.",
+            }))
+            .expect("json"),
+            b"permission denied".as_slice(),
+        );
+        let ctx = Context::new()
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(command);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let err = provider
+            .load_oidc_token(&ctx)
+            .await
+            .expect_err("error response must fail");
+        assert!(err.to_string().contains("Caller not authorized"));
+    }
+
+    #[derive(Clone, Debug)]
+    struct SlowCommandExecute;
+
+    impl CommandExecute for SlowCommandExecute {
+        async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            Ok(CommandOutput {
+                status: 0,
+                stdout: br#"{"version":1,"success":true,"token_type":"urn:ietf:params:oauth:token-type:id_token","id_token":"slow-token"}"#.to_vec(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_honors_timeout() {
+        let source = external_account::ExecutableSource {
+            executable: external_account::ExecutableConfig {
+                command: "/bin/example".to_string(),
+                timeout_millis: Some(1),
+                output_file: None,
+            },
+        };
+        let external_account = executable_account(source, TOKEN_TYPE_ID_TOKEN);
+        let ctx = Context::new()
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(SlowCommandExecute);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let err = provider
+            .load_oidc_token(&ctx)
+            .await
+            .expect_err("slow executable must time out");
+        assert!(err.to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_rejects_non_zero_exit() {
+        let external_account =
+            executable_account(executable_source("/bin/example", None), TOKEN_TYPE_ID_TOKEN);
+        let command = MockCommandExecute::failure("permission denied");
+        let ctx = Context::new()
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(command);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let err = provider
+            .load_oidc_token(&ctx)
+            .await
+            .expect_err("non-zero exit must fail");
+        assert!(!err.to_string().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_rejects_token_type_mismatch() {
+        let external_account =
+            executable_account(executable_source("/bin/example", None), TOKEN_TYPE_ID_TOKEN);
+        let command = MockCommandExecute::success(
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "success": true,
+                "token_type": TOKEN_TYPE_SAML2,
+                "saml_response": "response",
+            }))
+            .expect("json"),
+        );
+        let ctx = Context::new()
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(command);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let err = provider
+            .load_oidc_token(&ctx)
+            .await
+            .expect_err("mismatched token type must fail");
+        assert!(err.to_string().contains("does not match"));
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_requires_expiration_for_output_file() {
+        let external_account = executable_account(
+            executable_source("/bin/example", Some("/tmp/cache.json")),
+            TOKEN_TYPE_ID_TOKEN,
+        );
+        let command = MockCommandExecute::success(
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "success": true,
+                "token_type": TOKEN_TYPE_ID_TOKEN,
+                "id_token": "token",
+            }))
+            .expect("json"),
+        );
+        let ctx = Context::new()
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(command);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let err = provider
+            .load_oidc_token(&ctx)
+            .await
+            .expect_err("missing expiration must fail");
+        assert!(err.to_string().contains("expiration_time"));
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_rejects_expired_cached_output() -> Result<()> {
+        let external_account = executable_account(
+            executable_source("/bin/example", Some("/tmp/cache.json")),
+            TOKEN_TYPE_ID_TOKEN,
+        );
+        let cache = serde_json::json!({
+            "version": 1,
+            "success": true,
+            "token_type": TOKEN_TYPE_ID_TOKEN,
+            "id_token": "cached-token",
+            "expiration_time": Timestamp::now().as_second() - 1,
+        });
+        let fs = MockFileRead::default()
+            .with_file("/tmp/cache.json", serde_json::to_vec(&cache).expect("json"));
+        let command = MockCommandExecute::success(
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "success": true,
+                "token_type": TOKEN_TYPE_ID_TOKEN,
+                "id_token": "fresh-token",
+                "expiration_time": Timestamp::now().as_second() + 3600,
+            }))
+            .expect("json"),
+        );
+        let ctx = Context::new()
+            .with_file_read(fs)
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(command);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let token = provider.load_oidc_token(&ctx).await?;
+        assert_eq!(token, "fresh-token");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_executable_source_rejects_invalid_cached_output() {
+        let external_account = executable_account(
+            executable_source("/bin/example", Some("/tmp/cache.json")),
+            TOKEN_TYPE_ID_TOKEN,
+        );
+        let fs = MockFileRead::default().with_file("/tmp/cache.json", b"{invalid json");
+        let command = MockCommandExecute::success(
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "success": true,
+                "token_type": TOKEN_TYPE_ID_TOKEN,
+                "id_token": "fresh-token",
+                "expiration_time": Timestamp::now().as_second() + 3600,
+            }))
+            .expect("json"),
+        );
+        let ctx = Context::new()
+            .with_file_read(fs)
+            .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
+            .with_command_execute(command);
+
+        let provider = ExternalAccountCredentialProvider::new(external_account);
+        let err = provider
+            .load_oidc_token(&ctx)
+            .await
+            .expect_err("invalid cache must fail");
+        assert!(
+            err.to_string()
+                .contains("failed to parse executable response")
+        );
     }
 }
