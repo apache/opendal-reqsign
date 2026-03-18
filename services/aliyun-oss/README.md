@@ -11,9 +11,10 @@ This crate provides signing support for Alibaba Cloud Object Storage Service (OS
 ```rust
 use reqsign_aliyun_oss::{
     AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
-    ConfigFileCredentialProvider, CredentialsFileCredentialProvider, DefaultCredentialProvider,
-    EnvCredentialProvider, OssProfileCredentialProvider, RequestSigner,
-    SigningVersion, StaticCredentialProvider,
+    ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
+    CredentialsUriCredentialProvider, DefaultCredentialProvider,
+    EcsRamRoleCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
+    RequestSigner, SigningVersion, StaticCredentialProvider,
 };
 use reqsign_core::{Context, Result, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -31,6 +32,8 @@ async fn main() -> Result<()> {
         .oss_profile(OssProfileCredentialProvider::new())
         .credentials_file(CredentialsFileCredentialProvider::new())
         .config_file(ConfigFileCredentialProvider::new())
+        .credentials_uri(CredentialsUriCredentialProvider::new())
+        .ecs_ram_role(EcsRamRoleCredentialProvider::new())
         .oidc(AssumeRoleWithOidcCredentialProvider::new())
         .build();
 
@@ -65,6 +68,7 @@ async fn main() -> Result<()> {
 
 - **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, AssumeRole, and OIDC-based STS exchange
 - **V1 and V4 Signing**: Supports both legacy OSS V1 signatures and Signature V4
+- **Runtime Credential Sources**: Credentials URI, ECS RAM role metadata, and OIDC-based STS exchange
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
 
@@ -114,6 +118,28 @@ access_key_secret = prod-access-key-secret
 
 Override the file path with `OSS_CREDENTIAL_PROFILES_FILE` and the selected profile with `OSS_PROFILE`.
 
+### Credentials URI
+
+Load temporary credentials from a custom endpoint:
+
+```bash
+export ALIBABA_CLOUD_CREDENTIALS_URI=http://127.0.0.1:8080/credentials
+```
+
+The endpoint should return JSON containing `AccessKeyId`, `AccessKeySecret`, `SecurityToken`, and `Expiration`.
+
+### ECS RAM Role Metadata
+
+On Alibaba Cloud ECS instances, the provider reads temporary credentials from the metadata service.
+
+```bash
+export ALIBABA_CLOUD_ECS_METADATA=my-ram-role              # Optional role name override
+export ALIBABA_CLOUD_IMDSV1_DISABLED=true                 # Optional: require IMDSv2
+export ALIBABA_CLOUD_ECS_METADATA_SERVICE_ENDPOINT=http://127.0.0.1  # Optional override for tests
+```
+
+If `ALIBABA_CLOUD_ECS_METADATA` is unset, the provider resolves the role name from metadata first and then fetches the credentials.
+
 ### Alibaba Shared Credentials File
 
 Reads from `~/.alibabacloud/credentials.ini` first and falls back to `~/.aliyun/credentials.ini`:
@@ -158,6 +184,7 @@ Reads from `~/.aliyun/config.json` by default:
 Override the file path with `ALIBABA_CLOUD_CONFIG_FILE` and the selected profile with `ALIBABA_CLOUD_PROFILE`.
 
 Only direct static modes are loaded in this crate today: `AK` and `StsToken`.
+
 ### STS AssumeRole with OIDC
 
 For Kubernetes/ACK environments:
@@ -170,6 +197,8 @@ use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredential
 let loader = DefaultCredentialProvider::builder()
     .no_env()
     .no_oss_profile()
+    .no_credentials_uri()
+    .no_ecs_ram_role()
     .no_credentials_file()
     .no_config_file()
     .oidc(
@@ -331,7 +360,13 @@ let loader = StaticCredentialProvider::new("your-access-key-id", "your-access-ke
 ```rust
 use reqsign_aliyun_oss::DefaultCredentialProvider;
 
-let loader = DefaultCredentialProvider::builder().no_oidc().build();
+let loader = DefaultCredentialProvider::builder()
+    .no_credentials_file()
+    .no_config_file()
+    .no_credentials_uri()
+    .no_ecs_ram_role()
+    .no_oidc()
+    .build();
 ```
 
 ## License

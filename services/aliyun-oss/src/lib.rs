@@ -34,9 +34,10 @@
 //! ```no_run
 //! use reqsign_aliyun_oss::{
 //!     AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
-//!     ConfigFileCredentialProvider, CredentialsFileCredentialProvider, DefaultCredentialProvider,
-//!     EnvCredentialProvider, OssProfileCredentialProvider, RequestSigner,
-//!     SigningVersion, StaticCredentialProvider,
+//!     ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
+//!     CredentialsUriCredentialProvider, DefaultCredentialProvider,
+//!     EcsRamRoleCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
+//!     RequestSigner, SigningVersion, StaticCredentialProvider,
 //! };
 //! use reqsign_core::{Context, Signer, Result};
 //! use reqsign_file_read_tokio::TokioFileRead;
@@ -50,13 +51,16 @@
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
 //!     // Create credential loader with the default assume_role -> env ->
-//!     // OSS profile -> shared credentials file -> config file -> oidc chain.
+//!     // OSS profile -> shared credentials file -> config file ->
+//!     // credentials URI -> ECS RAM role -> oidc chain.
 //!     let loader = DefaultCredentialProvider::builder()
 //!         .assume_role(AssumeRoleCredentialProvider::new())
 //!         .env(EnvCredentialProvider::new())
 //!         .oss_profile(OssProfileCredentialProvider::new())
 //!         .credentials_file(CredentialsFileCredentialProvider::new())
 //!         .config_file(ConfigFileCredentialProvider::new())
+//!         .credentials_uri(CredentialsUriCredentialProvider::new())
+//!         .ecs_ram_role(EcsRamRoleCredentialProvider::new())
 //!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
 //!         .build();
 //!
@@ -105,6 +109,15 @@
 //!
 //! The crate can load credentials from the OSS profile file
 //! (typically `~/.oss/credentials`).
+//!
+//! ### Credentials URI
+//!
+//! The crate can load temporary credentials from
+//! `ALIBABA_CLOUD_CREDENTIALS_URI`.
+//!
+//! ### ECS RAM Role
+//!
+//! The crate can load temporary credentials from the ECS metadata service.
 //!
 //! ### Alibaba Shared Credential and Config Files
 //!
@@ -163,6 +176,8 @@
 //! let loader = DefaultCredentialProvider::builder()
 //!     .no_env()
 //!     .no_oss_profile()
+//!     .no_credentials_uri()
+//!     .no_ecs_ram_role()
 //!     .no_credentials_file()
 //!     .no_config_file()
 //!     .assume_role(
@@ -201,7 +216,6 @@
 //!
 //! Check out the examples directory:
 //! - [Basic OSS operations](examples/oss_operations.rs)
-//! - [STS authentication](examples/sts_auth.rs)
 
 mod constants;
 
