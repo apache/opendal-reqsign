@@ -78,6 +78,19 @@ impl DefaultCredentialProvider {
 /// Use `env` / `config_file` to customize providers, `no_env` /
 /// `no_config_file` to remove them from the chain, and `build()` to construct
 /// the provider.
+///
+/// # Example
+///
+/// ```no_run
+/// use reqsign_oracle::{
+///     ConfigFileCredentialProvider, DefaultCredentialProvider, EnvCredentialProvider,
+/// };
+///
+/// let provider = DefaultCredentialProvider::builder()
+///     .env(EnvCredentialProvider::new())
+///     .config_file(ConfigFileCredentialProvider::new())
+///     .build();
+/// ```
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
     config_file: Option<ConfigFileCredentialProvider>,
