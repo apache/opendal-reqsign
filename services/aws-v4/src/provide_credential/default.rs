@@ -103,7 +103,7 @@ pub struct DefaultCredentialProviderBuilder {
 impl Default for DefaultCredentialProviderBuilder {
     fn default() -> Self {
         Self {
-            env: Some(EnvCredentialProvider::default()),
+            env: Some(EnvCredentialProvider::new()),
             profile: Some(ProfileCredentialProvider::default()),
             #[cfg(not(target_arch = "wasm32"))]
             sso: Some(SSOCredentialProvider::default()),
