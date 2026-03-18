@@ -16,7 +16,7 @@
 // under the License.
 
 use anyhow::Result;
-use reqsign_azure_storage::{DefaultCredentialProvider, RequestSigner};
+use reqsign_azure_storage::{DefaultCredentialProvider, EnvCredentialProvider, RequestSigner};
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -56,7 +56,9 @@ async fn main() -> Result<()> {
     }
 
     // Create credential loader
-    let loader = DefaultCredentialProvider::new();
+    let loader = DefaultCredentialProvider::builder()
+        .env(EnvCredentialProvider::new())
+        .build();
 
     // Create request builder
     let builder = RequestSigner::new();

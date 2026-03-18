@@ -16,9 +16,10 @@
 // under the License.
 
 use reqsign_azure_storage::{Credential, DefaultCredentialProvider};
-use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result};
+use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result, StaticEnv};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 fn is_test_enabled() -> bool {
@@ -40,6 +41,66 @@ impl ProvideCredential for CountingProvider {
         *count += 1;
         eprintln!("Provider {} called (count: {})", self.name, *count);
         Ok(self.return_credential.clone())
+    }
+}
+
+#[derive(Debug)]
+struct StaticHttpSend {
+    status: http::StatusCode,
+    body: &'static str,
+}
+
+impl reqsign_core::HttpSend for StaticHttpSend {
+    async fn http_send(
+        &self,
+        _req: http::Request<bytes::Bytes>,
+    ) -> Result<http::Response<bytes::Bytes>> {
+        http::Response::builder()
+            .status(self.status)
+            .body(bytes::Bytes::copy_from_slice(self.body.as_bytes()))
+            .map_err(|err| {
+                reqsign_core::Error::unexpected("failed to build mock response").with_source(err)
+            })
+    }
+}
+
+fn builder_without_other_slots() -> reqsign_azure_storage::DefaultCredentialProviderBuilder {
+    let builder = DefaultCredentialProvider::builder()
+        .no_env()
+        .no_client_secret()
+        .no_azure_pipelines()
+        .no_workload_identity()
+        .no_imds();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let builder = builder.no_azure_cli().no_client_certificate();
+
+    builder
+}
+
+fn assert_shared_key(
+    result: Option<Credential>,
+    expected_account_name: &str,
+    expected_account_key: &str,
+) {
+    match result {
+        Some(Credential::SharedKey {
+            account_name,
+            account_key,
+        }) => {
+            assert_eq!(account_name, expected_account_name);
+            assert_eq!(account_key, expected_account_key);
+        }
+        other => panic!("Expected SharedKey credential, got {other:?}"),
+    }
+}
+
+fn assert_bearer_token(result: Option<Credential>, expected_token: &str) {
+    match result {
+        Some(Credential::BearerToken { token, .. }) => {
+            assert_eq!(token, expected_token);
+        }
+        other => panic!("Expected BearerToken credential, got {other:?}"),
     }
 }
 
@@ -145,4 +206,66 @@ async fn test_chain_returns_none_when_all_fail() {
     // Verify all providers were called
     assert_eq!(*count1.lock().unwrap(), 1);
     assert_eq!(*count2.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn test_builder_no_env_removes_provider() {
+    let ctx = Context::new()
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from([
+                (
+                    "AZURE_STORAGE_ACCOUNT_NAME".to_string(),
+                    "testaccount".to_string(),
+                ),
+                (
+                    "AZURE_STORAGE_ACCOUNT_KEY".to_string(),
+                    "dGVzdGtleQ==".to_string(),
+                ),
+            ]),
+        });
+
+    let provider = builder_without_other_slots()
+        .env(reqsign_azure_storage::EnvCredentialProvider::new())
+        .build();
+    let result = provider.provide_credential(&ctx).await.unwrap();
+    assert_shared_key(result, "testaccount", "dGVzdGtleQ==");
+
+    let provider = builder_without_other_slots().build();
+    let result = provider.provide_credential(&ctx).await.unwrap();
+    assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn test_builder_no_client_secret_removes_provider() {
+    let ctx = Context::new()
+        .with_file_read(TokioFileRead)
+        .with_http_send(StaticHttpSend {
+            status: http::StatusCode::OK,
+            body: r#"{"access_token":"test-token","expires_in":3600}"#,
+        })
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from([
+                ("AZURE_TENANT_ID".to_string(), "test-tenant".to_string()),
+                ("AZURE_CLIENT_ID".to_string(), "test-client".to_string()),
+                ("AZURE_CLIENT_SECRET".to_string(), "test-secret".to_string()),
+                (
+                    "AZURE_AUTHORITY_HOST".to_string(),
+                    "https://login.microsoftonline.com".to_string(),
+                ),
+            ]),
+        });
+
+    let provider = builder_without_other_slots()
+        .client_secret(reqsign_azure_storage::ClientSecretCredentialProvider::new())
+        .build();
+    let result = provider.provide_credential(&ctx).await.unwrap();
+    assert_bearer_token(result, "test-token");
+
+    let provider = builder_without_other_slots().build();
+    let result = provider.provide_credential(&ctx).await.unwrap();
+    assert!(result.is_none());
 }
