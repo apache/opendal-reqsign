@@ -66,46 +66,6 @@ impl DefaultCredentialProvider {
         self.chain = self.chain.push_front(provider);
         self
     }
-
-    /// Set the OAuth2 scope for ADC providers (deprecated).
-    ///
-    /// This helper configures the scope used by the environment and
-    /// well-known ADC providers, as well as the VM metadata provider, by
-    /// constructing a new chain with the provided scope. Prefer configuring
-    /// scope via specific providers (e.g., `VmMetadataCredentialProvider::with_scope`)
-    /// or using the `GOOGLE_SCOPE` environment variable.
-    #[deprecated(
-        since = "1.0.0",
-        note = "Configure scope via specific providers or GOOGLE_SCOPE env var"
-    )]
-    pub fn with_scope(self, scope: impl Into<String>) -> Self {
-        let s = scope.into();
-        let chain = ProvideCredentialChain::new()
-            .push(EnvAdcCredentialProvider::new().with_scope(s.clone()))
-            .push(WellKnownAdcCredentialProvider::new().with_scope(s.clone()))
-            .push(VmMetadataCredentialProvider::new().with_scope(s));
-        Self { chain }
-    }
-
-    #[deprecated(
-        since = "1.0.0",
-        note = "Use DefaultCredentialProvider::builder().disable_env(skip).build() instead"
-    )]
-    pub fn skip_env_credentials(self, skip: bool) -> Self {
-        DefaultCredentialProvider::builder()
-            .disable_env(skip)
-            .build()
-    }
-
-    #[deprecated(
-        since = "1.0.0",
-        note = "Use DefaultCredentialProvider::builder().disable_well_known(skip).build() instead"
-    )]
-    pub fn skip_well_known_location(self, skip: bool) -> Self {
-        DefaultCredentialProvider::builder()
-            .disable_well_known(skip)
-            .build()
-    }
 }
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
@@ -116,30 +76,26 @@ impl ProvideCredential for DefaultCredentialProvider {
 }
 
 #[derive(Default, Clone, Debug)]
-struct EnvAdcCredentialProvider {
-    disabled: Option<bool>,
+pub struct EnvCredentialProvider {
     scope: Option<String>,
 }
 
-impl EnvAdcCredentialProvider {
-    fn new() -> Self {
+impl EnvCredentialProvider {
+    /// Create a new env ADC credential provider.
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the OAuth2 scope to request when exchanging ADC credentials.
-    fn with_scope(mut self, scope: impl Into<String>) -> Self {
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
         self.scope = Some(scope.into());
         self
     }
 }
-impl ProvideCredential for EnvAdcCredentialProvider {
+impl ProvideCredential for EnvCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        if self.disabled.unwrap_or(false) {
-            return Ok(None);
-        }
-
         let path = match ctx.env_var(GOOGLE_APPLICATION_CREDENTIALS) {
             Some(path) if !path.is_empty() => path,
             _ => return Ok(None),
@@ -153,30 +109,26 @@ impl ProvideCredential for EnvAdcCredentialProvider {
 }
 
 #[derive(Default, Clone, Debug)]
-struct WellKnownAdcCredentialProvider {
-    disabled: Option<bool>,
+pub struct WellKnownCredentialProvider {
     scope: Option<String>,
 }
 
-impl WellKnownAdcCredentialProvider {
-    fn new() -> Self {
+impl WellKnownCredentialProvider {
+    /// Create a new well-known ADC credential provider.
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the OAuth2 scope to request when exchanging ADC credentials.
-    fn with_scope(mut self, scope: impl Into<String>) -> Self {
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
         self.scope = Some(scope.into());
         self
     }
 }
-impl ProvideCredential for WellKnownAdcCredentialProvider {
+impl ProvideCredential for WellKnownCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        if self.disabled.unwrap_or(false) {
-            return Ok(None);
-        }
-
         let config_dir = if let Some(v) = ctx.env_var("APPDATA") {
             v
         } else if let Some(v) = ctx.env_var("XDG_CONFIG_HOME") {
@@ -203,15 +155,20 @@ impl ProvideCredential for WellKnownAdcCredentialProvider {
 }
 
 /// Builder for `DefaultCredentialProvider`.
-///
-/// Use `configure_vm_metadata` to customize VM metadata behavior and
-/// `disable_env` / `disable_well_known` / `disable_vm_metadata` to control
-/// participation. Call `build()` to construct the provider.
-#[derive(Default)]
 pub struct DefaultCredentialProviderBuilder {
-    env_adc: Option<EnvAdcCredentialProvider>,
-    well_known_adc: Option<WellKnownAdcCredentialProvider>,
+    env: Option<EnvCredentialProvider>,
+    well_known: Option<WellKnownCredentialProvider>,
     vm_metadata: Option<VmMetadataCredentialProvider>,
+}
+
+impl Default for DefaultCredentialProviderBuilder {
+    fn default() -> Self {
+        Self {
+            env: Some(EnvCredentialProvider::new()),
+            well_known: Some(WellKnownCredentialProvider::new()),
+            vm_metadata: Some(VmMetadataCredentialProvider::new()),
+        }
+    }
 }
 
 impl DefaultCredentialProviderBuilder {
@@ -220,49 +177,39 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
-    // No global scope configurator; configure scope on specific providers if needed.
-
-    /// Configure the VM metadata provider.
-    ///
-    /// This allows setting a custom endpoint, service account, or other options
-    /// for retrieving tokens when running on Google Compute Engine or
-    /// compatible environments.
-    pub fn configure_vm_metadata<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(VmMetadataCredentialProvider) -> VmMetadataCredentialProvider,
-    {
-        let p = self.vm_metadata.take().unwrap_or_default();
-        self.vm_metadata = Some(f(p));
+    /// Set the env ADC provider slot.
+    pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
+        self.env = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the env-based ADC provider.
-    pub fn disable_env(mut self, disable: bool) -> Self {
-        if disable {
-            self.env_adc = None;
-        } else if self.env_adc.is_none() {
-            self.env_adc = Some(EnvAdcCredentialProvider::new());
-        }
+    /// Remove the env ADC provider slot.
+    pub fn no_env(mut self) -> Self {
+        self.env = None;
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the well-known ADC provider.
-    pub fn disable_well_known(mut self, disable: bool) -> Self {
-        if disable {
-            self.well_known_adc = None;
-        } else if self.well_known_adc.is_none() {
-            self.well_known_adc = Some(WellKnownAdcCredentialProvider::new());
-        }
+    /// Set the well-known ADC provider slot.
+    pub fn well_known(mut self, provider: WellKnownCredentialProvider) -> Self {
+        self.well_known = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the VM metadata provider.
-    pub fn disable_vm_metadata(mut self, disable: bool) -> Self {
-        if disable {
-            self.vm_metadata = None;
-        } else if self.vm_metadata.is_none() {
-            self.vm_metadata = Some(VmMetadataCredentialProvider::new());
-        }
+    /// Remove the well-known ADC provider slot.
+    pub fn no_well_known(mut self) -> Self {
+        self.well_known = None;
+        self
+    }
+
+    /// Set the VM metadata provider slot.
+    pub fn vm_metadata(mut self, provider: VmMetadataCredentialProvider) -> Self {
+        self.vm_metadata = Some(provider);
+        self
+    }
+
+    /// Remove the VM metadata provider slot.
+    pub fn no_vm_metadata(mut self) -> Self {
+        self.vm_metadata = None;
         self
     }
 
@@ -270,22 +217,16 @@ impl DefaultCredentialProviderBuilder {
     pub fn build(self) -> DefaultCredentialProvider {
         let mut chain = ProvideCredentialChain::new();
 
-        if let Some(p) = self.env_adc {
+        if let Some(p) = self.env {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(EnvAdcCredentialProvider::new());
         }
 
-        if let Some(p) = self.well_known_adc {
+        if let Some(p) = self.well_known {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(WellKnownAdcCredentialProvider::new());
         }
 
         if let Some(p) = self.vm_metadata {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(VmMetadataCredentialProvider::new());
         }
 
         DefaultCredentialProvider::with_chain(chain)
@@ -296,8 +237,7 @@ impl DefaultCredentialProviderBuilder {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use reqsign_core::HttpSend;
-    use reqsign_core::{Context, StaticEnv};
+    use reqsign_core::{Context, FileRead, HttpSend, StaticEnv};
     use std::collections::HashMap;
     use std::env;
     use std::sync::{Arc, Mutex};
@@ -319,6 +259,30 @@ mod tests {
                         .into(),
                 )
                 .expect("response must build"))
+        }
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct MockFileRead {
+        files: Arc<HashMap<String, Vec<u8>>>,
+        paths: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl MockFileRead {
+        fn new(files: HashMap<String, Vec<u8>>) -> Self {
+            Self {
+                files: Arc::new(files),
+                paths: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl FileRead for MockFileRead {
+        async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+            self.paths.lock().unwrap().push(path.to_string());
+            self.files.get(path).cloned().ok_or_else(|| {
+                reqsign_core::Error::config_invalid(format!("file not found: {path}"))
+            })
         }
     }
 
@@ -356,7 +320,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_default_provider_with_scope() {
+    async fn test_default_provider_builder_default_chain() {
         let provider = DefaultCredentialProvider::builder().build();
 
         // Even without valid credentials, this should not panic
@@ -367,15 +331,99 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_default_provider_configures_vm_metadata_service_account() -> Result<()> {
+    async fn test_default_provider_no_env_removes_provider() -> Result<()> {
+        let env_path = "/tmp/google-env-adc.json";
+        let file_read = MockFileRead::new(HashMap::from([(
+            env_path.to_string(),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/testdata/test_credential.json"
+            ))
+            .to_vec(),
+        )]));
+        let ctx = Context::new()
+            .with_file_read(file_read.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([(
+                    GOOGLE_APPLICATION_CREDENTIALS.to_string(),
+                    env_path.to_string(),
+                )]),
+            });
+
+        let provider = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_well_known()
+            .no_vm_metadata()
+            .build();
+
+        assert!(provider.provide_credential(&ctx).await?.is_none());
+        assert!(file_read.paths.lock().unwrap().is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_default_provider_no_well_known_removes_provider() -> Result<()> {
+        let home = "/tmp/google-home";
+        let well_known_path = format!("{home}/.config/gcloud/application_default_credentials.json");
+        let file_read = MockFileRead::new(HashMap::from([(
+            well_known_path.clone(),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/testdata/test_credential.json"
+            ))
+            .to_vec(),
+        )]));
+        let ctx = Context::new()
+            .with_file_read(file_read.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([("HOME".to_string(), home.to_string())]),
+            });
+
+        let provider = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_well_known()
+            .no_vm_metadata()
+            .build();
+
+        assert!(provider.provide_credential(&ctx).await?.is_none());
+        assert!(file_read.paths.lock().unwrap().is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_default_provider_no_vm_metadata_removes_provider() -> Result<()> {
         let http = MockHttpSend::default();
         let ctx = Context::new().with_http_send(http.clone());
 
         let provider = DefaultCredentialProvider::builder()
-            .configure_vm_metadata(|p| {
-                p.with_endpoint("127.0.0.1:8080")
-                    .with_service_account("custom@test-project.iam.gserviceaccount.com")
-            })
+            .no_env()
+            .no_well_known()
+            .no_vm_metadata()
+            .build();
+
+        assert!(provider.provide_credential(&ctx).await?.is_none());
+        assert!(http.uris.lock().unwrap().is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_default_provider_custom_vm_metadata_service_account() -> Result<()> {
+        let http = MockHttpSend::default();
+        let ctx = Context::new().with_http_send(http.clone());
+
+        let provider = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_well_known()
+            .vm_metadata(
+                VmMetadataCredentialProvider::new()
+                    .with_endpoint("127.0.0.1:8080")
+                    .with_service_account("custom@test-project.iam.gserviceaccount.com"),
+            )
             .build();
 
         let cred = provider
