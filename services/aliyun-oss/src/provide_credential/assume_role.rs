@@ -36,6 +36,7 @@ static ALIYUN_RPC_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
     .remove(b'.')
     .remove(b'_')
     .remove(b'~');
+const DEFAULT_STS_ENDPOINT: &str = "https://sts.aliyuncs.com";
 static SIGNATURE_NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// AssumeRoleCredentialProvider loads credentials via Alibaba Cloud STS AssumeRole.
@@ -175,12 +176,12 @@ impl AssumeRoleCredentialProvider {
 
     fn get_sts_endpoint(&self, envs: &HashMap<String, String>) -> String {
         if let Some(endpoint) = &self.sts_endpoint {
-            return endpoint.clone();
+            return normalize_sts_endpoint(endpoint);
         }
 
         match envs.get(ALIBABA_CLOUD_STS_ENDPOINT) {
-            Some(endpoint) => format!("https://{endpoint}"),
-            None => "https://sts.aliyuncs.com".to_string(),
+            Some(endpoint) => normalize_sts_endpoint(endpoint),
+            None => DEFAULT_STS_ENDPOINT.to_string(),
         }
     }
 
@@ -306,6 +307,15 @@ fn default_base_provider_chain() -> ProvideCredentialChain<Credential> {
         .push(OssProfileCredentialProvider::new())
         .push(CredentialsFileCredentialProvider::new())
         .push(ConfigFileCredentialProvider::new())
+}
+
+fn normalize_sts_endpoint(endpoint: &str) -> String {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if endpoint.starts_with("https://") || endpoint.starts_with("http://") {
+        endpoint.to_string()
+    } else {
+        format!("https://{endpoint}")
+    }
 }
 
 fn canonicalized_query_string(params: &BTreeMap<String, String>) -> String {
@@ -451,6 +461,22 @@ mod tests {
         assert_eq!(resp.credentials.expiration, "2021-10-20T04:27:09Z");
 
         Ok(())
+    }
+
+    #[test]
+    fn test_normalize_sts_endpoint_accepts_bare_host_and_full_url() {
+        assert_eq!(
+            "https://sts.aliyuncs.com",
+            normalize_sts_endpoint("sts.aliyuncs.com")
+        );
+        assert_eq!(
+            "https://sts.example.com",
+            normalize_sts_endpoint("https://sts.example.com/")
+        );
+        assert_eq!(
+            "http://sts.example.com",
+            normalize_sts_endpoint("http://sts.example.com/")
+        );
     }
 
     #[tokio::test]
@@ -634,6 +660,52 @@ mod tests {
             .expect("authorization must exist");
         assert!(authorization.starts_with("OSS sts-ak-2:"));
         assert_eq!(2, http_send.calls());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_accepts_full_url_sts_endpoint_from_env() -> Result<()> {
+        let http_send = CaptureHttpSend::new(vec![
+            br#"{"Credentials":{"SecurityToken":"sts-token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"sts-secret","AccessKeyId":"sts-ak"}}"#
+                .to_vec(),
+        ]);
+        let ctx = Context::new()
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_STS_ENDPOINT.to_string(),
+                        "https://sts.example.com".to_string(),
+                    ),
+                ]),
+            });
+
+        let provider = AssumeRoleCredentialProvider::new()
+            .with_base_provider(TestBaseCredentialProvider::new(Some(Credential {
+                access_key_id: "base-ak".to_string(),
+                access_key_secret: "base-sk".to_string(),
+                security_token: None,
+                expires_in: None,
+            })))
+            .with_role_session_name("test-session")
+            .with_time("2024-03-05T06:07:08Z".parse().unwrap())
+            .with_signature_nonce("test-nonce");
+
+        let _ = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        let recorded_uri = http_send.uri().expect("request uri must be captured");
+        let uri: http::Uri = recorded_uri.parse().expect("uri must parse");
+        assert_eq!(Some("sts.example.com"), uri.authority().map(|v| v.as_str()));
+        assert_eq!("/", uri.path());
 
         Ok(())
     }
