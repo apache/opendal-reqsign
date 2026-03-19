@@ -44,7 +44,13 @@ async fn main() -> Result<()> {
     // );
 
     let signer = Signer::new(ctx, loader, RequestSigner::new("bucket"));
-    // Or opt into V4 signing:
+    // Or opt into V2/V4 signing:
+    // let signer = Signer::new(
+    //     ctx,
+    //     loader,
+    //     RequestSigner::new("bucket").with_signing_version(SigningVersion::V2),
+    // );
+    //
     // let signer = Signer::new(
     //     ctx,
     //     loader,
@@ -66,8 +72,8 @@ async fn main() -> Result<()> {
 
 ## Features
 
+- **V1, V2, and V4 Signing**: Supports legacy OSS V1, SHA256-based V2, and region-aware V4
 - **Multiple Credential Sources**: Environment variables, OSS profile files, Alibaba shared credential/config files, AssumeRole, and OIDC-based STS exchange
-- **V1 and V4 Signing**: Supports both legacy OSS V1 signatures and Signature V4
 - **Runtime Credential Sources**: Credentials URI, ECS RAM role metadata, and OIDC-based STS exchange
 - **STS Support**: Temporary credentials via Security Token Service
 - **All OSS Operations**: Object, bucket, and multipart operations
@@ -75,6 +81,14 @@ async fn main() -> Result<()> {
 ## Signer Configuration
 
 `RequestSigner::new("bucket")` keeps the current V1 behavior.
+
+To opt into V2 signing:
+
+```rust
+use reqsign_aliyun_oss::{RequestSigner, SigningVersion};
+
+let signer = RequestSigner::new("bucket").with_signing_version(SigningVersion::V2);
+```
 
 To opt into V4 signing, configure both the region and signing version:
 

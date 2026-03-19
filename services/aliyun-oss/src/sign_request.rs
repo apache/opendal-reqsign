@@ -20,7 +20,9 @@ use http::HeaderValue;
 use http::header::{AUTHORIZATION, CONTENT_TYPE, DATE, HOST};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use reqsign_core::Result;
-use reqsign_core::hash::{base64_hmac_sha1, hex_hmac_sha256, hex_sha256, hmac_sha256};
+use reqsign_core::hash::{
+    base64_hmac_sha1, base64_hmac_sha256, hex_hmac_sha256, hex_sha256, hmac_sha256,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, SignRequest, SigningRequest};
 use std::collections::HashSet;
@@ -29,11 +31,15 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 const CONTENT_MD5: &str = "content-md5";
+const IF_MODIFIED_SINCE: &str = "if-modified-since";
+const OSS_V2_ALGORITHM: &str = "OSS2";
 const OSS_V4_ALGORITHM: &str = "OSS4-HMAC-SHA256";
 const OSS_V4_REQUEST: &str = "aliyun_v4_request";
 const OSS_V4_SERVICE: &str = "oss";
+const RANGE: &str = "range";
 const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 const X_OSS_ADDITIONAL_HEADERS: &str = "x-oss-additional-headers";
+const X_OSS_ACCESS_KEY_ID: &str = "x-oss-access-key-id";
 const X_OSS_CONTENT_SHA256: &str = "x-oss-content-sha256";
 const X_OSS_CREDENTIAL: &str = "x-oss-credential";
 const X_OSS_DATE: &str = "x-oss-date";
@@ -55,11 +61,27 @@ static OSS_V4_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
+static OSS_V2_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+static OSS_V2_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    .remove(b'+');
+
+const OSS_V2_DEFAULT_ADDITIONAL_HEADERS: &[&str] = &[IF_MODIFIED_SINCE, RANGE];
+
 /// SigningVersion controls which OSS signing algorithm the signer uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SigningVersion {
     V1,
+    V2,
     V4,
 }
 
@@ -85,7 +107,7 @@ impl RequestSigner {
 
     /// Set the OSS region.
     ///
-    /// Signature V4 requires this value. V1 keeps ignoring it.
+    /// Signature V4 requires this value. V1 and V2 keep ignoring it.
     pub fn with_region(mut self, region: impl Into<String>) -> Self {
         self.region = Some(region.into());
         self
@@ -93,8 +115,8 @@ impl RequestSigner {
 
     /// Set the signing version.
     ///
-    /// The signer defaults to V1. Use V4 together with [`RequestSigner::with_region`]
-    /// to opt into OSS Signature Version 4.
+    /// The signer defaults to V1. Use V2 for SHA256-based legacy signing,
+    /// or V4 together with [`RequestSigner::with_region`] for region-aware signing.
     pub fn with_signing_version(mut self, signing_version: SigningVersion) -> Self {
         self.signing_version = signing_version;
         self
@@ -140,6 +162,9 @@ impl SignRequest for RequestSigner {
                     self.sign_header(req, cred, signing_time)?;
                 }
             }
+            SigningVersion::V2 => {
+                self.sign_v2(req, cred, signing_time, expires_in)?;
+            }
             SigningVersion::V4 => {
                 self.sign_v4(req, cred, signing_time, expires_in)?;
             }
@@ -150,6 +175,104 @@ impl SignRequest for RequestSigner {
 }
 
 impl RequestSigner {
+    fn sign_v2(
+        &self,
+        req: &mut http::request::Parts,
+        cred: &Credential,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        match expires_in {
+            Some(expires) => self.sign_v2_query(req, cred, signing_time, expires),
+            None => self.sign_v2_header(req, cred, signing_time),
+        }
+    }
+
+    fn sign_v2_header(
+        &self,
+        req: &mut http::request::Parts,
+        cred: &Credential,
+        signing_time: Timestamp,
+    ) -> Result<()> {
+        let date = signing_time.format_http_date();
+        req.headers.insert(DATE, date.parse()?);
+
+        if let Some(token) = &cred.security_token {
+            req.headers.insert(X_OSS_SECURITY_TOKEN, token.parse()?);
+        }
+
+        let additional_headers = self.v2_additional_headers(req, false);
+        let query_pairs = self.query_pairs(req);
+        let string_to_sign = self.build_v2_string_to_sign(
+            req,
+            &query_pairs,
+            query_pairs.len(),
+            &date,
+            &additional_headers,
+        )?;
+        let signature =
+            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+
+        let authorization = if additional_headers.is_empty() {
+            format!(
+                "{OSS_V2_ALGORITHM} AccessKeyId:{},Signature:{signature}",
+                cred.access_key_id
+            )
+        } else {
+            format!(
+                "{OSS_V2_ALGORITHM} AccessKeyId:{},AdditionalHeaders:{},Signature:{signature}",
+                cred.access_key_id,
+                additional_headers.join(";")
+            )
+        };
+        let mut value: HeaderValue = authorization.parse()?;
+        value.set_sensitive(true);
+        req.headers.insert(AUTHORIZATION, value);
+
+        Ok(())
+    }
+
+    fn sign_v2_query(
+        &self,
+        req: &mut http::request::Parts,
+        cred: &Credential,
+        signing_time: Timestamp,
+        expires: Duration,
+    ) -> Result<()> {
+        let expiration_time = (signing_time + expires).as_second().to_string();
+        let additional_headers = self.v2_additional_headers(req, true);
+        let mut query_pairs = self.query_pairs(req);
+        let existing_query_count = query_pairs.len();
+        query_pairs.push((
+            X_OSS_SIGNATURE_VERSION.to_string(),
+            OSS_V2_ALGORITHM.to_string(),
+        ));
+        query_pairs.push((X_OSS_EXPIRES.to_string(), expiration_time.clone()));
+        query_pairs.push((X_OSS_ACCESS_KEY_ID.to_string(), cred.access_key_id.clone()));
+        if !additional_headers.is_empty() {
+            query_pairs.push((
+                X_OSS_ADDITIONAL_HEADERS.to_string(),
+                additional_headers.join(";"),
+            ));
+        }
+        if let Some(token) = &cred.security_token {
+            query_pairs.push(("security-token".to_string(), token.clone()));
+        }
+
+        let string_to_sign = self.build_v2_string_to_sign(
+            req,
+            &query_pairs,
+            existing_query_count,
+            &expiration_time,
+            &additional_headers,
+        )?;
+        let signature =
+            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+        query_pairs.push((X_OSS_SIGNATURE.to_string(), signature));
+
+        self.apply_query_pairs(req, &query_pairs, existing_query_count)
+    }
+
     fn sign_header(
         &self,
         req: &mut http::request::Parts,
@@ -248,6 +371,48 @@ impl RequestSigner {
 
         req.uri = new_uri;
         Ok(())
+    }
+
+    fn build_v2_string_to_sign(
+        &self,
+        req: &http::request::Parts,
+        query_pairs: &[(String, String)],
+        existing_query_count: usize,
+        date_or_expires: &str,
+        additional_headers: &[String],
+    ) -> Result<String> {
+        let mut s = String::new();
+        writeln!(&mut s, "{}", req.method)?;
+        writeln!(
+            &mut s,
+            "{}",
+            req.headers
+                .get(CONTENT_MD5)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+        )?;
+        writeln!(
+            &mut s,
+            "{}",
+            req.headers
+                .get(CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+        )?;
+        writeln!(&mut s, "{date_or_expires}")?;
+        write!(
+            &mut s,
+            "{}",
+            self.v2_canonicalized_headers(req, additional_headers)?
+        )?;
+        writeln!(&mut s, "{}", additional_headers.join(";"))?;
+        write!(
+            &mut s,
+            "{}",
+            self.v2_canonicalized_resource(req, query_pairs, existing_query_count)?
+        )?;
+
+        Ok(s)
     }
 
     fn build_string_to_sign(
@@ -620,6 +785,187 @@ impl RequestSigner {
         Ok(utf8_percent_encode(&resource_path, &OSS_V4_URI_ENCODE_SET).to_string())
     }
 
+    fn v2_additional_headers(&self, req: &http::request::Parts, is_presign: bool) -> Vec<String> {
+        let defaults = if is_presign {
+            &[][..]
+        } else {
+            OSS_V2_DEFAULT_ADDITIONAL_HEADERS
+        };
+
+        let mut headers = defaults
+            .iter()
+            .copied()
+            .filter(|name| req.headers.contains_key(*name))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        headers.sort();
+        headers.dedup();
+        headers
+    }
+
+    fn v2_canonicalized_headers(
+        &self,
+        req: &http::request::Parts,
+        additional_headers: &[String],
+    ) -> Result<String> {
+        let mut headers = Vec::new();
+
+        for (name, value) in &req.headers {
+            let name = name.as_str().to_ascii_lowercase();
+            if name == AUTHORIZATION.as_str() {
+                continue;
+            }
+            if name.starts_with("x-oss-") || additional_headers.binary_search(&name).is_ok() {
+                let value = value
+                    .to_str()
+                    .map_err(|e| {
+                        Error::request_invalid("invalid header value for V2 signing").with_source(e)
+                    })?
+                    .trim()
+                    .to_string();
+                headers.push((name, value));
+            }
+        }
+
+        headers.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut s = String::new();
+        for (name, value) in headers {
+            writeln!(&mut s, "{name}:{value}")?;
+        }
+        Ok(s)
+    }
+
+    fn v2_canonicalized_resource(
+        &self,
+        req: &http::request::Parts,
+        query_pairs: &[(String, String)],
+        existing_query_count: usize,
+    ) -> Result<String> {
+        let decoded_path = percent_decode_str(req.uri.path())
+            .decode_utf8()
+            .map_err(|e| Error::request_invalid("invalid request path").with_source(e))?;
+        let authority = req.uri.authority().map(|v| v.as_str()).unwrap_or("");
+        let resource_path = if authority.starts_with(&format!("{}.", self.bucket)) {
+            format!("/{}{}", self.bucket, decoded_path)
+        } else {
+            decoded_path.into_owned()
+        };
+
+        let mut resource = utf8_percent_encode(&resource_path, &OSS_V2_ENCODE_SET).to_string();
+        let canonical_query = self.v2_canonicalized_query(query_pairs, existing_query_count);
+        if !canonical_query.is_empty() {
+            resource.push('?');
+            resource.push_str(&canonical_query);
+        }
+
+        Ok(resource)
+    }
+
+    fn v2_canonicalized_query(
+        &self,
+        query_pairs: &[(String, String)],
+        existing_query_count: usize,
+    ) -> String {
+        let mut encoded_pairs = query_pairs
+            .iter()
+            .enumerate()
+            .map(|(idx, (key, value))| {
+                let preserve_plus = idx < existing_query_count;
+                (
+                    idx,
+                    self.v2_encode_query_component(key, preserve_plus),
+                    self.v2_encode_query_component(value, preserve_plus),
+                )
+            })
+            .collect::<Vec<_>>();
+        encoded_pairs.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.0.cmp(&b.0)));
+
+        encoded_pairs
+            .into_iter()
+            .map(|(_, key, value)| {
+                if value.is_empty() {
+                    key
+                } else {
+                    format!("{key}={value}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("&")
+    }
+
+    fn query_pairs(&self, req: &http::request::Parts) -> Vec<(String, String)> {
+        req.uri
+            .query()
+            .map(|query| self.parse_v2_query_pairs(query))
+            .unwrap_or_default()
+    }
+
+    fn parse_v2_query_pairs(&self, query: &str) -> Vec<(String, String)> {
+        query
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| {
+                if let Some((key, value)) = pair.split_once('=') {
+                    (
+                        percent_decode_str(key).decode_utf8_lossy().into_owned(),
+                        percent_decode_str(value).decode_utf8_lossy().into_owned(),
+                    )
+                } else {
+                    (
+                        percent_decode_str(pair).decode_utf8_lossy().into_owned(),
+                        String::new(),
+                    )
+                }
+            })
+            .collect()
+    }
+
+    fn apply_query_pairs(
+        &self,
+        req: &mut http::request::Parts,
+        query_pairs: &[(String, String)],
+        existing_query_count: usize,
+    ) -> Result<()> {
+        let query_string = query_pairs
+            .iter()
+            .enumerate()
+            .map(|(idx, (key, value))| {
+                let preserve_plus = idx < existing_query_count;
+                let key = self.v2_encode_query_component(key, preserve_plus);
+                if value.is_empty() {
+                    key
+                } else {
+                    format!(
+                        "{key}={}",
+                        self.v2_encode_query_component(value, preserve_plus)
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let path = req.uri.path();
+        let new_path_and_query = if query_string.is_empty() {
+            path.to_string()
+        } else {
+            format!("{path}?{query_string}")
+        };
+        let mut parts = req.uri.clone().into_parts();
+        parts.path_and_query = Some(new_path_and_query.try_into()?);
+        req.uri = http::Uri::from_parts(parts)?;
+
+        Ok(())
+    }
+
+    fn v2_encode_query_component(&self, value: &str, preserve_plus: bool) -> String {
+        if preserve_plus {
+            utf8_percent_encode(value, &OSS_V2_QUERY_ENCODE_SET).to_string()
+        } else {
+            utf8_percent_encode(value, &OSS_V2_ENCODE_SET).to_string()
+        }
+    }
+
     fn canonicalize_headers(
         &self,
         req: &http::request::Parts,
@@ -913,7 +1259,6 @@ mod tests {
         );
         assert!(!string_to_sign.contains("x-oss-security-token:sts-token"));
     }
-
     #[test]
     fn test_request_signer_accepts_region_configuration() {
         let signer = RequestSigner::new("bucket")
@@ -966,6 +1311,320 @@ mod tests {
             without_region.headers.get(DATE),
             with_region.headers.get(DATE)
         );
+    }
+
+    #[test]
+    fn test_v2_header_signature_matches_official_put_object_example() {
+        let credential = Credential {
+            access_key_id: "44CF9590006BF252F707".to_string(),
+            access_key_secret: "OtxrzxIsfpFjA7SwPzILwy8Bw21TLhquhboDYROV".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_487_151_431).expect("timestamp must build");
+        let signer = RequestSigner::new("oss-example")
+            .with_signing_version(SigningVersion::V2)
+            .with_time(time);
+
+        let req = http::Request::put("https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson")
+            .header(CONTENT_MD5, "FxqG8Ca0qEJPOghSihJ8Ew==")
+            .header(CONTENT_TYPE, "text/plain")
+            .header("x-oss-object-acl", "private")
+            .header(DATE, "Wed, 15 Feb 2017 09:37:11 GMT")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+
+        let additional_headers = signer.v2_additional_headers(&req, false);
+        let string_to_sign = signer
+            .build_v2_string_to_sign(
+                &req,
+                &signer.query_pairs(&req),
+                signer.query_pairs(&req).len(),
+                "Wed, 15 Feb 2017 09:37:11 GMT",
+                &additional_headers,
+            )
+            .expect("string to sign must build");
+        assert_eq!(
+            string_to_sign,
+            "PUT\nFxqG8Ca0qEJPOghSihJ8Ew==\ntext/plain\nWed, 15 Feb 2017 09:37:11 GMT\nx-oss-object-acl:private\n\n%2Foss-example%2Fnelson"
+        );
+
+        let mut signed_req =
+            http::Request::put("https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson")
+                .header(CONTENT_MD5, "FxqG8Ca0qEJPOghSihJ8Ew==")
+                .header(CONTENT_TYPE, "text/plain")
+                .header("x-oss-object-acl", "private")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+        signer
+            .sign_v2_header(&mut signed_req, &credential, time)
+            .expect("v2 header signing must succeed");
+
+        assert_eq!(
+            signed_req.headers.get(DATE).and_then(|v| v.to_str().ok()),
+            Some("Wed, 15 Feb 2017 09:37:11 GMT")
+        );
+        assert_eq!(
+            signed_req
+                .headers
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok()),
+            Some(
+                "OSS2 AccessKeyId:44CF9590006BF252F707,Signature:5Am2ewK1tL0gXX7GV6dwybZtj7efOEtc0Mo2FR6CkM8="
+            )
+        );
+    }
+
+    #[test]
+    fn test_v2_header_signature_matches_official_additional_headers_example() {
+        let credential = Credential {
+            access_key_id: "44CF9590006BF252F707".to_string(),
+            access_key_secret: "OtxrzxIsfpFjA7SwPzILwy8Bw21TLhquhboDYROV".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_487_210_979).expect("timestamp must build");
+        let signer = RequestSigner::new("oss-example")
+            .with_signing_version(SigningVersion::V2)
+            .with_time(time);
+
+        let req = http::Request::get("https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson")
+            .header(RANGE, "bytes=0-7")
+            .header(IF_MODIFIED_SINCE, "Thu, 16 Feb 2017 02:10:39 GMT")
+            .header(DATE, "Thu, 16 Feb 2017 02:09:39 GMT")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+
+        let additional_headers = signer.v2_additional_headers(&req, false);
+        assert_eq!(
+            additional_headers,
+            vec![IF_MODIFIED_SINCE.to_string(), RANGE.to_string()]
+        );
+        let string_to_sign = signer
+            .build_v2_string_to_sign(
+                &req,
+                &signer.query_pairs(&req),
+                signer.query_pairs(&req).len(),
+                "Thu, 16 Feb 2017 02:09:39 GMT",
+                &additional_headers,
+            )
+            .expect("string to sign must build");
+        assert_eq!(
+            string_to_sign,
+            "GET\n\n\nThu, 16 Feb 2017 02:09:39 GMT\nif-modified-since:Thu, 16 Feb 2017 02:10:39 GMT\nrange:bytes=0-7\nif-modified-since;range\n%2Foss-example%2Fnelson"
+        );
+
+        let mut signed_req =
+            http::Request::get("https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson")
+                .header(RANGE, "bytes=0-7")
+                .header(IF_MODIFIED_SINCE, "Thu, 16 Feb 2017 02:10:39 GMT")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+        signer
+            .sign_v2_header(&mut signed_req, &credential, time)
+            .expect("v2 header signing must succeed");
+
+        assert_eq!(
+            signed_req
+                .headers
+                .get(AUTHORIZATION)
+                .and_then(|v| v.to_str().ok()),
+            Some(
+                "OSS2 AccessKeyId:44CF9590006BF252F707,AdditionalHeaders:if-modified-since;range,Signature:YG9mKO3m4S0Jx9Hk6Lq64VchJg/TOTkyCX4DaeeOYxE="
+            )
+        );
+    }
+
+    #[test]
+    fn test_v2_presign_signature_matches_official_example() {
+        let credential = Credential {
+            access_key_id: "44CF9590006BF252F707".to_string(),
+            access_key_secret: "OtxrzxIsfpFjA7SwPzILwy8Bw21TLhquhboDYROV".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_487_151_431).expect("timestamp must build");
+        let signer = RequestSigner::new("oss-example")
+            .with_signing_version(SigningVersion::V2)
+            .with_time(time);
+
+        let req = http::Request::get("https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+        let expiration_time = "1487152431".to_string();
+        let mut query_pairs = signer.query_pairs(&req);
+        query_pairs.push((
+            X_OSS_SIGNATURE_VERSION.to_string(),
+            OSS_V2_ALGORITHM.to_string(),
+        ));
+        query_pairs.push((X_OSS_EXPIRES.to_string(), expiration_time.clone()));
+        query_pairs.push((
+            X_OSS_ACCESS_KEY_ID.to_string(),
+            credential.access_key_id.clone(),
+        ));
+        let additional_headers = signer.v2_additional_headers(&req, true);
+        let string_to_sign = signer
+            .build_v2_string_to_sign(&req, &query_pairs, 0, &expiration_time, &additional_headers)
+            .expect("string to sign must build");
+        assert_eq!(
+            string_to_sign,
+            "GET\n\n\n1487152431\n\n%2Foss-example%2Fnelson?x-oss-access-key-id=44CF9590006BF252F707&x-oss-expires=1487152431&x-oss-signature-version=OSS2"
+        );
+
+        let mut signed_req =
+            http::Request::get("https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+        signer
+            .sign_v2_query(
+                &mut signed_req,
+                &credential,
+                time,
+                Duration::from_secs(1_000),
+            )
+            .expect("v2 presign must succeed");
+
+        assert_eq!(
+            signed_req.uri.query(),
+            Some(
+                "x-oss-signature-version=OSS2&x-oss-expires=1487152431&x-oss-access-key-id=44CF9590006BF252F707&x-oss-signature=ps%2F%2BMLhd1WKkVi%2FQlOiliJsTaBMBk93f6UYVscDNHCQ%3D"
+            )
+        );
+    }
+
+    #[test]
+    fn test_v2_presign_signs_all_query_parameters() {
+        let credential = Credential {
+            access_key_id: "44CF9590006BF252F707".to_string(),
+            access_key_secret: "OtxrzxIsfpFjA7SwPzILwy8Bw21TLhquhboDYROV".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_487_210_979).expect("timestamp must build");
+        let signer = RequestSigner::new("oss-example")
+            .with_signing_version(SigningVersion::V2)
+            .with_time(time);
+
+        let req = http::Request::get(
+            "https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson?x-oss-signature-version=OSS2&extra-query=1&x-oss-access-key-id=44CF9590006BF252F707&x-oss-expires=1487211619",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+        let string_to_sign = signer
+            .build_v2_string_to_sign(
+                &req,
+                &signer.query_pairs(&req),
+                signer.query_pairs(&req).len(),
+                "1487211619",
+                &[],
+            )
+            .expect("string to sign must build");
+        assert_eq!(
+            string_to_sign,
+            "GET\n\n\n1487211619\n\n%2Foss-example%2Fnelson?extra-query=1&x-oss-access-key-id=44CF9590006BF252F707&x-oss-expires=1487211619&x-oss-signature-version=OSS2"
+        );
+
+        let mut signed_req = http::Request::get(
+            "https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson?extra-query=1",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+        signer
+            .sign_v2_query(&mut signed_req, &credential, time, Duration::from_secs(640))
+            .expect("v2 presign must succeed");
+
+        assert_eq!(
+            signed_req.uri.query(),
+            Some(
+                "extra-query=1&x-oss-signature-version=OSS2&x-oss-expires=1487211619&x-oss-access-key-id=44CF9590006BF252F707&x-oss-signature=wsARTPqvZdbdPjYpZfDZ%2FjisUaacYq7gGOdB3f1BgTE%3D"
+            )
+        );
+    }
+
+    #[test]
+    fn test_v2_presign_preserves_literal_plus_in_existing_query() {
+        let credential = Credential {
+            access_key_id: "44CF9590006BF252F707".to_string(),
+            access_key_secret: "OtxrzxIsfpFjA7SwPzILwy8Bw21TLhquhboDYROV".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_487_151_431).expect("timestamp must build");
+        let signer = RequestSigner::new("oss-example")
+            .with_signing_version(SigningVersion::V2)
+            .with_time(time);
+
+        let req = http::Request::get(
+            "https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson?response-content-disposition=attachment+filename",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+        assert_eq!(
+            signer.query_pairs(&req),
+            vec![(
+                "response-content-disposition".to_string(),
+                "attachment+filename".to_string()
+            )]
+        );
+
+        let expiration_time = "1487152431".to_string();
+        let mut query_pairs = signer.query_pairs(&req);
+        query_pairs.push((
+            X_OSS_SIGNATURE_VERSION.to_string(),
+            OSS_V2_ALGORITHM.to_string(),
+        ));
+        query_pairs.push((X_OSS_EXPIRES.to_string(), expiration_time.clone()));
+        query_pairs.push((
+            X_OSS_ACCESS_KEY_ID.to_string(),
+            credential.access_key_id.clone(),
+        ));
+        let string_to_sign = signer
+            .build_v2_string_to_sign(&req, &query_pairs, 1, &expiration_time, &[])
+            .expect("string to sign must build");
+        assert!(
+            string_to_sign
+                .contains("response-content-disposition=attachment+filename&x-oss-access-key-id=")
+        );
+        assert!(!string_to_sign.contains("attachment%20filename"));
+
+        let mut signed_req = http::Request::get(
+            "https://oss-example.oss-cn-hangzhou.aliyuncs.com/nelson?response-content-disposition=attachment+filename",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+        signer
+            .sign_v2_query(
+                &mut signed_req,
+                &credential,
+                time,
+                Duration::from_secs(1_000),
+            )
+            .expect("v2 presign must succeed");
+
+        let query = signed_req.uri.query().expect("query must exist");
+        assert!(query.contains("response-content-disposition=attachment+filename"));
+        assert!(!query.contains("attachment%20filename"));
     }
 
     #[tokio::test]

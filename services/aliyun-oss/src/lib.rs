@@ -22,12 +22,12 @@
 //!
 //! ## Overview
 //!
-//! Aliyun OSS uses a custom signing algorithm based on HMAC-SHA1. This crate implements
-//! the complete signing process along with credential loading from various sources
-//! including environment variables, configuration files, and STS tokens.
+//! Aliyun OSS supports multiple signature generations. This crate keeps V1 as the
+//! default and also supports V2 and V4 signing for callers that need stronger hashing
+//! or modern region-aware signing.
 //!
-//! `RequestSigner` defaults to V1 signing and supports opting into V4 signing
-//! when both region and signing version are configured.
+//! `RequestSigner` defaults to V1 signing and supports opting into V2 or V4 signing.
+//! V4 additionally requires a configured region.
 //!
 //! ## Quick Start
 //!
@@ -72,7 +72,10 @@
 //!
 //!     // Create request builder
 //!     let builder = RequestSigner::new("bucket");
-//!     // Or opt into V4:
+//!     // Or opt into V2/V4:
+//!     // let builder = RequestSigner::new("bucket")
+//!     //     .with_signing_version(SigningVersion::V2);
+//!
 //!     // let builder = RequestSigner::new("bucket")
 //!     //     .with_region("cn-beijing")
 //!     //     .with_signing_version(SigningVersion::V4);
