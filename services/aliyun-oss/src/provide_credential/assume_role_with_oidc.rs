@@ -22,6 +22,8 @@ use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
 
+const DEFAULT_STS_ENDPOINT: &str = "https://sts.aliyuncs.com";
+
 /// AssumeRoleWithOidcCredentialProvider loads credential via assume role with OIDC.
 ///
 /// This provider reads configuration from environment variables at runtime:
@@ -59,12 +61,12 @@ impl AssumeRoleWithOidcCredentialProvider {
 
     fn get_sts_endpoint(&self, envs: &std::collections::HashMap<String, String>) -> String {
         if let Some(endpoint) = &self.sts_endpoint {
-            return endpoint.clone();
+            return normalize_sts_endpoint(endpoint);
         }
 
         match envs.get(ALIBABA_CLOUD_STS_ENDPOINT) {
-            Some(endpoint) => format!("https://{endpoint}"),
-            None => "https://sts.aliyuncs.com".to_string(),
+            Some(endpoint) => normalize_sts_endpoint(endpoint),
+            None => DEFAULT_STS_ENDPOINT.to_string(),
         }
     }
 
@@ -146,6 +148,15 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
     }
 }
 
+fn normalize_sts_endpoint(endpoint: &str) -> String {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if endpoint.starts_with("https://") || endpoint.starts_with("http://") {
+        endpoint.to_string()
+    } else {
+        format!("https://{endpoint}")
+    }
+}
+
 #[derive(Default, Debug, Deserialize)]
 #[serde(default)]
 struct AssumeRoleWithOidcResponse {
@@ -212,6 +223,22 @@ mod tests {
         assert_eq!(&resp.credentials.expiration, "2021-10-20T04:27:09Z");
 
         Ok(())
+    }
+
+    #[test]
+    fn test_normalize_sts_endpoint_accepts_bare_host_and_full_url() {
+        assert_eq!(
+            "https://sts.aliyuncs.com",
+            normalize_sts_endpoint("sts.aliyuncs.com")
+        );
+        assert_eq!(
+            "https://sts.example.com",
+            normalize_sts_endpoint("https://sts.example.com/")
+        );
+        assert_eq!(
+            "http://sts.example.com",
+            normalize_sts_endpoint("http://sts.example.com/")
+        );
     }
 
     #[tokio::test]
@@ -401,6 +428,56 @@ mod tests {
             params.get("RoleSessionName").map(String::as_str),
             Some("override-session")
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_oidc_accepts_full_url_sts_endpoint_from_env() -> Result<()> {
+        let token_path = "/mock/token";
+        let file_read = TestFileRead {
+            expected_path: token_path.to_string(),
+            content: b"token".to_vec(),
+        };
+        let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
+        let http_send = CaptureHttpSend::new(http_body);
+
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        token_path.to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_STS_ENDPOINT.to_string(),
+                        "https://sts.example.com".to_string(),
+                    ),
+                ]),
+            });
+
+        let _ = AssumeRoleWithOidcCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        let recorded_uri = http_send
+            .uri()
+            .expect("http_send must capture outgoing uri");
+        let uri: http::Uri = recorded_uri.parse().expect("uri must parse");
+        assert_eq!(Some("sts.example.com"), uri.authority().map(|v| v.as_str()));
+        assert_eq!("/", uri.path());
 
         Ok(())
     }
