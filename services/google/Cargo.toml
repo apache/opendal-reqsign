@@ -32,11 +32,13 @@ http = { workspace = true }
 jsonwebtoken = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
+reqsign-aws-v4 = { workspace = true }
 reqsign-core = { workspace = true }
 rsa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
 
 [dev-dependencies]
 bytes = { workspace = true }

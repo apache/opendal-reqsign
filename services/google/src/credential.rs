@@ -100,12 +100,18 @@ pub mod external_account {
     #[derive(Clone, Deserialize, Debug)]
     #[serde(untagged)]
     pub enum Source {
+        /// AWS provider-specific credential source.
+        #[serde(rename_all = "snake_case")]
+        Aws(AwsSource),
         /// URL-based credential source.
         #[serde(rename_all = "snake_case")]
         Url(UrlSource),
         /// File-based credential source.
         #[serde(rename_all = "snake_case")]
         File(FileSource),
+        /// Executable-based credential source.
+        #[serde(rename_all = "snake_case")]
+        Executable(ExecutableSource),
     }
 
     /// Configuration for fetching credentials from a URL.
@@ -128,6 +134,42 @@ pub mod external_account {
         pub file: String,
         /// The format of the file.
         pub format: Format,
+    }
+
+    /// Configuration for AWS provider-specific workload identity federation.
+    #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "snake_case")]
+    pub struct AwsSource {
+        /// The environment identifier, currently `aws1`.
+        pub environment_id: String,
+        /// Metadata URL used to derive the region when env vars are absent.
+        pub region_url: Option<String>,
+        /// Metadata URL used to retrieve the role name and credentials.
+        pub url: Option<String>,
+        /// Regional GetCallerIdentity verification URL template.
+        pub regional_cred_verification_url: String,
+        /// Optional IMDSv2 token URL.
+        pub imdsv2_session_token_url: Option<String>,
+    }
+
+    /// Configuration for executing a command to load credentials.
+    #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "snake_case")]
+    pub struct ExecutableSource {
+        /// The executable configuration.
+        pub executable: ExecutableConfig,
+    }
+
+    /// Executable-based credential configuration.
+    #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "snake_case")]
+    pub struct ExecutableConfig {
+        /// The full command to run.
+        pub command: String,
+        /// Optional timeout in milliseconds.
+        pub timeout_millis: Option<u64>,
+        /// Optional output file used to cache the executable response.
+        pub output_file: Option<String>,
     }
 
     /// Format for parsing credentials.
@@ -383,6 +425,79 @@ mod tests {
         }"#;
         let cred = CredentialFile::from_slice(ea_json.as_bytes()).unwrap();
         assert!(matches!(cred, CredentialFile::ExternalAccount(_)));
+
+        let aws_ea_json = r#"{
+            "type": "external_account",
+            "audience": "test_audience",
+            "subject_token_type": "urn:ietf:params:aws:token-type:aws4_request",
+            "token_url": "https://example.com/token",
+            "credential_source": {
+                "environment_id": "aws1",
+                "region_url": "http://169.254.169.254/latest/meta-data/placement/availability-zone",
+                "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials",
+                "regional_cred_verification_url": "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15",
+                "imdsv2_session_token_url": "http://169.254.169.254/latest/api/token"
+            }
+        }"#;
+        let cred = CredentialFile::from_slice(aws_ea_json.as_bytes()).unwrap();
+        match cred {
+            CredentialFile::ExternalAccount(external_account) => match external_account
+                .credential_source
+            {
+                external_account::Source::Aws(source) => {
+                    assert_eq!(source.environment_id, "aws1");
+                    assert_eq!(
+                        source.region_url.as_deref(),
+                        Some("http://169.254.169.254/latest/meta-data/placement/availability-zone")
+                    );
+                    assert_eq!(
+                        source.url.as_deref(),
+                        Some("http://169.254.169.254/latest/meta-data/iam/security-credentials")
+                    );
+                    assert_eq!(
+                        source.regional_cred_verification_url,
+                        "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15"
+                    );
+                    assert_eq!(
+                        source.imdsv2_session_token_url.as_deref(),
+                        Some("http://169.254.169.254/latest/api/token")
+                    );
+                }
+                _ => panic!("Expected Aws source"),
+            },
+            _ => panic!("Expected ExternalAccount"),
+        }
+
+        let exec_ea_json = r#"{
+            "type": "external_account",
+            "audience": "test_audience",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "token_url": "https://example.com/token",
+            "credential_source": {
+                "executable": {
+                    "command": "/usr/bin/fetch-token --flag",
+                    "timeout_millis": 5000,
+                    "output_file": "/tmp/token-cache.json"
+                }
+            }
+        }"#;
+        let cred = CredentialFile::from_slice(exec_ea_json.as_bytes()).unwrap();
+        match cred {
+            CredentialFile::ExternalAccount(external_account) => {
+                match external_account.credential_source {
+                    external_account::Source::Executable(source) => {
+                        assert_eq!(source.executable.command, "/usr/bin/fetch-token --flag");
+                        assert_eq!(source.executable.timeout_millis, Some(5000));
+                        assert_eq!(
+                            source.executable.output_file.as_deref(),
+                            Some("/tmp/token-cache.json")
+                        );
+                    }
+                    _ => panic!("Expected Executable source"),
+                }
+            }
+            _ => panic!("Expected ExternalAccount"),
+        }
 
         // Test authorized user
         let au_json = r#"{

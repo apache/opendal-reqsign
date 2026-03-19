@@ -15,6 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod assume_role;
+pub use assume_role::AssumeRoleCredentialProvider;
+
 mod assume_role_with_oidc;
 pub use assume_role_with_oidc::AssumeRoleWithOidcCredentialProvider;
 
@@ -24,8 +27,14 @@ pub use config_file::ConfigFileCredentialProvider;
 mod credentials_file;
 pub use credentials_file::CredentialsFileCredentialProvider;
 
+mod credentials_uri;
+pub use credentials_uri::CredentialsUriCredentialProvider;
+
 mod default;
 pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
+
+mod ecs_ram_role;
+pub use ecs_ram_role::EcsRamRoleCredentialProvider;
 
 mod env;
 pub use env::EnvCredentialProvider;
