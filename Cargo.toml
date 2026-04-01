@@ -64,6 +64,6 @@ rust-ini = { version = "0.21" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 sha1 = "0.10"
-sha2 = { version = "0.10", features = ["oid"] }
+sha2 = { version = "0.11", features = ["oid"] }
 tempfile = "3.8"
 tokio = { version = "1", default-features = false }
