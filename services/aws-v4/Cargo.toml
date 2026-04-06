@@ -43,7 +43,7 @@ rust-ini = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = "0.7"
-sha1 = "0.10"
+sha1 = "0.11"
 
 [dev-dependencies]
 aws-credential-types = "1.1.8"
