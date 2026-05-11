@@ -247,7 +247,7 @@ impl RequestSigner {
         let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
             reqsign_core::Error::unexpected("failed to parse private key").with_source(e)
         })?;
-        let signing_key = SigningKey::<sha2::Sha256>::new(private_key);
+        let signing_key = SigningKey::<rsa::sha2::Sha256>::new(private_key);
         let signature = signing_key.sign_with_rng(&mut rng, string_to_sign.as_bytes());
 
         Ok(signature.to_string())

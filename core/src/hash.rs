@@ -21,6 +21,7 @@ use crate::Error;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use hmac::Hmac;
+use hmac::KeyInit;
 use hmac::Mac;
 use sha1::Sha1;
 use sha2::Digest;
