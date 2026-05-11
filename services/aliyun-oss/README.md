@@ -201,13 +201,11 @@ Only direct static modes are loaded in this crate today: `AK` and `StsToken`.
 
 ### STS AssumeRole with OIDC
 
-For Kubernetes/ACK environments:
+For Kubernetes/ACK environments, provide the OIDC settings explicitly:
 
 ```rust
 use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider};
 
-// Set ALIBABA_CLOUD_ROLE_ARN, ALIBABA_CLOUD_OIDC_PROVIDER_ARN,
-// and ALIBABA_CLOUD_OIDC_TOKEN_FILE in the environment.
 let loader = DefaultCredentialProvider::builder()
     .no_env()
     .no_oss_profile()
@@ -216,12 +214,20 @@ let loader = DefaultCredentialProvider::builder()
     .no_credentials_file()
     .no_config_file()
     .oidc(
-        AssumeRoleWithOidcCredentialProvider::new().with_role_session_name("my-session"),
+        AssumeRoleWithOidcCredentialProvider::new()
+            .with_role_arn("acs:ram::123456789012:role/example")
+            .with_oidc_provider_arn("acs:ram::123456789012:oidc-provider/example")
+            .with_oidc_token_file("/var/run/secrets/tokens/oidc-token")
+            .with_role_session_name("my-session"),
     )
     .build();
 ```
 
-The session name defaults to `reqsign`. To customize it, set `ALIBABA_CLOUD_ROLE_SESSION_NAME` or use `AssumeRoleWithOidcCredentialProvider::with_role_session_name`.
+Or rely on environment variables by setting `ALIBABA_CLOUD_ROLE_ARN`,
+`ALIBABA_CLOUD_OIDC_PROVIDER_ARN`, and `ALIBABA_CLOUD_OIDC_TOKEN_FILE`.
+The session name defaults to `reqsign`. To customize it, set
+`ALIBABA_CLOUD_ROLE_SESSION_NAME` or use
+`AssumeRoleWithOidcCredentialProvider::with_role_session_name`.
 
 ### STS AssumeRole with Base AK Credentials
 
