@@ -200,6 +200,31 @@
 //! `ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET`,
 //! `ALIBABA_CLOUD_ROLE_ARN`, and optionally `ALIBABA_CLOUD_EXTERNAL_ID`.
 //!
+//! ### STS AssumeRole with OIDC
+//!
+//! ```no_run
+//! use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider};
+//!
+//! let loader = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .no_oss_profile()
+//!     .no_credentials_uri()
+//!     .no_ecs_ram_role()
+//!     .no_credentials_file()
+//!     .no_config_file()
+//!     .oidc(
+//!         AssumeRoleWithOidcCredentialProvider::new()
+//!             .with_role_arn("acs:ram::123456789012:role/example")
+//!             .with_oidc_provider_arn("acs:ram::123456789012:oidc-provider/example")
+//!             .with_oidc_token_file("/var/run/secrets/tokens/oidc-token")
+//!             .with_role_session_name("my-session"),
+//!     )
+//!     .build();
+//! ```
+//!
+//! Or rely on environment variables by setting `ALIBABA_CLOUD_ROLE_ARN`,
+//! `ALIBABA_CLOUD_OIDC_PROVIDER_ARN`, and `ALIBABA_CLOUD_OIDC_TOKEN_FILE`.
+//!
 //! ### Custom Endpoints
 //!
 //! ```no_run

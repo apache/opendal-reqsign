@@ -21,19 +21,27 @@ use reqsign_core::Result;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
+use std::collections::HashMap;
 
 const DEFAULT_STS_ENDPOINT: &str = "https://sts.aliyuncs.com";
 
 /// AssumeRoleWithOidcCredentialProvider loads credential via assume role with OIDC.
 ///
-/// This provider reads configuration from environment variables at runtime:
+/// `new()` reads configuration from environment variables at runtime:
 /// - `ALIBABA_CLOUD_ROLE_ARN`: The ARN of the role to assume
 /// - `ALIBABA_CLOUD_ROLE_SESSION_NAME`: Optional role session name
 /// - `ALIBABA_CLOUD_OIDC_PROVIDER_ARN`: The ARN of the OIDC provider
 /// - `ALIBABA_CLOUD_OIDC_TOKEN_FILE`: Path to the OIDC token file
 /// - `ALIBABA_CLOUD_STS_ENDPOINT`: Optional custom STS endpoint
+///
+/// Use `with_role_arn(...)`, `with_oidc_provider_arn(...)`, and
+/// `with_oidc_token_file(...)` to make the required OIDC configuration
+/// explicit and avoid depending on runtime environment lookup.
 #[derive(Debug, Default, Clone)]
 pub struct AssumeRoleWithOidcCredentialProvider {
+    role_arn: Option<String>,
+    oidc_provider_arn: Option<String>,
+    oidc_token_file: Option<String>,
     sts_endpoint: Option<String>,
     role_session_name: Option<String>,
 }
@@ -45,7 +53,33 @@ impl AssumeRoleWithOidcCredentialProvider {
         Self::default()
     }
 
+    /// Set the role ARN.
+    ///
+    /// This setting takes precedence over `ALIBABA_CLOUD_ROLE_ARN`.
+    pub fn with_role_arn(mut self, role_arn: impl Into<String>) -> Self {
+        self.role_arn = Some(role_arn.into());
+        self
+    }
+
+    /// Set the OIDC provider ARN.
+    ///
+    /// This setting takes precedence over `ALIBABA_CLOUD_OIDC_PROVIDER_ARN`.
+    pub fn with_oidc_provider_arn(mut self, provider_arn: impl Into<String>) -> Self {
+        self.oidc_provider_arn = Some(provider_arn.into());
+        self
+    }
+
+    /// Set the OIDC token file path.
+    ///
+    /// This setting takes precedence over `ALIBABA_CLOUD_OIDC_TOKEN_FILE`.
+    pub fn with_oidc_token_file(mut self, token_file: impl Into<String>) -> Self {
+        self.oidc_token_file = Some(token_file.into());
+        self
+    }
+
     /// Set the STS endpoint.
+    ///
+    /// This setting takes precedence over `ALIBABA_CLOUD_STS_ENDPOINT`.
     pub fn with_sts_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.sts_endpoint = Some(endpoint.into());
         self
@@ -59,7 +93,43 @@ impl AssumeRoleWithOidcCredentialProvider {
         self
     }
 
-    fn get_sts_endpoint(&self, envs: &std::collections::HashMap<String, String>) -> String {
+    fn explicit_config(&self) -> Option<AssumeRoleWithOidcConfig> {
+        Some(AssumeRoleWithOidcConfig {
+            token_file: self.oidc_token_file.clone()?,
+            role_arn: self.role_arn.clone()?,
+            provider_arn: self.oidc_provider_arn.clone()?,
+            role_session_name: self
+                .role_session_name
+                .clone()
+                .unwrap_or_else(|| "reqsign".to_string()),
+            sts_endpoint: self
+                .sts_endpoint
+                .as_deref()
+                .map(normalize_sts_endpoint)
+                .unwrap_or_else(|| DEFAULT_STS_ENDPOINT.to_string()),
+        })
+    }
+
+    fn config_from_env(&self, envs: &HashMap<String, String>) -> Option<AssumeRoleWithOidcConfig> {
+        Some(AssumeRoleWithOidcConfig {
+            token_file: self
+                .oidc_token_file
+                .clone()
+                .or_else(|| envs.get(ALIBABA_CLOUD_OIDC_TOKEN_FILE).cloned())?,
+            role_arn: self
+                .role_arn
+                .clone()
+                .or_else(|| envs.get(ALIBABA_CLOUD_ROLE_ARN).cloned())?,
+            provider_arn: self
+                .oidc_provider_arn
+                .clone()
+                .or_else(|| envs.get(ALIBABA_CLOUD_OIDC_PROVIDER_ARN).cloned())?,
+            role_session_name: self.get_role_session_name(envs),
+            sts_endpoint: self.get_sts_endpoint(envs),
+        })
+    }
+
+    fn get_sts_endpoint(&self, envs: &HashMap<String, String>) -> String {
         if let Some(endpoint) = &self.sts_endpoint {
             return normalize_sts_endpoint(endpoint);
         }
@@ -70,7 +140,7 @@ impl AssumeRoleWithOidcCredentialProvider {
         }
     }
 
-    fn get_role_session_name(&self, envs: &std::collections::HashMap<String, String>) -> String {
+    fn get_role_session_name(&self, envs: &HashMap<String, String>) -> String {
         if let Some(name) = &self.role_session_name {
             return name.clone();
         }
@@ -84,34 +154,32 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        let envs = ctx.env_vars();
-
-        // Get values from environment variables
-        let token_file = envs.get(ALIBABA_CLOUD_OIDC_TOKEN_FILE);
-        let role_arn = envs.get(ALIBABA_CLOUD_ROLE_ARN);
-        let provider_arn = envs.get(ALIBABA_CLOUD_OIDC_PROVIDER_ARN);
-
-        let (token_file, role_arn, provider_arn) = match (token_file, role_arn, provider_arn) {
-            (Some(tf), Some(ra), Some(pa)) => (tf, ra, pa),
-            _ => return Ok(None),
+        let config = match self.explicit_config() {
+            Some(config) => config,
+            None => {
+                let envs = ctx.env_vars();
+                let Some(config) = self.config_from_env(&envs) else {
+                    return Ok(None);
+                };
+                config
+            }
         };
 
-        let token = ctx.file_read_as_string(token_file).await?;
+        let token = ctx.file_read_as_string(&config.token_file).await?;
         let token = token.trim();
-        let role_session_name = self.get_role_session_name(&envs);
 
         // Construct request to Aliyun STS Service.
         let query = Serializer::new(String::new())
             .append_pair("Action", "AssumeRoleWithOIDC")
-            .append_pair("OIDCProviderArn", provider_arn)
-            .append_pair("RoleArn", role_arn)
-            .append_pair("RoleSessionName", &role_session_name)
+            .append_pair("OIDCProviderArn", &config.provider_arn)
+            .append_pair("RoleArn", &config.role_arn)
+            .append_pair("RoleSessionName", &config.role_session_name)
             .append_pair("Format", "JSON")
             .append_pair("Version", "2015-04-01")
             .append_pair("Timestamp", &Timestamp::now().format_rfc3339_zulu())
             .append_pair("OIDCToken", token)
             .finish();
-        let url = format!("{}/?{query}", self.get_sts_endpoint(&envs));
+        let url = format!("{}/?{query}", config.sts_endpoint);
 
         let req = http::Request::builder()
             .method(http::Method::GET)
@@ -148,6 +216,15 @@ impl ProvideCredential for AssumeRoleWithOidcCredentialProvider {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AssumeRoleWithOidcConfig {
+    token_file: String,
+    role_arn: String,
+    provider_arn: String,
+    role_session_name: String,
+    sts_endpoint: String,
+}
+
 fn normalize_sts_endpoint(endpoint: &str) -> String {
     let endpoint = endpoint.trim().trim_end_matches('/');
     if endpoint.starts_with("https://") || endpoint.starts_with("http://") {
@@ -178,10 +255,11 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use reqsign_core::StaticEnv;
-    use reqsign_core::{Context, FileRead, HttpSend};
+    use reqsign_core::{Context, Env, FileRead, HttpSend};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -298,6 +376,23 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct PanicEnv;
+
+    impl Env for PanicEnv {
+        fn var(&self, _key: &str) -> Option<String> {
+            panic!("explicit OIDC config must not read env vars")
+        }
+
+        fn vars(&self) -> HashMap<String, String> {
+            panic!("explicit OIDC config must not read env vars")
+        }
+
+        fn home_dir(&self) -> Option<PathBuf> {
+            panic!("explicit OIDC config must not read home dir")
+        }
+    }
+
     #[tokio::test]
     async fn test_assume_role_with_oidc_supports_role_session_name() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -364,6 +459,71 @@ mod tests {
         assert_eq!(
             params.get("OIDCToken").map(String::as_str),
             Some("header.payload.signature")
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_assume_role_with_oidc_supports_explicit_config_without_env() -> Result<()> {
+        let token_path = "/mock/token";
+        let file_read = TestFileRead {
+            expected_path: token_path.to_string(),
+            content: b"explicit-token\n".to_vec(),
+        };
+        let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
+        let http_send = CaptureHttpSend::new(http_body);
+
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(PanicEnv);
+
+        let provider = AssumeRoleWithOidcCredentialProvider::new()
+            .with_role_arn("acs:ram::123456789012:role/explicit-role")
+            .with_oidc_provider_arn("acs:ram::123456789012:oidc-provider/explicit-provider")
+            .with_oidc_token_file(token_path)
+            .with_role_session_name("explicit-session")
+            .with_sts_endpoint("sts.explicit.example.com");
+
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        assert_eq!(cred.access_key_id, "access_key_id");
+        assert_eq!(cred.access_key_secret, "secret_access_key");
+        assert_eq!(cred.security_token.as_deref(), Some("security_token"));
+
+        let recorded_uri = http_send
+            .uri()
+            .expect("http_send must capture outgoing uri");
+        let uri: http::Uri = recorded_uri.parse().expect("uri must parse");
+        assert_eq!(
+            Some("sts.explicit.example.com"),
+            uri.authority().map(|v| v.as_str())
+        );
+
+        let query = uri.query().expect("query must exist");
+        let params: HashMap<String, String> = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+
+        assert_eq!(
+            params.get("RoleArn").map(String::as_str),
+            Some("acs:ram::123456789012:role/explicit-role")
+        );
+        assert_eq!(
+            params.get("OIDCProviderArn").map(String::as_str),
+            Some("acs:ram::123456789012:oidc-provider/explicit-provider")
+        );
+        assert_eq!(
+            params.get("RoleSessionName").map(String::as_str),
+            Some("explicit-session")
+        );
+        assert_eq!(
+            params.get("OIDCToken").map(String::as_str),
+            Some("explicit-token")
         );
 
         Ok(())
