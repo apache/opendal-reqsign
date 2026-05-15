@@ -465,8 +465,11 @@ fn infer_account_name(authority: &str) -> Result<String> {
 /// CanonicalizedResource;
 /// ```
 /// ## Note
-/// For sub-requests of batch API, requests should be signed without `x-ms-version` header.
-/// Set the `omit_service_version` to `ture` for such.
+///
+/// Reqsign signs the Azure service headers already present on the request.
+/// Callers should include `x-ms-version` for ordinary Azure Storage requests,
+/// but omit it for batch API sub-requests, which Azure requires to be signed
+/// without that header.
 ///
 /// ## Reference
 ///
