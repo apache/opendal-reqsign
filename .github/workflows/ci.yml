@@ -98,6 +98,68 @@ jobs:
           cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,azure,aliyun,tencent
           cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,aws,azure,aliyun,tencent
 
+  # Regression guard: walk every workspace member and assert that
+  # `aws-lc-rs` is absent from its non-dev dep graph. Crates that ship a
+  # `rust-crypto` backend selector (`reqsign-google`,
+  # `reqsign-azure-storage`, and the `reqsign` facade) are exercised with
+  # `--no-default-features --features rust-crypto`; everything else is
+  # exercised with default features.
+  #
+  # `cargo tree -e normal,build -i aws-lc-rs` prints non-empty stdout only
+  # when `aws-lc-rs` is reachable through a normal or build edge. Dev-only
+  # paths are deliberately ignored; they do not ship to downstream users.
+  crypto_backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build pure-Rust facade (rust-crypto across google + azure)
+        run: |
+          cargo build --manifest-path reqsign/Cargo.toml --no-default-features \
+            --features default-context,google,azure,rust-crypto
+
+      - name: Walk every workspace crate and assert aws-lc-rs is absent
+        shell: bash
+        run: |
+          set -u
+          fail=0
+
+          # Empty stdout from `cargo tree -i` means the target package is
+          # unreachable on the selected feature set + edge filter.
+          check_absent() {
+            local label="$1"; shift
+            local out
+            out=$(cargo tree "$@" -e normal,build -i aws-lc-rs 2>/dev/null || true)
+            if [ -n "$out" ]; then
+              echo "::error::${label}: aws-lc-rs unexpectedly in non-dev dep graph"
+              printf '%s\n' "$out"
+              fail=1
+            else
+              echo "ok ${label}: aws-lc-rs absent"
+            fi
+          }
+
+          packages=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name')
+          for pkg in $packages; do
+            case "$pkg" in
+              reqsign-google|reqsign-azure-storage)
+                check_absent "$pkg (rust-crypto)" -p "$pkg" \
+                  --no-default-features --features rust-crypto
+                ;;
+              reqsign)
+                check_absent "$pkg (rust-crypto)" -p "$pkg" \
+                  --no-default-features --features default-context,google,azure,rust-crypto
+                ;;
+              *)
+                check_absent "$pkg (default)" -p "$pkg"
+                ;;
+            esac
+          done
+
+          exit $fail
+
   unit:
     runs-on: ubuntu-latest
     permissions:
