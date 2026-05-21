@@ -26,6 +26,11 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["aws-lc-rs"]
+aws-lc-rs = ["jsonwebtoken/aws_lc_rs"]
+rust-crypto = ["jsonwebtoken/rust_crypto"]
+
 [dependencies]
 anyhow = { workspace = true }
 base64 = { workspace = true }

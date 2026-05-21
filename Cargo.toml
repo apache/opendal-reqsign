@@ -29,11 +29,14 @@ rust-version = "1.85.0"
 # Workspace dependencies
 reqsign-aliyun-oss = { version = "3.0.0", path = "services/aliyun-oss" }
 reqsign-aws-v4 = { version = "3.0.0", path = "services/aws-v4" }
-reqsign-azure-storage = { version = "3.0.0", path = "services/azure-storage" }
+# Crypto backend (aws-lc-rs vs rust-crypto) for jsonwebtoken users is
+# selected by the facade or end-consumer; disable defaults here so that
+# feature unification across workspace members doesn't lock aws-lc-rs in.
+reqsign-azure-storage = { version = "3.0.0", path = "services/azure-storage", default-features = false }
 reqsign-command-execute-tokio = { version = "3.0.0", path = "context/command-execute-tokio" }
 reqsign-core = { version = "3.0.0", path = "core" }
 reqsign-file-read-tokio = { version = "3.0.0", path = "context/file-read-tokio" }
-reqsign-google = { version = "3.0.0", path = "services/google" }
+reqsign-google = { version = "3.0.0", path = "services/google", default-features = false }
 reqsign-http-send-reqwest = { version = "4.0.0", path = "context/http-send-reqwest" }
 reqsign-huaweicloud-obs = { version = "3.0.0", path = "services/huaweicloud-obs" }
 reqsign-oracle = { version = "3.0.0", path = "services/oracle" }
@@ -53,7 +56,7 @@ hex = "0.4"
 hmac = "0.13"
 http = "1"
 jiff = "0.2"
-jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"] }
 log = "0.4"
 percent-encoding = "2"
 pretty_assertions = "1.3"

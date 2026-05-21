@@ -52,11 +52,23 @@ reqsign-file-read-tokio = { workspace = true, optional = true }
 reqsign-http-send-reqwest = { workspace = true, optional = true }
 
 [features]
-default = ["default-context"]
+default = ["default-context", "aws-lc-rs"]
 default-context = [
   "dep:reqsign-command-execute-tokio",
   "dep:reqsign-file-read-tokio",
   "dep:reqsign-http-send-reqwest",
+]
+
+# Crypto backend selection for services that use jsonwebtoken (google, azure).
+# These are pass-through to the underlying service crates and a no-op when
+# neither service is enabled.
+aws-lc-rs = [
+  "reqsign-google?/aws-lc-rs",
+  "reqsign-azure-storage?/aws-lc-rs",
+]
+rust-crypto = [
+  "reqsign-google?/rust-crypto",
+  "reqsign-azure-storage?/rust-crypto",
 ]
 
 # Service features
