@@ -164,17 +164,55 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [aws-lc-rs, rust-crypto]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Test
-        run: cargo test --no-fail-fast
+
+      # Backend-agnostic crates: only run once (aws-lc-rs leg) to avoid
+      # re-running identical work in the rust-crypto leg.
+      - name: Test (backend-agnostic crates)
+        if: matrix.backend == 'aws-lc-rs'
+        run: |
+          cargo test --no-fail-fast --workspace \
+            --exclude reqsign-google \
+            --exclude reqsign-azure-storage \
+            --exclude reqsign
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
-      - name: Doc Test
+
+      - name: Doc Test (backend-agnostic, --all-features)
+        if: matrix.backend == 'aws-lc-rs'
         run: cargo test --doc --all-features --workspace
+        env:
+          RUST_LOG: DEBUG
+          RUST_BACKTRACE: full
+
+      - name: Test (JWT crates + facade, backend=${{ matrix.backend }})
+        run: |
+          cargo test --no-fail-fast -p reqsign-google \
+            --no-default-features --features ${{ matrix.backend }}
+          cargo test --no-fail-fast -p reqsign-azure-storage \
+            --no-default-features --features ${{ matrix.backend }}
+          cargo test --no-fail-fast -p reqsign \
+            --no-default-features --features default-context,full,${{ matrix.backend }}
+        env:
+          RUST_LOG: DEBUG
+          RUST_BACKTRACE: full
+
+      - name: Doc Test (backend=${{ matrix.backend }})
+        run: |
+          cargo test --doc --no-fail-fast -p reqsign-google \
+            --no-default-features --features ${{ matrix.backend }}
+          cargo test --doc --no-fail-fast -p reqsign-azure-storage \
+            --no-default-features --features ${{ matrix.backend }}
+          cargo test --doc --no-fail-fast -p reqsign \
+            --no-default-features --features default-context,full,${{ matrix.backend }}
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
