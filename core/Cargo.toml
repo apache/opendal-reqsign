@@ -42,6 +42,11 @@ percent-encoding = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rsa = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.0", features = [
   "Win32_Foundation",

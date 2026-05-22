@@ -21,7 +21,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::credential::Credential;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use rsa::RsaPrivateKey;
@@ -179,20 +178,13 @@ impl ClientCertificateCredentialProvider {
             sub: client_id.to_string(),
         };
 
-        let mut header = Header::new(Algorithm::RS256);
-        header.x5t = Some(self.calculate_thumbprint(cert_der));
+        let header = ClientAssertionHeader {
+            alg: "RS256",
+            typ: "JWT",
+            x5t: self.calculate_thumbprint(cert_der),
+        };
 
-        let pem_private_key =
-            rsa::pkcs8::EncodePrivateKey::to_pkcs8_pem(private_key, Default::default()).map_err(
-                |e| reqsign_core::Error::unexpected(format!("Failed to encode private key: {e}")),
-            )?;
-
-        let encoding_key = EncodingKey::from_rsa_pem(pem_private_key.as_bytes()).map_err(|e| {
-            reqsign_core::Error::unexpected(format!("Failed to create encoding key: {e}"))
-        })?;
-
-        jsonwebtoken::encode(&header, &claims, &encoding_key)
-            .map_err(|e| reqsign_core::Error::unexpected(format!("Failed to create JWT: {e}")))
+        reqsign_core::jwt::encode_rs256(&header, &claims, private_key)
     }
 
     /// Exchange client assertion for access token
@@ -255,6 +247,13 @@ struct ClientAssertionClaims {
     jti: String,
     nbf: u64,
     sub: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ClientAssertionHeader {
+    alg: &'static str,
+    typ: &'static str,
+    x5t: String,
 }
 
 #[derive(Debug, Deserialize)]

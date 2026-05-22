@@ -153,6 +153,8 @@
 pub mod error;
 mod futures_util;
 pub mod hash;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod jwt;
 pub mod time;
 pub mod utils;
 
