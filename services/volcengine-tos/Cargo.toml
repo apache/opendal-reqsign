@@ -38,4 +38,5 @@ anyhow = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["default-tls"] }
 tokio = { workspace = true, features = ["full"] }
