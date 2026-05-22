@@ -71,7 +71,7 @@ jobs:
       - name: Build
         run: cargo build --workspace
 
-  # gcs has jsonwebtoken which doesn't support wasm
+  # Keep the facade wasm build focused on services with supported wasm signing paths.
   build_under_wasm:
     runs-on: ubuntu-latest
     steps:

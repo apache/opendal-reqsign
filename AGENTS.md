@@ -63,8 +63,7 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws`, `azure`, `aliyun`, `tencent`)
-must compile for `wasm32-unknown-unknown`. Google is excluded because
-`jsonwebtoken` does not support WASM. CI verifies this.
+must compile for `wasm32-unknown-unknown`. CI verifies this supported subset.
 
 ## Versioning
 

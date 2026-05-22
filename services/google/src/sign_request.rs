@@ -16,7 +16,6 @@
 // under the License.
 
 use http::header;
-use jsonwebtoken::{Algorithm, EncodingKey, Header as JwtHeader};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use rsa::pkcs1v15::SigningKey;
@@ -29,7 +28,7 @@ use std::time::Duration;
 
 use reqsign_core::{
     Context, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
-    hash::hex_sha256, time::*,
+    hash::hex_sha256, jwt, time::*,
 };
 
 use crate::constants::{DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE};
@@ -55,6 +54,22 @@ impl Claims {
             aud: "https://oauth2.googleapis.com/token".to_string(),
             exp: current + 3600,
             iat: current,
+        }
+    }
+}
+
+/// Header is used to build RS256 JWT for Google Cloud OAuth2.
+#[derive(Debug, Serialize)]
+struct JwtHeader {
+    alg: &'static str,
+    typ: &'static str,
+}
+
+impl JwtHeader {
+    fn rs256() -> Self {
+        Self {
+            alg: "RS256",
+            typ: "JWT",
         }
     }
 }
@@ -132,15 +147,11 @@ impl RequestSigner {
 
         debug!("exchanging service account for token with scope: {scope}");
 
-        // Create JWT
-        let jwt = jsonwebtoken::encode(
-            &JwtHeader::new(Algorithm::RS256),
+        let jwt = jwt::encode_rs256_pem(
+            &JwtHeader::rs256(),
             &Claims::new(&sa.client_email, &scope),
-            &EncodingKey::from_rsa_pem(sa.private_key.as_bytes()).map_err(|e| {
-                reqsign_core::Error::unexpected("failed to parse RSA private key").with_source(e)
-            })?,
-        )
-        .map_err(|e| reqsign_core::Error::unexpected("failed to encode JWT").with_source(e))?;
+            sa.private_key.as_bytes(),
+        )?;
 
         // Exchange JWT for access token
         let body =
