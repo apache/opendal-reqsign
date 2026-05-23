@@ -31,6 +31,8 @@ use std::time::Duration;
 pub struct ClientSecretCredentialProvider {
     tenant_id: Option<String>,
     client_id: Option<String>,
+    client_secret: Option<String>,
+    authority_host: Option<String>,
 }
 
 impl ClientSecretCredentialProvider {
@@ -50,6 +52,18 @@ impl ClientSecretCredentialProvider {
         self.client_id = Some(client_id.into());
         self
     }
+
+    /// Set the client secret.
+    pub fn with_client_secret(mut self, client_secret: impl Into<String>) -> Self {
+        self.client_secret = Some(client_secret.into());
+        self
+    }
+
+    /// Set the authority host.
+    pub fn with_authority_host(mut self, authority_host: impl Into<String>) -> Self {
+        self.authority_host = Some(authority_host.into());
+        self
+    }
 }
 impl ProvideCredential for ClientSecretCredentialProvider {
     type Credential = Credential;
@@ -67,18 +81,28 @@ impl ProvideCredential for ClientSecretCredentialProvider {
             _ => return Ok(None),
         };
 
-        let client_id = match envs.get("AZURE_CLIENT_ID") {
+        let client_id = match self
+            .client_id
+            .as_ref()
+            .or_else(|| envs.get("AZURE_CLIENT_ID"))
+        {
             Some(id) if !id.is_empty() => id,
             _ => return Ok(None),
         };
 
-        let client_secret = match envs.get("AZURE_CLIENT_SECRET") {
+        let client_secret = match self
+            .client_secret
+            .as_ref()
+            .or_else(|| envs.get("AZURE_CLIENT_SECRET"))
+        {
             Some(secret) if !secret.is_empty() => secret,
             _ => return Ok(None),
         };
 
-        let authority_host = envs
-            .get("AZURE_AUTHORITY_HOST")
+        let authority_host = self
+            .authority_host
+            .as_ref()
+            .or_else(|| envs.get("AZURE_AUTHORITY_HOST"))
             .filter(|h| !h.is_empty())
             .map(|s| s.as_str())
             .unwrap_or("https://login.microsoftonline.com");
