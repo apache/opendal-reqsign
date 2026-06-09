@@ -27,7 +27,8 @@ use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, SignRequest, SigningRequest};
 use std::collections::HashSet;
 use std::fmt::Write;
-use std::sync::LazyLock;
+use std::fmt::{Debug, Formatter};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 const CONTENT_MD5: &str = "content-md5";
@@ -92,6 +93,29 @@ pub struct RequestSigner {
     region: Option<String>,
     signing_version: SigningVersion,
     time: Option<Timestamp>,
+    v4_signing_key_cache: Mutex<Option<CachedV4SigningKey>>,
+}
+
+/// Cached OSS V4 signing key.
+// NOTE: `region` is NOT part of the cache key;
+//       it is expected to stay static over the lifetime
+//       of the `RequestSigner` instance.
+struct CachedV4SigningKey {
+    /// Days since the Unix epoch (UTC) (derived from the `date` we'd sign)
+    day: i64,
+    /// The secret the key was derived from, used to detect rotation.
+    secret: String,
+    /// The derived signing key.
+    key: Arc<[u8]>,
+}
+
+impl Debug for CachedV4SigningKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedV4SigningKey")
+            .field("day", &self.day)
+            .field("secret_prefix", &&self.secret[..3])
+            .finish_non_exhaustive()
+    }
 }
 
 impl RequestSigner {
@@ -102,6 +126,7 @@ impl RequestSigner {
             region: None,
             signing_version: SigningVersion::V1,
             time: None,
+            v4_signing_key_cache: Mutex::new(None),
         }
     }
 
@@ -503,7 +528,8 @@ impl RequestSigner {
         let scope = self.v4_scope(signing_time, region);
         let string_to_sign =
             self.build_v4_string_to_sign(signing_time, &scope, &canonical_request)?;
-        let signature = self.build_v4_signature(cred, signing_time, region, &string_to_sign);
+        let signing_key = self.v4_signing_key(&cred.access_key_secret, region, signing_time);
+        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
 
         if expires_in.is_some() {
             signing_req.query_push(X_OSS_SIGNATURE, signature);
@@ -716,21 +742,31 @@ impl RequestSigner {
         Ok(s)
     }
 
-    fn build_v4_signature(
-        &self,
-        cred: &Credential,
-        signing_time: Timestamp,
-        region: &str,
-        string_to_sign: &str,
-    ) -> String {
+    fn v4_signing_key(&self, secret: &str, region: &str, signing_time: Timestamp) -> Arc<[u8]> {
+        let day = signing_time.as_second().div_euclid(86_400);
+
+        let mut slot = self.v4_signing_key_cache.lock().expect("lock poisoned");
+        if let Some(cached) = slot.as_ref() {
+            // *NOT* comparing region.
+            if cached.day == day && cached.secret == secret {
+                return Arc::clone(&cached.key);
+            }
+        }
+
         let date_key = hmac_sha256(
-            format!("aliyun_v4{}", cred.access_key_secret).as_bytes(),
+            format!("aliyun_v4{secret}").as_bytes(),
             signing_time.format_date().as_bytes(),
         );
         let region_key = hmac_sha256(&date_key, region.as_bytes());
         let service_key = hmac_sha256(&region_key, OSS_V4_SERVICE.as_bytes());
-        let signing_key = hmac_sha256(&service_key, OSS_V4_REQUEST.as_bytes());
-        hex_hmac_sha256(&signing_key, string_to_sign.as_bytes())
+        let key: Arc<[u8]> = hmac_sha256(&service_key, OSS_V4_REQUEST.as_bytes()).into();
+
+        *slot = Some(CachedV4SigningKey {
+            day,
+            secret: secret.to_owned(),
+            key: Arc::clone(&key),
+        });
+        key
     }
 
     fn v4_scope(&self, signing_time: Timestamp, region: &str) -> String {

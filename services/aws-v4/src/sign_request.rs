@@ -28,6 +28,8 @@ use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningRequest};
 use std::fmt::Write;
+use std::fmt::{Debug, Formatter};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// RequestSigner that implement AWS SigV4.
@@ -37,8 +39,31 @@ use std::time::Duration;
 pub struct RequestSigner {
     service: String,
     region: String,
-
     time: Option<Timestamp>,
+    signing_key_cache: Mutex<Option<CachedV4SigningKey>>,
+}
+
+/// Cached SigV4 signing key.
+//
+// NOTE: `region` and `service` are NOT part of the cache key,
+//       as those are expected to stay static over the lifetime
+//       of the `RequestSigner` instance.
+struct CachedV4SigningKey {
+    /// Days since the Unix epoch (UTC) (derived from the `date` we'd sign)
+    day: i64,
+    /// The secret the key was derived from, used to detect rotation.
+    secret: String,
+    /// The derived signing key.
+    key: Arc<[u8]>,
+}
+
+impl Debug for CachedV4SigningKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedV4SigningKey")
+            .field("day", &self.day)
+            .field("secret_prefix", &&self.secret[..3])
+            .finish_non_exhaustive()
+    }
 }
 
 impl RequestSigner {
@@ -47,9 +72,32 @@ impl RequestSigner {
         Self {
             service: service.into(),
             region: region.into(),
-
             time: None,
+            signing_key_cache: Mutex::new(None),
         }
+    }
+
+    fn signing_key(&self, secret: &str, now: Timestamp) -> Arc<[u8]> {
+        let day = now.as_second().div_euclid(86_400);
+
+        let mut slot = self.signing_key_cache.lock().expect("lock poisoned");
+        if let Some(cached) = slot.as_ref() {
+            // *NOT* comparing region and service.
+            if cached.day == day && cached.secret == secret {
+                return Arc::clone(&cached.key);
+            }
+        }
+
+        let sign_date = hmac_sha256(secret.as_bytes(), now.format_date().as_bytes());
+        let sign_region = hmac_sha256(sign_date.as_slice(), &self.region.as_bytes());
+        let sign_service = hmac_sha256(sign_region.as_slice(), &self.service.as_bytes());
+        let key: Arc<[u8]> = hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes()).into();
+        *slot = Some(CachedV4SigningKey {
+            day,
+            secret: secret.to_owned(),
+            key: Arc::clone(&key),
+        });
+        key
     }
 
     /// Specify the signing time.
@@ -129,8 +177,7 @@ impl SignRequest for RequestSigner {
         };
         debug!("calculated string to sign: {string_to_sign}");
 
-        let signing_key =
-            generate_signing_key(&cred.secret_access_key, now, &self.region, &self.service);
+        let signing_key = self.signing_key(&cred.secret_access_key, now);
         let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
 
         if expires_in.is_some() {
@@ -346,19 +393,6 @@ fn canonicalize_query(
         .collect();
 
     Ok(())
-}
-
-fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &str) -> Vec<u8> {
-    // Sign secret
-    let secret = format!("AWS4{secret}");
-    // Sign date
-    let sign_date = hmac_sha256(secret.as_bytes(), time.format_date().as_bytes());
-    // Sign region
-    let sign_region = hmac_sha256(sign_date.as_slice(), region.as_bytes());
-    // Sign service
-    let sign_service = hmac_sha256(sign_region.as_slice(), service.as_bytes());
-    // Sign request
-    hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
 }
 
 #[cfg(test)]
