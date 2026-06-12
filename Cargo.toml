@@ -13,10 +13,14 @@ version = "0.16.5"
 all-features = true
 
 [features]
-default = ["reqwest_request", "services-all"]
+default = ["reqwest_request", "services-all", "jwt-rust-crypto"]
 
 native-tls = ["reqwest?/default-tls"]
 rustls = ["reqwest?/rustls-tls"]
+
+# crypto backends for jsonwebtoken, exactly one should be enabled
+jwt-rust-crypto = ["jsonwebtoken?/rust_crypto"]
+jwt-aws-lc-rs = ["jsonwebtoken?/aws_lc_rs"]
 
 # requests that reqwest supports
 reqwest_blocking_request = ["reqwest?/blocking"]
@@ -72,7 +76,7 @@ form_urlencoded = "1"
 hex = "0.4"
 hmac = "0.12"
 http = "1.1"
-jsonwebtoken = { version = "9.2", optional = true }
+jsonwebtoken = { version = "10.3", optional = true }
 log = "0.4"
 once_cell = { version = "1", optional = true }
 percent-encoding = "2"
