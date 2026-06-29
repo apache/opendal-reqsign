@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::time::Timestamp;
 use crate::{BoxedFuture, Context, MaybeSend, Result};
 use std::fmt::Debug;
 use std::future::Future;
@@ -24,7 +25,15 @@ use std::time::Duration;
 /// SigningCredential is the trait used by signer as the signing credential.
 pub trait SigningCredential: Clone + Debug + Send + Sync + Unpin + 'static {
     /// Check if the signing credential is valid.
+    ///
+    /// Note: this will be removed in favor of `is_valid_at` in a future
+    /// release.
     fn is_valid(&self) -> bool;
+
+    /// Check if the signing credential will be valid at the given timestamp.
+    fn is_valid_at(&self, _ts: Timestamp) -> bool {
+        self.is_valid()
+    }
 }
 
 impl<T: SigningCredential> SigningCredential for Option<T> {

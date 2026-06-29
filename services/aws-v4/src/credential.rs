@@ -47,16 +47,18 @@ impl Debug for Credential {
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now())
+    }
+
+    fn is_valid_at(&self, ts: Timestamp) -> bool {
         if (self.access_key_id.is_empty() || self.secret_access_key.is_empty())
             && self.session_token.is_none()
         {
             return false;
         }
+
         // Take 120s as buffer to avoid edge cases.
-        if let Some(valid) = self
-            .expires_in
-            .map(|v| v > Timestamp::now() + Duration::from_secs(120))
-        {
+        if let Some(valid) = self.expires_in.map(|v| v > ts + Duration::from_secs(120)) {
             return valid;
         }
 
