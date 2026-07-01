@@ -128,7 +128,7 @@ mod tests {
                 .decode(parts[0])
                 .map_err(|e| Error::unexpected("failed to decode JWT header").with_source(e))?,
         )
-            .map_err(|e| Error::unexpected("failed to parse JWT header").with_source(e))?;
+        .map_err(|e| Error::unexpected("failed to parse JWT header").with_source(e))?;
         assert_eq!(
             header,
             json!({

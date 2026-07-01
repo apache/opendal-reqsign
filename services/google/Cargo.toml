@@ -33,11 +33,13 @@ log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-aws-v4 = { workspace = true }
 reqsign-core = { workspace = true }
-reqsign-jwt = { workspace = true }
 rsa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqsign-jwt = { workspace = true }
 
 [dev-dependencies]
 bytes = { workspace = true }

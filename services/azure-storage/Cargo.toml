@@ -35,14 +35,14 @@ http = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }
-reqsign-jwt = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-pem = "3.0"
+pem = { workspace = true }
 rsa = { workspace = true }
+reqsign-jwt = { workspace = true }
 
 [dev-dependencies]
 env_logger = { workspace = true }
