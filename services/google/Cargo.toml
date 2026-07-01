@@ -33,6 +33,7 @@ log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-aws-v4 = { workspace = true }
 reqsign-core = { workspace = true }
+reqsign-jwt = { workspace = true }
 rsa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

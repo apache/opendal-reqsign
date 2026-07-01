@@ -27,7 +27,7 @@ use rsa::sha2::Sha256;
 use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use serde::Serialize;
 
-use crate::{Error, Result};
+use reqsign_core::{Error, Result};
 
 /// Encode a JWS compact JWT using the RS256 algorithm.
 ///
@@ -128,7 +128,7 @@ mod tests {
                 .decode(parts[0])
                 .map_err(|e| Error::unexpected("failed to decode JWT header").with_source(e))?,
         )
-        .map_err(|e| Error::unexpected("failed to parse JWT header").with_source(e))?;
+            .map_err(|e| Error::unexpected("failed to parse JWT header").with_source(e))?;
         assert_eq!(
             header,
             json!({

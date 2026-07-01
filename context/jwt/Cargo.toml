@@ -16,11 +16,12 @@
 # under the License.
 
 [package]
-name = "reqsign-core"
-version = "3.0.1"
+name = "reqsign-jwt"
+version = "0.1.0"
 
-categories = ["command-line-utilities", "web-programming"]
-description = "Signing API requests without effort."
+categories = ["cryptography"]
+description = "JWT-based signing implementation for reqsign."
+keywords = ["jwt", "reqsign"]
 
 edition.workspace = true
 license.workspace = true
@@ -28,23 +29,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
 base64 = { workspace = true }
-bytes = { workspace = true }
-form_urlencoded = { workspace = true }
-futures = { workspace = true }
-hex = { workspace = true }
-hmac = { workspace = true }
-http = { workspace = true }
-jiff = { workspace = true }
-log = { workspace = true }
-percent-encoding = { workspace = true }
-sha1 = { workspace = true }
-sha2 = { workspace = true }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61.0", features = [
-  "Win32_Foundation",
-  "Win32_UI_Shell",
-  "Win32_System_Com",
-] }
+reqsign-core = { workspace = true }
+rsa = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
