@@ -38,6 +38,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqsign-core = { workspace = true, features = ["jwt"] }
+
 [dev-dependencies]
 bytes = { workspace = true }
 dotenvy = { workspace = true }

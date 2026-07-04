@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use reqsign_core::{
     Context, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
-    hash::hex_sha256, jwt, time::*,
+    hash::hex_sha256, time::*,
 };
 
 use crate::constants::{DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE};
@@ -147,7 +147,7 @@ impl RequestSigner {
 
         debug!("exchanging service account for token with scope: {scope}");
 
-        let jwt = jwt::encode_rs256_pem(
+        let jwt = reqsign_core::jwt::encode_rs256_pem(
             &JwtHeader::rs256(),
             &Claims::new(&sa.client_email, &scope),
             sa.private_key.as_bytes(),
