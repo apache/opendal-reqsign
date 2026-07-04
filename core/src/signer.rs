@@ -23,6 +23,7 @@ use crate::Result;
 use crate::SignRequest;
 use crate::SignRequestDyn;
 use crate::SigningCredential;
+use crate::time::Timestamp;
 use std::any::type_name;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -81,7 +82,9 @@ impl<K: SigningCredential> Signer<K> {
         expires_in: Option<Duration>,
     ) -> Result<()> {
         let credential = self.credential.lock().expect("lock poisoned").clone();
-        let credential = if credential.is_valid() {
+        let credential = if credential.is_valid()
+            && expires_in.is_none_or(|d| credential.is_valid_at(Timestamp::now() + d))
+        {
             credential
         } else {
             let ctx = self.loader.provide_credential_dyn(&self.ctx).await?;
