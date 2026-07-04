@@ -147,7 +147,7 @@ impl RequestSigner {
 
         debug!("exchanging service account for token with scope: {scope}");
 
-        let jwt = reqsign_jwt::encode_rs256_pem(
+        let jwt = reqsign_core::jwt::encode_rs256_pem(
             &JwtHeader::rs256(),
             &Claims::new(&sa.client_email, &scope),
             sa.private_key.as_bytes(),

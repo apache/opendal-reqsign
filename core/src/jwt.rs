@@ -27,7 +27,7 @@ use rsa::sha2::Sha256;
 use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use serde::Serialize;
 
-use reqsign_core::{Error, Result};
+use crate::{Error, Result};
 
 /// Encode a JWS compact JWT using the RS256 algorithm.
 ///

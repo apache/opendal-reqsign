@@ -42,7 +42,7 @@ sha1 = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pem = { workspace = true }
 rsa = { workspace = true }
-reqsign-jwt = { workspace = true }
+reqsign-core = { workspace = true, features = ["jwt"] }
 
 [dev-dependencies]
 env_logger = { workspace = true }

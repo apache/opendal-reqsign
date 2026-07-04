@@ -184,7 +184,7 @@ impl ClientCertificateCredentialProvider {
             x5t: self.calculate_thumbprint(cert_der),
         };
 
-        reqsign_jwt::encode_rs256(&header, &claims, private_key)
+        reqsign_core::jwt::encode_rs256(&header, &claims, private_key)
     }
 
     /// Exchange client assertion for access token
