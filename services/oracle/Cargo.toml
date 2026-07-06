@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-oracle"
-version = "3.0.1"
+version = "3.0.2"
 
 description = "Oracle Cloud signing implementation for reqsign."
 
