@@ -161,30 +161,23 @@ fn load_integration_config() -> Result<Option<IntegrationConfig>> {
         return Ok(None);
     }
 
-    let access_key_id = env_first(&[
-        "VOLCENGINE_ACCESS_KEY_ID",
-        "TOS_ACCESS_KEY_ID",
-        "TOS_ACCESS_KEY",
-        "OPENDAL_TOS_ACCESS_KEY_ID",
-    ])
-    .context("missing Volcengine TOS access key env")?;
-    let secret_access_key = env_first(&[
-        "VOLCENGINE_SECRET_ACCESS_KEY",
-        "TOS_SECRET_ACCESS_KEY",
-        "TOS_SECRET_KEY",
-        "OPENDAL_TOS_SECRET_ACCESS_KEY",
-    ])
-    .context("missing Volcengine TOS secret key env")?;
-    let bucket = env_first(&["TOS_BUCKET", "OPENDAL_TOS_BUCKET"])
-        .context("missing Volcengine TOS bucket env")?;
-    let endpoint = env_first(&["TOS_ENDPOINT", "OPENDAL_TOS_ENDPOINT"])
-        .context("missing Volcengine TOS endpoint env")?;
-    let region = env_first(&["TOS_REGION", "VOLCENGINE_TOS_REGION", "OPENDAL_TOS_REGION"])
+    let access_key_id = env::var("REQSIGN_VOLCENGINE_TOS_ACCESS_KEY")
+        .context("REQSIGN_VOLCENGINE_TOS_ACCESS_KEY must be set")?;
+    let secret_access_key = env::var("REQSIGN_VOLCENGINE_TOS_SECRET_KEY")
+        .context("REQSIGN_VOLCENGINE_TOS_SECRET_KEY must be set")?;
+    let bucket = env::var("REQSIGN_VOLCENGINE_TOS_BUCKET")
+        .context("REQSIGN_VOLCENGINE_TOS_BUCKET must be set")?;
+    let endpoint = env::var("REQSIGN_VOLCENGINE_TOS_ENDPOINT")
+        .context("REQSIGN_VOLCENGINE_TOS_ENDPOINT must be set")?;
+    let region = env::var("REQSIGN_VOLCENGINE_TOS_REGION")
+        .ok()
         .or_else(|| region_from_endpoint(&endpoint))
-        .context("missing Volcengine TOS region env and failed to derive it from endpoint")?;
+        .context(
+            "REQSIGN_VOLCENGINE_TOS_REGION must be set when region cannot be derived from endpoint",
+        )?;
 
     let mut credential = Credential::new(&access_key_id, &secret_access_key);
-    if let Some(token) = env_first(&["VOLCENGINE_SESSION_TOKEN", "TOS_SECURITY_TOKEN"]) {
+    if let Ok(token) = env::var("REQSIGN_VOLCENGINE_TOS_SECURITY_TOKEN") {
         credential = credential.with_session_token(&token);
     }
 
@@ -200,12 +193,6 @@ fn env_enabled(key: &str) -> bool {
         env::var(key).ok().as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
     )
-}
-
-fn env_first(keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .filter_map(|key| env::var(key).ok())
-        .find(|value| !value.is_empty())
 }
 
 fn base_url(endpoint: &str, bucket: &str) -> String {

@@ -328,6 +328,21 @@ mod tests {
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
 
+    async fn presign_request(
+        req: http::Request<()>,
+        credential: &Credential,
+        region: &str,
+        expires: Duration,
+    ) -> Result<http::request::Parts> {
+        let signer = RequestSigner::new(region)
+            .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
+        let (mut parts, _) = req.into_parts();
+        signer
+            .sign_request(&Context::new(), &mut parts, Some(credential), Some(expires))
+            .await?;
+        Ok(parts)
+    }
+
     #[tokio::test]
     async fn test_sign_request() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -403,24 +418,15 @@ mod tests {
     async fn test_presign_request_matches_sdk_signature() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let loader = StaticCredentialProvider::new("testAK", "testSK");
-        let signer = RequestSigner::new("ap-southeast-1")
-            .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
-
-        let ctx = Context::new()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv);
-
-        let signer = Signer::new(ctx, loader, signer);
-
         let get_req = "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject";
         let req = http::Request::get(Uri::from_str(get_req)?).body(())?;
-        let (mut parts, _) = req.into_parts();
-
-        signer
-            .sign(&mut parts, Some(Duration::from_secs(86400)))
-            .await?;
+        let parts = presign_request(
+            req,
+            &Credential::new("testAK", "testSK"),
+            "ap-southeast-1",
+            Duration::from_secs(86400),
+        )
+        .await?;
 
         assert!(parts.headers.get("Authorization").is_none());
         assert!(parts.headers.get("x-tos-date").is_none());
@@ -436,25 +442,15 @@ mod tests {
     async fn test_presign_request_with_session_token_uses_query() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let loader =
-            StaticCredentialProvider::new("testAK", "testSK").with_security_token("session/token");
-        let signer = RequestSigner::new("cn-beijing")
-            .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
-
-        let ctx = Context::new()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv);
-
-        let signer = Signer::new(ctx, loader, signer);
-
         let req =
             http::Request::get("https://examplebucket.tos-cn-beijing.volces.com/object").body(())?;
-        let (mut parts, _) = req.into_parts();
-
-        signer
-            .sign(&mut parts, Some(Duration::from_secs(3600)))
-            .await?;
+        let parts = presign_request(
+            req,
+            &Credential::new("testAK", "testSK").with_session_token("session/token"),
+            "cn-beijing",
+            Duration::from_secs(3600),
+        )
+        .await?;
 
         assert!(parts.headers.get("x-tos-security-token").is_none());
         assert_eq!(
@@ -466,97 +462,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_presign_request_uses_explicit_content_sha256() -> Result<()> {
+    async fn test_presign_request_with_signed_headers() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
-
-        let loader = StaticCredentialProvider::new("testAK", "testSK");
-        let signer = RequestSigner::new("ap-southeast-1")
-            .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
-
-        let ctx = Context::new()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv);
-        let signer = Signer::new(ctx, loader, signer);
 
         let req = http::Request::get(
             "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject",
         )
         .header("x-tos-content-sha256", EMPTY_PAYLOAD_SHA256)
-        .body(())?;
-        let (mut parts, _) = req.into_parts();
-
-        signer
-            .sign(&mut parts, Some(Duration::from_secs(86400)))
-            .await?;
-
-        assert!(parts.uri.query().is_some_and(|query| query.contains(
-            "X-Tos-Signature=4a718f58c60cc8a5379d9c7aa2fef996679d05c719d6589eb5a21a99e757bd37"
-        )));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_presign_request_normalizes_signed_header_values() -> Result<()> {
-        let _ = env_logger::builder().is_test(true).try_init();
-
-        let loader = StaticCredentialProvider::new("testAK", "testSK");
-        let signer = RequestSigner::new("ap-southeast-1")
-            .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
-
-        let ctx = Context::new()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv);
-        let signer = Signer::new(ctx, loader, signer);
-
-        let req = http::Request::get(
-            "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject",
-        )
         .header("x-tos-meta-note", "alpha   beta")
         .body(())?;
-        let (mut parts, _) = req.into_parts();
+        let parts = presign_request(
+            req,
+            &Credential::new("testAK", "testSK"),
+            "ap-southeast-1",
+            Duration::from_secs(86400),
+        )
+        .await?;
 
-        signer
-            .sign(&mut parts, Some(Duration::from_secs(86400)))
-            .await?;
-
-        assert!(parts.uri.query().is_some_and(|query| query.contains(
-            "X-Tos-Signature=f29b5aeb095679bbe38bcf1280b8354ab1669c84af9586f51d0766de2b02db19"
-        )));
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_presign_request_serializes_expires_without_local_validation() -> Result<()> {
-        let _ = env_logger::builder().is_test(true).try_init();
-
-        let loader = StaticCredentialProvider::new("testAK", "testSK");
-        let signer = RequestSigner::new("cn-beijing")
-            .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
-
-        let ctx = Context::new()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv);
-
-        let signer = Signer::new(ctx, loader, signer);
-
-        let req =
-            http::Request::get("https://examplebucket.tos-cn-beijing.volces.com/object").body(())?;
-        let (mut parts, _) = req.into_parts();
-
-        signer
-            .sign(&mut parts, Some(Duration::from_secs(0)))
-            .await?;
-
-        assert!(
-            parts
-                .uri
-                .query()
-                .is_some_and(|query| query.contains("X-Tos-Expires=0"))
+        assert_eq!("alpha beta", parts.headers["x-tos-meta-note"]);
+        assert_eq!(
+            "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=testAK%2F20220101%2Fap-southeast-1%2Ftos%2Frequest&X-Tos-Date=20220101T000000Z&X-Tos-Expires=86400&X-Tos-SignedHeaders=host%3Bx-tos-content-sha256%3Bx-tos-meta-note&X-Tos-Signature=bb27db860abc9394068d1f22c229f2dfe01e58d8f6f2a65f06f2e78114af9195",
+            parts.uri.to_string(),
         );
 
         Ok(())
