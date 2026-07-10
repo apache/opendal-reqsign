@@ -175,7 +175,7 @@ fn string_to_sign(
         canonicalize_resource(ctx, bucket, method, cred)
     )?;
 
-    debug!("string to sign: {}", &s);
+    debug!("string to sign: {}", s);
     Ok(s)
 }
 

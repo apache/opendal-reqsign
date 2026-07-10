@@ -207,7 +207,7 @@ impl UserDelegationSharedAccessSignature {
             self.key.signed_version,
             self.ip.clone().unwrap_or_default(),
             self.protocol.clone().unwrap_or_default(),
-            &self.version,
+            self.version,
             self.resource.signed_resource(),
             "", // snapshot time
             "", // encryption scope
