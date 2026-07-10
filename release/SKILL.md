@@ -250,19 +250,7 @@ NAME
 
    Use the formal tag and include source artifact links, notable changes, and crate versions.
 
-8. Send announcement.
-
-   Create an announcement in the repo's Announcements category if permissions allow. If GitHub returns `FORBIDDEN`, report this explicitly and do not post into the wrong category.
-
-   Wait for `downloads.apache.org`/`dlcdn.apache.org` mirror sync before sending a broad announcement that uses mirror URLs. The SVN release URL may be available earlier:
-
-   ```text
-   https://dist.apache.org/repos/dist/release/opendal/reqsign-X.Y.Z/
-   ```
-
 ## Recovery Notes
 
 - If `main` advances after the vote starts, formal `vX.Y.Z` still points to the RC commit, not latest `origin/main`.
-- If `downloads.apache.org` returns 404 immediately after SVN release move, wait for mirror sync. Do not send announcements with broken mirror links.
 - If SVN authentication fails, retry with `--force-interactive`; run `svn cleanup` if a killed commit leaves the working copy locked.
-- If the Announcements discussion category is restricted, do not use General as a silent fallback.

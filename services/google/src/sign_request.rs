@@ -196,7 +196,7 @@ impl RequestSigner {
         let mut req = SigningRequest::build(parts)?;
 
         req.headers.insert(header::AUTHORIZATION, {
-            let mut value: http::HeaderValue = format!("Bearer {}", &token.access_token)
+            let mut value: http::HeaderValue = format!("Bearer {}", token.access_token)
                 .parse()
                 .map_err(|e| {
                     reqsign_core::Error::unexpected("failed to parse header value").with_source(e)
@@ -316,7 +316,7 @@ impl RequestSigner {
             ))
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::AUTHORIZATION, {
-                let mut value: http::HeaderValue = format!("Bearer {}", &token.access_token)
+                let mut value: http::HeaderValue = format!("Bearer {}", token.access_token)
                     .parse()
                     .map_err(|e| {
                         reqsign_core::Error::unexpected("failed to parse header value")

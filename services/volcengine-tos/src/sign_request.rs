@@ -128,7 +128,7 @@ impl SignRequest for RequestSigner {
             s
         };
 
-        debug!("string to sign: {}", &string_to_sign);
+        debug!("string to sign: {}", string_to_sign);
 
         let signed_headers_str = signing_req.header_name_to_vec_sorted().join(";");
 
@@ -140,7 +140,7 @@ impl SignRequest for RequestSigner {
             cred.access_key_id, credential_scope, signed_headers_str, signature
         );
 
-        debug!("authorization: {}", &authorization);
+        debug!("authorization: {}", authorization);
 
         let mut auth_value: HeaderValue = authorization.parse()?;
         auth_value.set_sensitive(true);

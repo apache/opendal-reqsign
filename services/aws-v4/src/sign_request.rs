@@ -119,10 +119,10 @@ impl SignRequest for RequestSigner {
             writeln!(f, "{}", now.format_iso8601()).map_err(|e| {
                 reqsign_core::Error::unexpected(format!("failed to write timestamp: {e}"))
             })?;
-            writeln!(f, "{}", &scope).map_err(|e| {
+            writeln!(f, "{}", scope).map_err(|e| {
                 reqsign_core::Error::unexpected(format!("failed to write scope: {e}"))
             })?;
-            write!(f, "{}", &encoded_req).map_err(|e| {
+            write!(f, "{}", encoded_req).map_err(|e| {
                 reqsign_core::Error::unexpected(format!("failed to write encoded request: {e}"))
             })?;
             f

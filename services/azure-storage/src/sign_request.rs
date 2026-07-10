@@ -629,7 +629,7 @@ fn string_to_sign(
             .with_source(e)
     })?;
 
-    debug!("string to sign: {}", &s);
+    debug!("string to sign: {}", s);
 
     Ok(s)
 }

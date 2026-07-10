@@ -152,7 +152,7 @@ impl ServiceSharedAccessSignature {
             "",                                        // si
             self.ip.clone().unwrap_or_default(),       // sip
             self.protocol.clone().unwrap_or_default(), // spr
-            &self.version,                             // sv
+            self.version,                              // sv
             self.resource.signed_resource(),           // sr
             "",                                        // snapshot time
             "",                                        // encryption scope

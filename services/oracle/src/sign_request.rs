@@ -79,7 +79,7 @@ impl SignRequest for RequestSigner {
             f
         };
 
-        debug!("string to sign: {}", &string_to_sign);
+        debug!("string to sign: {}", string_to_sign);
 
         // Read private key from file
         let private_key_content = ctx.file_read_as_string(&cred.key_file).await?;
