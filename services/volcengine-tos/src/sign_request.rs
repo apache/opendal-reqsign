@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_presign_request_matches_sdk_signature() -> Result<()> {
+    async fn test_presign_request() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let get_req = "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject";
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_presign_request_with_session_token_uses_query() -> Result<()> {
+    async fn test_presign_with_session_token() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let req =
@@ -462,7 +462,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_presign_request_with_signed_headers() -> Result<()> {
+    async fn test_presign_with_signed_headers() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let req = http::Request::get(

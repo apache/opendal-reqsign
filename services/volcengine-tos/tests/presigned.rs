@@ -27,7 +27,7 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
-async fn test_put_get_delete_object_with_presigned_url() -> Result<()> {
+async fn test_presigned_object_lifecycle() -> Result<()> {
     let Some(cfg) = load_integration_config()? else {
         warn!("REQSIGN_VOLCENGINE_TOS_TEST is not set, skipped");
         return Ok(());
