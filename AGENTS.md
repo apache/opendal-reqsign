@@ -34,6 +34,10 @@ When working on an API area with an explicit design document, follow that
 document as the source of truth instead of inferring policy from the current
 implementation.
 
+For security-sensitive changes, follow [SECURITY.md](SECURITY.md) and
+[THREAT_MODEL.md](THREAT_MODEL.md) as the source of truth for Reqsign's
+security boundary and its relationship to OpenDAL and other host applications.
+
 ### Default Credential Provider
 
 All future refactors and API reviews around `DefaultCredentialProvider` must
