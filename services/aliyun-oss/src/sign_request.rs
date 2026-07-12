@@ -486,7 +486,7 @@ impl RequestSigner {
         let mut signing_req = SigningRequest::build(req)?;
         self.canonicalize_v4_headers(&mut signing_req, cred, signing_time, expires_in.is_some())?;
         let additional_headers = self.v4_additional_headers(&signing_req, expires_in.is_some())?;
-        self.canonicalize_v4_query(
+        let canonical_query = self.canonicalize_v4_query(
             &mut signing_req,
             cred,
             signing_time,
@@ -497,6 +497,7 @@ impl RequestSigner {
 
         let canonical_request = self.build_v4_canonical_request(
             &signing_req,
+            &canonical_query,
             expires_in.is_some(),
             &additional_headers,
         )?;
@@ -570,7 +571,7 @@ impl RequestSigner {
         expires_in: Option<Duration>,
         region: &str,
         additional_headers: &[String],
-    ) -> Result<()> {
+    ) -> Result<Vec<(String, String)>> {
         let mut query_pairs = req
             .query
             .iter()
@@ -586,64 +587,54 @@ impl RequestSigner {
 
         if let Some(expires) = expires_in {
             let scope = self.v4_scope(signing_time, region);
-            let mut next_idx = query_pairs.len();
-            query_pairs.push((
-                next_idx,
-                X_OSS_SIGNATURE_VERSION.to_string(),
-                OSS_V4_ALGORITHM.to_string(),
-            ));
-            next_idx += 1;
-            query_pairs.push((
-                next_idx,
-                X_OSS_CREDENTIAL.to_string(),
-                utf8_percent_encode(
-                    &format!("{}/{}", cred.access_key_id, scope),
-                    &OSS_V4_QUERY_ENCODE_SET,
-                )
-                .to_string(),
-            ));
-            next_idx += 1;
-            query_pairs.push((
-                next_idx,
-                X_OSS_DATE.to_string(),
-                signing_time.format_iso8601(),
-            ));
-            next_idx += 1;
-            query_pairs.push((
-                next_idx,
-                X_OSS_EXPIRES.to_string(),
-                expires.as_secs().to_string(),
-            ));
-            next_idx += 1;
-            query_pairs.push((
-                next_idx,
-                X_OSS_ADDITIONAL_HEADERS.to_string(),
-                utf8_percent_encode(&additional_headers.join(";"), &OSS_V4_QUERY_ENCODE_SET)
+            let mut signing_query = vec![
+                (
+                    X_OSS_SIGNATURE_VERSION.to_string(),
+                    OSS_V4_ALGORITHM.to_string(),
+                ),
+                (
+                    X_OSS_CREDENTIAL.to_string(),
+                    utf8_percent_encode(
+                        &format!("{}/{}", cred.access_key_id, scope),
+                        &OSS_V4_QUERY_ENCODE_SET,
+                    )
                     .to_string(),
-            ));
-            next_idx += 1;
+                ),
+                (X_OSS_DATE.to_string(), signing_time.format_iso8601()),
+                (X_OSS_EXPIRES.to_string(), expires.as_secs().to_string()),
+                (
+                    X_OSS_ADDITIONAL_HEADERS.to_string(),
+                    utf8_percent_encode(&additional_headers.join(";"), &OSS_V4_QUERY_ENCODE_SET)
+                        .to_string(),
+                ),
+            ];
             if let Some(token) = &cred.security_token {
-                query_pairs.push((
-                    next_idx,
+                signing_query.push((
                     X_OSS_SECURITY_TOKEN.to_string(),
                     utf8_percent_encode(token, &OSS_V4_QUERY_ENCODE_SET).to_string(),
                 ));
             }
+
+            let next_idx = query_pairs.len();
+            query_pairs.extend(
+                signing_query
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, (k, v))| (next_idx + idx, k.clone(), v.clone())),
+            );
+            signing_query.sort_by(|a, b| a.0.cmp(&b.0));
+            req.query.extend(signing_query);
         }
 
         query_pairs.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
 
-        req.query = query_pairs
-            .into_iter()
-            .map(|(_, k, v)| (k, v))
-            .collect::<Vec<_>>();
-
-        Ok(())
+        Ok(query_pairs.into_iter().map(|(_, k, v)| (k, v)).collect())
     }
 
     fn build_v4_canonical_request(
         &self,
         req: &SigningRequest,
+        canonical_query: &[(String, String)],
         is_presign: bool,
         additional_headers: &[String],
     ) -> Result<String> {
@@ -680,7 +671,7 @@ impl RequestSigner {
         writeln!(
             &mut s,
             "{}",
-            req.query
+            canonical_query
                 .iter()
                 .map(|(k, v)| {
                     if v.is_empty() {
@@ -1683,7 +1674,7 @@ mod tests {
         let additional_headers = signer
             .v4_additional_headers(&signing_req, false)
             .expect("additional headers must build");
-        signer
+        let canonical_query = signer
             .canonicalize_v4_query(
                 &mut signing_req,
                 &credential,
@@ -1694,7 +1685,7 @@ mod tests {
             )
             .expect("canonical query must build");
         let canonical_request = signer
-            .build_v4_canonical_request(&signing_req, false, &additional_headers)
+            .build_v4_canonical_request(&signing_req, &canonical_query, false, &additional_headers)
             .expect("canonical request must build");
         assert_eq!(
             canonical_request,
@@ -1746,6 +1737,35 @@ mod tests {
     }
 
     #[test]
+    fn test_v4_header_signing_preserves_existing_raw_query() {
+        let credential = Credential {
+            access_key_id: "testid".to_string(),
+            access_key_secret: "yourAccessKeySecret".to_string(),
+            security_token: None,
+            expires_in: None,
+        };
+        let time = Timestamp::from_second(1_744_353_684).expect("timestamp must build");
+        let signer = RequestSigner::new("examplebucket")
+            .with_region("cn-hangzhou")
+            .with_signing_version(SigningVersion::V4)
+            .with_time(time);
+        let raw_query = "b=2&versionId=a%2Bb%3Dc%2525%26e&empty=&flag";
+        let mut req = http::Request::get(format!(
+            "https://examplebucket.oss-cn-hangzhou.aliyuncs.com/exampleobject?{raw_query}"
+        ))
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+        signer
+            .sign_v4(&mut req, &credential, time, None)
+            .expect("v4 header signing must succeed");
+
+        assert_eq!(req.uri.query(), Some(raw_query));
+    }
+
+    #[test]
     fn test_v4_presign_signature_matches_golden_output() {
         let credential = Credential {
             access_key_id: "testid".to_string(),
@@ -1773,7 +1793,7 @@ mod tests {
         let additional_headers = signer
             .v4_additional_headers(&signing_req, true)
             .expect("additional headers must build");
-        signer
+        let canonical_query = signer
             .canonicalize_v4_query(
                 &mut signing_req,
                 &credential,
@@ -1784,7 +1804,7 @@ mod tests {
             )
             .expect("canonical query must build");
         let canonical_request = signer
-            .build_v4_canonical_request(&signing_req, true, &additional_headers)
+            .build_v4_canonical_request(&signing_req, &canonical_query, true, &additional_headers)
             .expect("canonical request must build");
         assert_eq!(
             canonical_request,
@@ -1825,28 +1845,56 @@ mod tests {
             expires_in: None,
         };
         let time = Timestamp::from_second(1_733_196_187).expect("timestamp must build");
-        let mut req = http::Request::get(
-            "https://examplebucket.oss-cn-hangzhou.aliyuncs.com/exampleobject?prefix=b&acl&prefix=a%20value",
-        )
-        .body(())
-        .expect("request must build")
-        .into_parts()
-        .0;
-
-        RequestSigner::new("examplebucket")
+        let request_uri = "https://examplebucket.oss-cn-hangzhou.aliyuncs.com/exampleobject?prefix=b&acl&prefix=a%20value";
+        let signer = RequestSigner::new("examplebucket")
             .with_region("cn-hangzhou")
             .with_signing_version(SigningVersion::V4)
-            .with_time(time)
+            .with_time(time);
+
+        let mut canonical_req = http::Request::get(request_uri)
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+        let mut signing_req =
+            SigningRequest::build(&mut canonical_req).expect("request must build");
+        signer
+            .canonicalize_v4_headers(&mut signing_req, &credential, time, true)
+            .expect("canonical headers must build");
+        let additional_headers = signer
+            .v4_additional_headers(&signing_req, true)
+            .expect("additional headers must build");
+        let canonical_query = signer
+            .canonicalize_v4_query(
+                &mut signing_req,
+                &credential,
+                time,
+                Some(Duration::from_secs(60)),
+                "cn-hangzhou",
+                &additional_headers,
+            )
+            .expect("canonical query must build");
+        assert_eq!(canonical_query[0], ("acl".to_string(), String::new()));
+        assert_eq!(canonical_query[1], ("prefix".to_string(), "b".to_string()));
+        assert_eq!(
+            canonical_query[2],
+            ("prefix".to_string(), "a%20value".to_string())
+        );
+
+        let mut req = http::Request::get(request_uri)
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+        signer
             .sign_v4(&mut req, &credential, time, Some(Duration::from_secs(60)))
             .expect("v4 presign must succeed");
 
         let query = req.uri.query().expect("query must exist");
-        let acl = query.find("acl").expect("acl must exist");
-        let prefix_b = query.find("prefix=b").expect("prefix=b must exist");
-        let prefix_a = query
-            .find("prefix=a%20value")
-            .expect("encoded prefix must exist");
-        assert!(acl < prefix_a);
-        assert!(prefix_b < prefix_a);
+        assert!(
+            query.starts_with("prefix=b&acl&prefix=a%20value&x-oss-additional-headers=host"),
+            "signed URI does not preserve the existing raw query: {}",
+            req.uri
+        );
     }
 }

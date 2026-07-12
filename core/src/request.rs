@@ -47,10 +47,36 @@ pub struct SigningRequest {
     pub headers: HeaderMap,
 }
 
+fn parse_query(query: &str) -> Vec<(String, String)> {
+    form_urlencoded::parse(query.as_bytes())
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect()
+}
+
+fn append_query_pair(output: &mut String, key: &str, value: &str) {
+    output.push_str(key);
+    if !value.is_empty() {
+        output.push('=');
+        output.push_str(value);
+    }
+}
+
+fn append_query_pairs(output: &mut String, query: &[(String, String)], mut needs_separator: bool) {
+    for (key, value) in query {
+        if needs_separator {
+            output.push('&');
+        }
+
+        append_query_pair(output, key, value);
+        needs_separator = true;
+    }
+}
+
 impl SigningRequest {
     /// Build a signing context from http::request::Parts.
     pub fn build(parts: &mut http::request::Parts) -> Result<Self> {
-        let uri = mem::take(&mut parts.uri).into_parts();
+        // Keep the original URI in parts so apply can preserve its raw query.
+        let uri = parts.uri.clone().into_parts();
         let paq = uri
             .path_and_query
             .unwrap_or_else(|| PathAndQuery::from_static("/"));
@@ -62,14 +88,7 @@ impl SigningRequest {
                 Error::request_invalid("request without authority is invalid for signing")
             })?,
             path: paq.path().to_string(),
-            query: paq
-                .query()
-                .map(|v| {
-                    form_urlencoded::parse(v.as_bytes())
-                        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                        .collect()
-                })
-                .unwrap_or_default(),
+            query: paq.query().map(parse_query).unwrap_or_default(),
 
             // Take the headers out of the request to avoid copy.
             // We will return it back when apply the context.
@@ -78,7 +97,15 @@ impl SigningRequest {
     }
 
     /// Apply the signing context back to http::request::Parts.
+    ///
+    /// Existing query parameters preserve their raw URI representation when unchanged.
+    /// Appended query parameters do not cause the existing query to be rebuilt.
+    /// Modifying, removing, or reordering existing parameters rebuilds the query.
     pub fn apply(mut self, parts: &mut http::request::Parts) -> Result<()> {
+        let original_query = parts
+            .uri
+            .query()
+            .map(|raw_query| (raw_query.to_string(), parse_query(raw_query)));
         let query_size = self.query_size();
 
         // Return headers back.
@@ -91,34 +118,38 @@ impl SigningRequest {
             // Return authority back.
             uri_parts.authority = Some(self.authority);
             // Build path and query.
-            uri_parts.path_and_query =
-                {
-                    let paq = if query_size == 0 {
-                        self.path
-                    } else {
+            uri_parts.path_and_query = {
+                let paq = match original_query {
+                    Some((raw_query, parsed_query)) if self.query.starts_with(&parsed_query) => {
                         let mut s = self.path;
-                        s.reserve(query_size + 1);
-
+                        s.reserve(raw_query.len() + query_size + self.query.len() + 1);
                         s.push('?');
-                        for (i, (k, v)) in self.query.iter().enumerate() {
-                            if i > 0 {
-                                s.push('&');
-                            }
+                        s.push_str(&raw_query);
 
-                            s.push_str(k);
-                            if !v.is_empty() {
-                                s.push('=');
-                                s.push_str(v);
-                            }
-                        }
-
+                        let needs_separator = !raw_query.is_empty() && !raw_query.ends_with('&');
+                        append_query_pairs(
+                            &mut s,
+                            &self.query[parsed_query.len()..],
+                            needs_separator,
+                        );
                         s
-                    };
-
-                    Some(PathAndQuery::from_str(&paq).map_err(|e| {
-                        Error::request_invalid("invalid path and query").with_source(e)
-                    })?)
+                    }
+                    _ if query_size == 0 => self.path,
+                    _ => {
+                        let mut s = self.path;
+                        s.reserve(query_size + self.query.len() + 1);
+                        s.push('?');
+                        append_query_pairs(&mut s, &self.query, false);
+                        s
+                    }
                 };
+
+                Some(
+                    PathAndQuery::from_str(&paq).map_err(|e| {
+                        Error::request_invalid("invalid path and query").with_source(e)
+                    })?,
+                )
+            };
             Uri::from_parts(uri_parts)
                 .map_err(|e| Error::request_invalid("failed to build URI").with_source(e))?
         };
@@ -305,4 +336,116 @@ pub enum SigningMethod {
     Header,
     /// Signing with query.
     Query(Duration),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RAW_QUERY: &str = "versionId=a%2Bb%3Dc%2525%26e";
+
+    fn build_signing_request(raw_query: &str) -> Result<(SigningRequest, http::request::Parts)> {
+        let req = http::Request::get(format!("https://example.com/object?{raw_query}")).body(())?;
+        let (mut parts, _) = req.into_parts();
+        let signing_req = SigningRequest::build(&mut parts)?;
+
+        Ok((signing_req, parts))
+    }
+
+    #[test]
+    fn test_apply_preserves_existing_raw_query() -> Result<()> {
+        let (signing_req, mut parts) = build_signing_request(RAW_QUERY)?;
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(parts.uri.query(), Some(RAW_QUERY));
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_preserves_existing_raw_query_when_appending() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request(RAW_QUERY)?;
+        signing_req.query_push("signature", "value");
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(
+            parts.uri.query(),
+            Some("versionId=a%2Bb%3Dc%2525%26e&signature=value")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_preserves_form_query_wire_representation_when_appending() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request("value=a+b&empty=&flag")?;
+        signing_req.query_push("signature", "value");
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(
+            parts.uri.query(),
+            Some("value=a+b&empty=&flag&signature=value")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rebuilds_explicitly_updated_query() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request(RAW_QUERY)?;
+        signing_req.query[0].1 = "updated".to_string();
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(parts.uri.query(), Some("versionId=updated"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rebuilds_all_query_pairs_when_updating() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request("keep=%41&change=old")?;
+        signing_req.query[1].1 = "new".to_string();
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(parts.uri.query(), Some("keep=A&change=new"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rebuilds_query_after_removing() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request("remove=1&keep=%41")?;
+        signing_req.query.remove(0);
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(parts.uri.query(), Some("keep=A"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rebuilds_ambiguous_duplicate_query_after_removing() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request("x=%41&x=A")?;
+        signing_req.query.remove(0);
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(parts.uri.query(), Some("x=A"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rebuilds_query_after_inserting() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request("keep=%41")?;
+        signing_req
+            .query
+            .insert(0, ("insert".to_string(), "1".to_string()));
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(parts.uri.query(), Some("insert=1&keep=A"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_apply_rebuilds_query_after_sorting() -> Result<()> {
+        let (mut signing_req, mut parts) = build_signing_request("z=%41&a=1")?;
+        signing_req.query.sort();
+        signing_req.apply(&mut parts)?;
+
+        assert_eq!(parts.uri.query(), Some("a=1&z=A"));
+        Ok(())
+    }
 }

@@ -83,7 +83,7 @@ impl SignRequest for RequestSigner {
 
         // canonicalize context
         canonicalize_header(&mut signed_req, cred, expires_in, now)?;
-        canonicalize_query(
+        let canonical_query = canonicalize_query(
             &mut signed_req,
             cred,
             expires_in,
@@ -93,7 +93,7 @@ impl SignRequest for RequestSigner {
         )?;
 
         // build canonical request and string to sign.
-        let creq = canonical_request_string(&mut signed_req)?;
+        let creq = canonical_request_string(&signed_req, &canonical_query)?;
         let encoded_req = hex_sha256(creq.as_bytes());
 
         // Scope: "20220313/<region>/<service>/aws4_request"
@@ -160,7 +160,10 @@ impl SignRequest for RequestSigner {
     }
 }
 
-fn canonical_request_string(ctx: &mut SigningRequest) -> Result<String> {
+fn canonical_request_string(
+    ctx: &SigningRequest,
+    canonical_query: &[(String, String)],
+) -> Result<String> {
     // 256 is specially chosen to avoid reallocation for most requests.
     let mut f = String::with_capacity(256);
 
@@ -181,7 +184,7 @@ fn canonical_request_string(ctx: &mut SigningRequest) -> Result<String> {
     writeln!(
         f,
         "{}",
-        ctx.query
+        canonical_query
             .iter()
             .map(|(k, v)| { format!("{k}={v}") })
             .collect::<Vec<_>>()
@@ -298,7 +301,9 @@ fn canonicalize_query(
     now: Timestamp,
     service: &str,
     region: &str,
-) -> Result<()> {
+) -> Result<Vec<(String, String)>> {
+    let original_query_len = ctx.query.len();
+
     if let Some(expire) = expires_in {
         ctx.query
             .push(("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()));
@@ -326,26 +331,28 @@ fn canonicalize_query(
         }
     }
 
-    // Return if query is empty.
-    if ctx.query.is_empty() {
-        return Ok(());
-    }
-
-    // Sort by param name
-    ctx.query.sort();
-
-    ctx.query = ctx
-        .query
-        .iter()
+    let mut canonical_query = ctx.query.clone();
+    canonical_query.sort();
+    canonical_query = canonical_query
+        .into_iter()
         .map(|(k, v)| {
             (
-                utf8_percent_encode(k, &AWS_QUERY_ENCODE_SET).to_string(),
-                utf8_percent_encode(v, &AWS_QUERY_ENCODE_SET).to_string(),
+                utf8_percent_encode(&k, &AWS_QUERY_ENCODE_SET).to_string(),
+                utf8_percent_encode(&v, &AWS_QUERY_ENCODE_SET).to_string(),
             )
         })
         .collect();
 
-    Ok(())
+    let mut appended_query = ctx.query.split_off(original_query_len);
+    appended_query.sort();
+    ctx.query.extend(appended_query.into_iter().map(|(k, v)| {
+        (
+            utf8_percent_encode(&k, &AWS_QUERY_ENCODE_SET).to_string(),
+            utf8_percent_encode(&v, &AWS_QUERY_ENCODE_SET).to_string(),
+        )
+    }));
+
+    Ok(canonical_query)
 }
 
 fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &str) -> Vec<u8> {
@@ -380,6 +387,8 @@ mod tests {
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
 
+    const RAW_QUERY: &str = "b=2&versionId=a%2Bb%3Dc%2525%26e&empty=&flag";
+
     /// (name, request_builder)
     type TestCase = (&'static str, fn() -> Request<&'static str>);
 
@@ -388,6 +397,10 @@ mod tests {
             ("get_request", test_get_request),
             ("get_request_with_sse", test_get_request_with_sse),
             ("get_request_with_query", test_get_request_with_query),
+            (
+                "get_request_with_literal_plus",
+                test_get_request_with_literal_plus,
+            ),
             ("get_request_virtual_host", test_get_request_virtual_host),
             (
                 "get_request_with_query_virtual_host",
@@ -446,6 +459,16 @@ mod tests {
         let mut req = Request::new("");
         *req.method_mut() = http::Method::GET;
         *req.uri_mut() = "http://127.0.0.1:9000/hello?list-type=2&max-keys=3&prefix=CI/&start-after=ExampleGuide.pdf"
+            .parse()
+            .expect("url must be valid");
+
+        req
+    }
+
+    fn test_get_request_with_literal_plus() -> Request<&'static str> {
+        let mut req = Request::new("");
+        *req.method_mut() = http::Method::GET;
+        *req.uri_mut() = "http://127.0.0.1:9000/hello?value=a+b"
             .parse()
             .expect("url must be valid");
 
@@ -560,6 +583,38 @@ mod tests {
         }
 
         assert_eq!(format_query(l), format_query(r), "{name} query mismatch");
+    }
+
+    #[tokio::test]
+    async fn test_signing_preserves_existing_raw_query() -> Result<()> {
+        let credential = Credential {
+            access_key_id: "access_key_id".to_string(),
+            secret_access_key: "secret_access_key".to_string(),
+            ..Default::default()
+        };
+        let signer = RequestSigner::new("s3", "test").with_time("2026-07-10T00:00:00Z".parse()?);
+
+        for expires_in in [None, Some(Duration::from_secs(3600))] {
+            let req = Request::get(format!("https://example.com/object?{RAW_QUERY}")).body(())?;
+            let (mut parts, _) = req.into_parts();
+
+            signer
+                .sign_request(&Context::new(), &mut parts, Some(&credential), expires_in)
+                .await?;
+
+            let query = parts.uri.query().expect("signed URI must have a query");
+            if expires_in.is_some() {
+                assert!(
+                    query.starts_with(&format!("{RAW_QUERY}&X-Amz-Algorithm=")),
+                    "signed URI does not preserve the existing raw query: {}",
+                    parts.uri
+                );
+            } else {
+                assert_eq!(query, RAW_QUERY);
+            }
+        }
+
+        Ok(())
     }
 
     #[tokio::test]

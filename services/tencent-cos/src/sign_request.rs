@@ -197,3 +197,47 @@ fn build_signature(
         cred.secret_id, key_time, key_time, header_list, param_list, signature
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RAW_QUERY: &str = "versionId=a%2Bb%3Dc%2525%26e";
+
+    async fn sign_request(expires_in: Option<Duration>) -> Result<http::Uri> {
+        let req = http::Request::get(format!("https://example.com/object?{RAW_QUERY}")).body(())?;
+        let (mut parts, _) = req.into_parts();
+        let credential = Credential {
+            secret_id: "secret_id".to_string(),
+            secret_key: "secret_key".to_string(),
+            ..Default::default()
+        };
+        let signer = RequestSigner::new().with_time("2026-07-10T00:00:00Z".parse()?);
+
+        signer
+            .sign_request(&Context::new(), &mut parts, Some(&credential), expires_in)
+            .await?;
+
+        Ok(parts.uri)
+    }
+
+    #[tokio::test]
+    async fn test_header_signing_preserves_existing_raw_query() -> Result<()> {
+        let uri = sign_request(None).await?;
+
+        assert_eq!(uri.query(), Some(RAW_QUERY));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_query_signing_preserves_existing_raw_query() -> Result<()> {
+        let uri = sign_request(Some(Duration::from_secs(3600))).await?;
+        let query = uri.query().expect("signed URI must have a query");
+
+        assert!(
+            query.split('&').any(|pair| pair == RAW_QUERY),
+            "signed URI does not preserve the existing raw query: {uri}"
+        );
+        Ok(())
+    }
+}

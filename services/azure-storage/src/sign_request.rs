@@ -201,6 +201,7 @@ impl SignRequest for RequestSigner {
         };
 
         let mut sctx = SigningRequest::build(req)?;
+        let original_query_len = sctx.query.len();
 
         // Handle different credential types
         match cred {
@@ -425,7 +426,7 @@ impl SignRequest for RequestSigner {
         }
 
         // Apply percent encoding for query parameters
-        for (_, v) in sctx.query.iter_mut() {
+        for (_, v) in sctx.query.iter_mut().skip(original_query_len) {
             *v = percent_encode(v.as_bytes(), &AZURE_QUERY_ENCODE_SET).to_string();
         }
 
@@ -670,7 +671,7 @@ fn canonicalize_resource(ctx: &mut SigningRequest, account_name: &str) -> String
         "/{}{}\n{}",
         account_name,
         ctx.path,
-        SigningRequest::query_to_percent_decoded_string(query, ":", "\n")
+        SigningRequest::query_to_string(query, ":", "\n")
     )
 }
 
@@ -684,6 +685,45 @@ mod tests {
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::str::FromStr;
     use std::time::Duration;
+
+    const RAW_QUERY: &str = "b=2&versionId=a%2Bb%3Dc%2525%26e&empty=&flag";
+
+    #[test]
+    fn test_canonicalize_resource_decodes_query_once() {
+        let req = Request::get(
+            "https://account.blob.core.windows.net/container/blob?versionId=a%2Bb%3Dc%2525%26e",
+        )
+        .body(())
+        .unwrap();
+        let (mut parts, _) = req.into_parts();
+        let mut signing_req = SigningRequest::build(&mut parts).unwrap();
+
+        assert_eq!(
+            canonicalize_resource(&mut signing_req, "account"),
+            "/account/container/blob\nversionid:a+b=c%25&e"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_header_signing_preserves_existing_raw_query() {
+        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
+        let key = reqsign_core::hash::base64_encode("key".as_bytes());
+        let credential = Credential::with_shared_key("account", &key);
+        let signer = RequestSigner::new().with_time(now);
+        let req = Request::get(format!(
+            "https://account.blob.core.windows.net/container/blob?{RAW_QUERY}"
+        ))
+        .body(())
+        .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        signer
+            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .await
+            .unwrap();
+
+        assert_eq!(parts.uri.query(), Some(RAW_QUERY));
+    }
 
     #[tokio::test]
     async fn test_sas_token() {
@@ -782,7 +822,9 @@ mod tests {
             .with_service_sas_permissions("r");
 
         let req = Request::builder()
-            .uri("https://account.blob.core.windows.net/container/path/to/blob.txt")
+            .uri(format!(
+                "https://account.blob.core.windows.net/container/path/to/blob.txt?{RAW_QUERY}"
+            ))
             .body(())
             .unwrap();
         let (mut parts, _) = req.into_parts();
@@ -799,7 +841,9 @@ mod tests {
 
         assert_eq!(
             parts.uri.to_string(),
-            "https://account.blob.core.windows.net/container/path/to/blob.txt?sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
+            format!(
+                "https://account.blob.core.windows.net/container/path/to/blob.txt?{RAW_QUERY}&sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
+            )
         );
     }
 

@@ -217,7 +217,7 @@ impl RequestSigner {
     ) -> Result<String> {
         canonicalize_header(req)?;
 
-        canonicalize_query(
+        let canonical_query = canonicalize_query(
             req,
             SigningMethod::Query(expires_in),
             client_email,
@@ -226,7 +226,7 @@ impl RequestSigner {
             &self.region,
         )?;
 
-        let creq = canonical_request_string(req)?;
+        let creq = canonical_request_string(req, &canonical_query)?;
         let encoded_req = hex_sha256(creq.as_bytes());
 
         let scope = format!(
@@ -456,7 +456,10 @@ fn hex_encode_upper(bytes: &[u8]) -> String {
     out
 }
 
-fn canonical_request_string(req: &mut SigningRequest) -> Result<String> {
+fn canonical_request_string(
+    req: &SigningRequest,
+    canonical_query: &[(String, String)],
+) -> Result<String> {
     // 256 is specially chosen to avoid reallocation for most requests.
     let mut f = String::with_capacity(256);
 
@@ -473,7 +476,7 @@ fn canonical_request_string(req: &mut SigningRequest) -> Result<String> {
 
     // Insert query
     f.push_str(&SigningRequest::query_to_string(
-        req.query.clone(),
+        canonical_query.to_vec(),
         "=",
         "&",
     ));
@@ -522,7 +525,9 @@ fn canonicalize_query(
     now: Timestamp,
     service: &str,
     region: &str,
-) -> Result<()> {
+) -> Result<Vec<(String, String)>> {
+    let original_query_len = req.query.len();
+
     if let SigningMethod::Query(expire) = method {
         req.query
             .push(("X-Goog-Algorithm".into(), "GOOG4-RSA-SHA256".into()));
@@ -545,26 +550,28 @@ fn canonicalize_query(
         ));
     }
 
-    // Return if query is empty.
-    if req.query.is_empty() {
-        return Ok(());
-    }
-
-    // Sort by param name
-    req.query.sort();
-
-    req.query = req
-        .query
-        .iter()
+    let mut canonical_query = req.query.clone();
+    canonical_query.sort();
+    canonical_query = canonical_query
+        .into_iter()
         .map(|(k, v)| {
             (
-                utf8_percent_encode(k, &GOOG_QUERY_ENCODE_SET).to_string(),
-                utf8_percent_encode(v, &GOOG_QUERY_ENCODE_SET).to_string(),
+                utf8_percent_encode(&k, &GOOG_QUERY_ENCODE_SET).to_string(),
+                utf8_percent_encode(&v, &GOOG_QUERY_ENCODE_SET).to_string(),
             )
         })
         .collect();
 
-    Ok(())
+    let mut appended_query = req.query.split_off(original_query_len);
+    appended_query.sort();
+    req.query.extend(appended_query.into_iter().map(|(k, v)| {
+        (
+            utf8_percent_encode(&k, &GOOG_QUERY_ENCODE_SET).to_string(),
+            utf8_percent_encode(&v, &GOOG_QUERY_ENCODE_SET).to_string(),
+        )
+    }));
+
+    Ok(canonical_query)
 }
 
 #[cfg(test)]
@@ -573,6 +580,9 @@ mod tests {
     use bytes::Bytes;
     use http::header;
     use reqsign_core::HttpSend;
+
+    const RAW_QUERY: &str = "b=2&versionId=a%2Bb%3Dc%2525%26e&empty=&flag";
+
     use std::sync::{Arc, Mutex};
 
     #[derive(Debug, Default)]
@@ -661,7 +671,9 @@ mod tests {
 
         let mut builder = http::Request::builder();
         builder = builder.method(http::Method::GET);
-        builder = builder.uri("https://storage.googleapis.com/test-bucket/test-object");
+        builder = builder.uri(format!(
+            "https://storage.googleapis.com/test-bucket/test-object?{RAW_QUERY}"
+        ));
         let req = builder.body(Bytes::new()).expect("request must build");
         let (mut parts, _body) = req.into_parts();
 
@@ -670,6 +682,11 @@ mod tests {
             .await?;
 
         let query = parts.uri.query().expect("signed url must have query");
+        assert!(
+            query.starts_with(&format!("{RAW_QUERY}&X-Goog-Algorithm=")),
+            "signed URL does not preserve the existing raw query: {}",
+            parts.uri
+        );
         assert_eq!(
             query_get(query, "X-Goog-Signature").expect("signature must exist"),
             "010203"
@@ -680,7 +697,9 @@ mod tests {
 
         let mut builder = http::Request::builder();
         builder = builder.method(http::Method::GET);
-        builder = builder.uri("https://storage.googleapis.com/test-bucket/test-object");
+        builder = builder.uri(format!(
+            "https://storage.googleapis.com/test-bucket/test-object?{RAW_QUERY}"
+        ));
         let req = builder.body(Bytes::new()).expect("request must build");
         let (mut parts_for_rebuild, _body) = req.into_parts();
 
