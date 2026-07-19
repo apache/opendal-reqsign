@@ -553,7 +553,7 @@ mod tests {
         fn format_query(req: &Request<&str>) -> Vec<String> {
             let query = req.uri().query().unwrap_or_default();
             let mut query = form_urlencoded::parse(query.as_bytes())
-                .map(|(k, v)| format!("{}={}", &k, &v))
+                .map(|(k, v)| format!("{}={}", k, v))
                 .collect::<Vec<_>>();
             query.sort();
             query
