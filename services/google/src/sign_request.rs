@@ -27,8 +27,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use reqsign_core::{
-    Context, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
-    hash::hex_sha256, time::*,
+    Context, Result, SignRequest, SigningMethod, SigningRequest, hash::hex_sha256, time::*,
 };
 
 use crate::constants::{DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE};
@@ -391,7 +390,7 @@ impl SignRequest for RequestSigner {
                 } else if let (Some(token), Some(signer_email)) =
                     (cred.token.as_ref(), self.signer_email.as_deref())
                 {
-                    if !token.is_valid() {
+                    if !token.can_sign_request() {
                         return Err(reqsign_core::Error::credential_invalid(
                             "token required for iamcredentials signBlob query signing",
                         ));
@@ -413,9 +412,10 @@ impl SignRequest for RequestSigner {
             }
             // Header authentication - prefer valid token, otherwise exchange from SA
             None => {
-                // Check if we have a valid token
+                // Tokens inside the refresh window are still usable for the current request. The
+                // credential cache will reload them before the next request.
                 if let Some(token) = &cred.token {
-                    if token.is_valid() {
+                    if token.can_sign_request() {
                         self.build_token_auth(req, token)?
                     } else if let Some(sa) = &cred.service_account {
                         // Token expired, but we have SA, exchange for new token
@@ -702,6 +702,38 @@ mod tests {
             .expect("payload must be recorded");
 
         assert_eq!(recorded_payload_b64, expected_payload_b64);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_header_auth_with_token_inside_refresh_window() -> Result<()> {
+        let ctx = Context::new();
+        let signer = RequestSigner::new("storage");
+        let cred = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(30)),
+        });
+        assert!(!cred.has_valid_token());
+
+        let req = http::Request::builder()
+            .method(http::Method::GET)
+            .uri("https://storage.googleapis.com/test-bucket/test-object")
+            .body(Bytes::new())
+            .expect("request must build");
+        let (mut parts, _body) = req.into_parts();
+
+        signer
+            .sign_request(&ctx, &mut parts, Some(&cred), None)
+            .await?;
+
+        assert_eq!(
+            parts
+                .headers
+                .get(header::AUTHORIZATION)
+                .expect("authorization must exist"),
+            "Bearer test-access-token"
+        );
 
         Ok(())
     }

@@ -19,6 +19,9 @@ use reqsign_core::{Result, SigningCredential as KeyTrait, time::Timestamp, utils
 use std::fmt::{self, Debug};
 use std::time::Duration;
 
+const TOKEN_REFRESH_BUFFER: Duration = Duration::from_secs(120);
+const TOKEN_SIGNING_BUFFER: Duration = Duration::from_secs(10);
+
 /// ServiceAccount holds the client email and private key for service account authentication.
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -236,18 +239,25 @@ impl Debug for Token {
     }
 }
 
+impl Token {
+    /// Returns whether the token has enough lifetime left to sign a request.
+    pub(crate) fn can_sign_request(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + TOKEN_SIGNING_BUFFER)
+    }
+}
+
 impl KeyTrait for Token {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + TOKEN_REFRESH_BUFFER)
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
         if self.access_token.is_empty() {
             return false;
         }
 
         match self.expires_at {
-            Some(expires_at) => {
-                // Consider token invalid if it expires within 2 minutes
-                let buffer = Duration::from_secs(120);
-                Timestamp::now() < expires_at - buffer
-            }
+            Some(expires_at) => timestamp < expires_at,
             None => true, // No expiration means always valid
         }
     }
@@ -384,10 +394,16 @@ mod tests {
         // Token that expires within 2 minutes
         token.expires_at = Some(Timestamp::now() + Duration::from_secs(30));
         assert!(!token.is_valid());
+        assert!(token.can_sign_request());
+
+        // Token that expires too soon to safely sign a request
+        token.expires_at = Some(Timestamp::now() + Duration::from_secs(5));
+        assert!(!token.can_sign_request());
 
         // Expired token
         token.expires_at = Some(Timestamp::now() - Duration::from_secs(3600));
         assert!(!token.is_valid());
+        assert!(!token.can_sign_request());
 
         // Empty access token
         token.access_token = String::new();
