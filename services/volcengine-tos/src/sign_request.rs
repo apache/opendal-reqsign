@@ -32,6 +32,16 @@ use crate::uri::percent_encode_query;
 
 const TOS_ALGORITHM: &str = "TOS4-HMAC-SHA256";
 const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
+const TOS_AUTH_QUERY_NAMES: &[&str] = &[
+    "x-tos-algorithm",
+    "x-tos-credential",
+    "x-tos-date",
+    "x-tos-expires",
+    "x-tos-policy",
+    "x-tos-security-token",
+    "x-tos-signature",
+    "x-tos-signedheaders",
+];
 
 static HEADER_TOS_DATE: LazyLock<HeaderName> =
     LazyLock::new(|| HeaderName::from_static("x-tos-date"));
@@ -87,6 +97,7 @@ impl SignRequest for RequestSigner {
         let now = self.time.unwrap_or_else(Timestamp::now);
         let original_uri = req.uri.clone();
         let mut signing_req = SigningRequest::build(req)?;
+        validate_authentication_carriers(&signing_req)?;
 
         let date_str = now.format_iso8601();
         let date_only = now.format_date();
@@ -178,25 +189,6 @@ fn canonicalize_header(
     date_str: &str,
     expires_in: Option<Duration>,
 ) -> Result<()> {
-    let is_presign = expires_in.is_some();
-    for (name, value) in ctx.headers.iter_mut() {
-        if is_presign && name != header::HOST && !name.as_str().starts_with("x-tos-") {
-            continue;
-        }
-        SigningRequest::header_value_normalize(value);
-        let normalized = value
-            .to_str()
-            .map_err(|e| {
-                reqsign_core::Error::request_invalid(format!(
-                    "invalid header value for TOS signing: {e}"
-                ))
-            })?
-            .split_ascii_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        *value = normalized.parse()?;
-    }
-
     // Insert HOST header if not present.
     if ctx.headers.get(header::HOST).is_none() {
         ctx.headers.insert(
@@ -213,9 +205,30 @@ fn canonicalize_header(
         ctx.headers.insert(&*HEADER_TOS_DATE, date_str.parse()?);
 
         if let Some(token) = &cred.session_token {
-            ctx.headers
-                .insert(&*HEADER_TOS_SECURITY_TOKEN, token.parse()?);
+            let mut token: HeaderValue = token.parse()?;
+            token.set_sensitive(true);
+            ctx.headers.insert(&*HEADER_TOS_SECURITY_TOKEN, token);
         }
+    }
+
+    Ok(())
+}
+
+fn validate_authentication_carriers(ctx: &SigningRequest) -> Result<()> {
+    if ctx.headers.contains_key(AUTHORIZATION) {
+        return Err(reqsign_core::Error::request_invalid(
+            "request already contains an authorization header",
+        ));
+    }
+
+    if let Some((name, _)) = ctx.query.iter().find(|(name, _)| {
+        TOS_AUTH_QUERY_NAMES
+            .iter()
+            .any(|candidate| name.eq_ignore_ascii_case(candidate))
+    }) {
+        return Err(reqsign_core::Error::request_invalid(format!(
+            "request query already contains TOS authentication field: {name}"
+        )));
     }
 
     Ok(())
@@ -346,12 +359,21 @@ fn canonical_request_hash(
 
     // Insert signed headers
     for header in signed_headers {
-        let value = &ctx.headers[*header];
+        let mut value = ctx.headers[*header].clone();
+        SigningRequest::header_value_normalize(&mut value);
+        let value = value
+            .to_str()
+            .map_err(|e| {
+                reqsign_core::Error::request_invalid(format!(
+                    "invalid header value for TOS signing: {e}"
+                ))
+            })?
+            .split_ascii_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         canonical_request.push_str(header);
         canonical_request.push(':');
-        if let Ok(value_str) = value.to_str() {
-            canonical_request.push_str(value_str.trim());
-        }
+        canonical_request.push_str(&value);
         canonical_request.push('\n');
     }
 
@@ -532,12 +554,14 @@ mod tests {
     async fn test_presign_with_signed_headers() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let req = http::Request::get(
+        let mut req = http::Request::get(
             "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject",
         )
         .header("x-tos-content-sha256", EMPTY_PAYLOAD_SHA256)
-        .header("x-tos-meta-note", "alpha   beta")
         .body(())?;
+        let mut metadata = HeaderValue::from_static("alpha   beta");
+        metadata.set_sensitive(true);
+        req.headers_mut().insert("x-tos-meta-note", metadata);
         let parts = presign_request(
             req,
             &Credential::new("testAK", "testSK"),
@@ -546,7 +570,8 @@ mod tests {
         )
         .await?;
 
-        assert_eq!("alpha beta", parts.headers["x-tos-meta-note"]);
+        assert_eq!("alpha   beta", parts.headers["x-tos-meta-note"]);
+        assert!(parts.headers["x-tos-meta-note"].is_sensitive());
         assert_eq!(
             "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=testAK%2F20220101%2Fap-southeast-1%2Ftos%2Frequest&X-Tos-Date=20220101T000000Z&X-Tos-Expires=86400&X-Tos-SignedHeaders=host%3Bx-tos-content-sha256%3Bx-tos-meta-note&X-Tos-Signature=bb27db860abc9394068d1f22c229f2dfe01e58d8f6f2a65f06f2e78114af9195",
             parts.uri.to_string(),
@@ -594,11 +619,22 @@ mod tests {
         assert!(canonical_query.contains(&("literal-plus".to_string(), "%2B".to_string())));
         assert!(canonical_query.contains(&("double".to_string(), "%252F".to_string())));
 
-        let mut header_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        let mut header_parts = http::Request::get(&original_uri)
+            .header("x-custom", "alpha   beta")
+            .body(())?
+            .into_parts()
+            .0;
+        header_parts
+            .headers
+            .get_mut("x-custom")
+            .unwrap()
+            .set_sensitive(true);
         signer
             .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
             .await?;
         assert_eq!(header_parts.uri.to_string(), original_uri);
+        assert_eq!(header_parts.headers["x-custom"], "alpha   beta");
+        assert!(header_parts.headers["x-custom"].is_sensitive());
 
         let mut query_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         signer
@@ -624,5 +660,66 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn authentication_carrier_collisions_are_atomic() -> Result<()> {
+        let signer = RequestSigner::new("cn-beijing").with_time("2026-07-22T00:00:00Z".parse()?);
+        let credential = Credential::new("testAK", "testSK");
+
+        let mut query_parts = http::Request::get(
+            "https://bucket.tos-cn-beijing.volces.com/object?x-tos-signature=stale&key=value",
+        )
+        .body(())?
+        .into_parts()
+        .0;
+        query_parts.headers.insert(
+            HeaderName::from_static("x-original"),
+            HeaderValue::from_static("value"),
+        );
+        query_parts.extensions.insert(7_u8);
+        let original_query_parts = query_parts.clone();
+
+        signer
+            .sign_request(
+                &Context::new(),
+                &mut query_parts,
+                Some(&credential),
+                Some(Duration::from_secs(60)),
+            )
+            .await
+            .expect_err("an existing TOS signature must be rejected");
+        assert_request_head_unchanged(&query_parts, &original_query_parts);
+
+        let mut header_parts =
+            http::Request::get("https://bucket.tos-cn-beijing.volces.com/object?key=value")
+                .header(AUTHORIZATION, "stale")
+                .body(())?
+                .into_parts()
+                .0;
+        header_parts.extensions.insert(9_u8);
+        let original_header_parts = header_parts.clone();
+
+        signer
+            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .await
+            .expect_err("an existing authorization header must be rejected");
+        assert_request_head_unchanged(&header_parts, &original_header_parts);
+
+        Ok(())
+    }
+
+    fn assert_request_head_unchanged(
+        actual: &http::request::Parts,
+        expected: &http::request::Parts,
+    ) {
+        assert_eq!(actual.method, expected.method);
+        assert_eq!(actual.uri, expected.uri);
+        assert_eq!(actual.version, expected.version);
+        assert_eq!(actual.headers, expected.headers);
+        assert_eq!(
+            actual.extensions.get::<u8>(),
+            expected.extensions.get::<u8>()
+        );
     }
 }
