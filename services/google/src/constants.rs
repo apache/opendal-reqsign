@@ -29,7 +29,6 @@ pub const DEFAULT_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform"
 ///
 /// - URI encode every byte except the unreserved characters: 'A'-'Z', 'a'-'z', '0'-'9', '-', '.', '_', and '~'.
 pub static GOOG_URI_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
-    .remove(b'/')
     .remove(b'-')
     .remove(b'.')
     .remove(b'_')

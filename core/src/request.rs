@@ -16,41 +16,72 @@
 // under the License.
 
 use std::borrow::Cow;
-use std::mem;
 use std::time::Duration;
 
 use crate::{Error, Result};
 use http::HeaderMap;
 use http::HeaderValue;
 use http::Method;
-use http::Uri;
 use http::header::HeaderName;
 use http::uri::Authority;
 use http::uri::PathAndQuery;
 use http::uri::Scheme;
-use std::str::FromStr;
 
-/// Signing context for request.
+fn parse_query(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (
+                percent_encoding::percent_decode_str(key)
+                    .decode_utf8_lossy()
+                    .into_owned(),
+                percent_encoding::percent_decode_str(value)
+                    .decode_utf8_lossy()
+                    .into_owned(),
+            )
+        })
+        .collect()
+}
+
+/// A service-local canonicalization view and signed-header staging area.
+///
+/// The method and URI-derived fields are read-only working values. They do not own
+/// the wire URI and must not be mutated to express signing output. The URI supplied
+/// to [`Self::build`] is already the final caller-provided representation; services
+/// derive canonical values locally and construct query authentication from the
+/// original URI.
 #[derive(Debug)]
 pub struct SigningRequest {
-    /// HTTP method.
+    /// Read-only HTTP method used for canonicalization.
     pub method: Method,
-    /// HTTP scheme.
+    /// Read-only HTTP scheme used for canonicalization.
     pub scheme: Scheme,
-    /// HTTP authority.
+    /// Read-only HTTP authority used for canonicalization.
     pub authority: Authority,
-    /// HTTP path.
+    /// Read-only, percent-encoded wire path.
+    ///
+    /// Services may derive a canonical path from this value, but must not decode it
+    /// and write the result back to the request URI.
     pub path: String,
-    /// HTTP query parameters.
+    /// HTTP query parameters decoded once from the wire query for canonicalization.
+    ///
+    /// Percent escapes are decoded once, literal `+` remains `+`, and duplicate order
+    /// is retained. This working view does not own or rebuild the wire URI.
     pub query: Vec<(String, String)>,
-    /// HTTP headers.
+    /// Staged HTTP headers committed by [`Self::apply`].
     pub headers: HeaderMap,
 }
 
 impl SigningRequest {
-    /// Build a signing context from http::request::Parts.
+    /// Build a read-only request-target working view from http::request::Parts.
+    ///
+    /// The URI path and query must already be percent-encoded for transport, and the
+    /// URI must contain an authority. This method clones the URI-derived values and
+    /// headers; the input request head remains unchanged on success or error.
     pub fn build(parts: &mut http::request::Parts) -> Result<Self> {
-        let uri = mem::take(&mut parts.uri).into_parts();
+        let uri = parts.uri.clone().into_parts();
         let paq = uri
             .path_and_query
             .unwrap_or_else(|| PathAndQuery::from_static("/"));
@@ -62,76 +93,67 @@ impl SigningRequest {
                 Error::request_invalid("request without authority is invalid for signing")
             })?,
             path: paq.path().to_string(),
-            query: paq
-                .query()
-                .map(|v| {
-                    form_urlencoded::parse(v.as_bytes())
-                        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                        .collect()
-                })
-                .unwrap_or_default(),
-
-            // Take the headers out of the request to avoid copy.
-            // We will return it back when apply the context.
-            headers: mem::take(&mut parts.headers),
+            query: paq.query().map(parse_query).unwrap_or_default(),
+            headers: parts.headers.clone(),
         })
     }
 
-    /// Apply the signing context back to http::request::Parts.
-    pub fn apply(mut self, parts: &mut http::request::Parts) -> Result<()> {
-        let query_size = self.query_size();
+    /// Commit staged headers back to http::request::Parts.
+    ///
+    /// In debug builds, this method verifies that the method, scheme, authority, path,
+    /// and decoded query working view still match `parts`. A mismatch returns an error
+    /// without changing `parts`. Release builds omit this implementation check.
+    ///
+    /// On success, only headers are committed. This method never writes the method or
+    /// URI. Query signers must construct their final URI from the original wire URI and
+    /// assign it separately after all fallible signing work succeeds.
+    pub fn apply(self, parts: &mut http::request::Parts) -> Result<()> {
+        #[cfg(debug_assertions)]
+        self.validate_request_view(parts)?;
 
-        // Return headers back.
-        mem::swap(&mut parts.headers, &mut self.headers);
-        parts.method = self.method;
-        parts.uri = {
-            let mut uri_parts = mem::take(&mut parts.uri).into_parts();
-            // Return scheme bakc.
-            uri_parts.scheme = Some(self.scheme);
-            // Return authority back.
-            uri_parts.authority = Some(self.authority);
-            // Build path and query.
-            uri_parts.path_and_query =
-                {
-                    let paq = if query_size == 0 {
-                        self.path
-                    } else {
-                        let mut s = self.path;
-                        s.reserve(query_size + 1);
-
-                        s.push('?');
-                        for (i, (k, v)) in self.query.iter().enumerate() {
-                            if i > 0 {
-                                s.push('&');
-                            }
-
-                            s.push_str(k);
-                            if !v.is_empty() {
-                                s.push('=');
-                                s.push_str(v);
-                            }
-                        }
-
-                        s
-                    };
-
-                    Some(PathAndQuery::from_str(&paq).map_err(|e| {
-                        Error::request_invalid("invalid path and query").with_source(e)
-                    })?)
-                };
-            Uri::from_parts(uri_parts)
-                .map_err(|e| Error::request_invalid("failed to build URI").with_source(e))?
-        };
+        parts.headers = self.headers;
 
         Ok(())
     }
 
-    /// Get the path percent decoded.
+    #[cfg(debug_assertions)]
+    fn validate_request_view(&self, parts: &http::request::Parts) -> Result<()> {
+        let uri = parts.uri.clone().into_parts();
+        let paq = uri
+            .path_and_query
+            .unwrap_or_else(|| PathAndQuery::from_static("/"));
+        let scheme = uri.scheme.unwrap_or(Scheme::HTTP);
+        let authority = uri.authority.ok_or_else(|| {
+            Error::request_invalid("request without authority is invalid for signing")
+        })?;
+        let query = paq.query().map(parse_query).unwrap_or_default();
+
+        if self.method != parts.method
+            || self.scheme != scheme
+            || self.authority != authority
+            || self.path != paq.path()
+            || self.query != query
+        {
+            return Err(Error::request_invalid(
+                "signing request method or URI working view was modified",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Return the entire working path percent-decoded.
+    ///
+    /// This is a canonicalization helper, not a wire URI builder. Decoding the entire
+    /// path turns encoded slashes such as `%2F` into `/`; services where encoded slash
+    /// is data must decode path segments separately.
     pub fn path_percent_decoded(&self) -> Cow<'_, str> {
         percent_encoding::percent_decode_str(&self.path).decode_utf8_lossy()
     }
 
-    /// Get query size.
+    /// Return the combined key and value length of the decoded working query.
+    ///
+    /// This is not the byte length of the wire query.
     #[inline]
     pub fn query_size(&self) -> usize {
         self.query
@@ -140,19 +162,25 @@ impl SigningRequest {
             .sum::<usize>()
     }
 
-    /// Push a new query pair into query list.
+    /// Push a new query pair into the working query view.
+    ///
+    /// This does not modify the wire URI. [`Self::apply`] rejects a modified
+    /// request-target view in debug builds and ignores it in release builds. Query
+    /// signers must construct their final URI from the original wire URI instead.
     #[inline]
     pub fn query_push(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.query.push((key.into(), value.into()));
     }
 
-    /// Push a query string into query list.
+    /// Push a query string into the working query view.
+    ///
+    /// This does not modify the wire URI; see [`Self::query_push`].
     #[inline]
     pub fn query_append(&mut self, query: &str) {
         self.query.push((query.to_string(), "".to_string()));
     }
 
-    /// Get query value by filter.
+    /// Clone working query pairs whose keys match a canonicalization filter.
     pub fn query_to_vec_with_filter(&self, filter: impl Fn(&str) -> bool) -> Vec<(String, String)> {
         self.query
             .iter()
@@ -163,7 +191,9 @@ impl SigningRequest {
             .collect()
     }
 
-    /// Convert sorted query to string.
+    /// Convert sorted query pairs to a canonical string.
+    ///
+    /// This helper does not produce or modify a wire URI.
     ///
     /// ```shell
     /// [(a, b), (c, d)] => "a:b\nc:d"
@@ -189,7 +219,11 @@ impl SigningRequest {
         s
     }
 
-    /// Convert sorted query to percent decoded string.
+    /// Convert sorted query pairs to a string after percent-decoding each value.
+    ///
+    /// Values from [`Self::query`] have already been decoded once. Passing them to
+    /// this helper performs an additional decode and is only correct when a service
+    /// protocol explicitly requires it. This helper does not produce a wire URI.
     ///
     /// ```shell
     /// [(a, b), (c, d)] => "a:b\nc:d"
@@ -232,7 +266,11 @@ impl SigningRequest {
         }
     }
 
-    /// Normalize header value.
+    /// Normalize a header value for canonicalization.
+    ///
+    /// Normalize a clone when the protocol does not require changing the wire header;
+    /// mutating a value inside [`Self::headers`] changes the header committed by
+    /// [`Self::apply`].
     pub fn header_value_normalize(v: &mut HeaderValue) {
         let bs = v.as_bytes();
 
@@ -298,11 +336,160 @@ impl SigningRequest {
     }
 }
 
-/// SigningMethod is the method that used in signing.
+/// A service-selected authentication placement.
+///
+/// This type does not define a universal mapping from `expires_in` to query
+/// authentication. Services and credential types decide which placement applies.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum SigningMethod {
     /// Signing with header.
     Header,
     /// Signing with query.
     Query(Duration),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::{HeaderValue, Request};
+
+    const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+
+    fn request_parts() -> http::request::Parts {
+        Request::get(format!("https://example.com/object%2Fname?{RAW_QUERY}"))
+            .header("x-original", " value ")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0
+    }
+
+    #[test]
+    fn build_is_read_only_and_parses_wire_query_once() {
+        let mut parts = request_parts();
+        let original = parts.clone();
+
+        let signing = SigningRequest::build(&mut parts).expect("signing request must build");
+
+        assert_eq!(parts.method, original.method);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.version, original.version);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(signing.path, "/object%2Fname");
+        assert_eq!(
+            signing.query,
+            vec![
+                ("slash".to_string(), "/".to_string()),
+                ("hash".to_string(), "#".to_string()),
+                ("amp".to_string(), "&".to_string()),
+                ("equals".to_string(), "=".to_string()),
+                ("space".to_string(), " ".to_string()),
+                ("encoded-plus".to_string(), "+".to_string()),
+                ("literal-plus".to_string(), "+".to_string()),
+                ("double".to_string(), "%2F".to_string()),
+                ("dup".to_string(), "first".to_string()),
+                ("dup".to_string(), "second".to_string()),
+                (String::new(), "empty-key".to_string()),
+                ("empty".to_string(), String::new()),
+                ("flag".to_string(), String::new()),
+                ("flag".to_string(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_error_leaves_request_unchanged() {
+        let mut parts = Request::get("/relative")
+            .header("x-original", "value")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        assert!(SigningRequest::build(&mut parts).is_err());
+        assert_eq!(parts.method, original.method);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.version, original.version);
+        assert_eq!(parts.headers, original.headers);
+    }
+
+    #[test]
+    fn apply_commits_only_headers() {
+        let mut parts = request_parts();
+        let original = parts.clone();
+        let mut signing =
+            SigningRequest::build(&mut parts).expect("signing request must build successfully");
+        signing
+            .headers
+            .insert("authorization", HeaderValue::from_static("signed"));
+
+        signing.apply(&mut parts).expect("apply must succeed");
+
+        assert_eq!(parts.method, original.method);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.version, original.version);
+        assert_eq!(
+            parts.headers.get("authorization"),
+            Some(&HeaderValue::from_static("signed"))
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn apply_rejects_modified_request_view_atomically() {
+        type ViewMutation = Box<dyn Fn(&mut SigningRequest)>;
+
+        let mutations: Vec<ViewMutation> = vec![
+            Box::new(|signing| signing.method = Method::POST),
+            Box::new(|signing| signing.scheme = Scheme::HTTP),
+            Box::new(|signing| signing.authority = "other.example.com".parse().unwrap()),
+            Box::new(|signing| signing.path.push_str("/changed")),
+            Box::new(|signing| signing.query_push("auth", "value")),
+        ];
+
+        for mutate in mutations {
+            let mut parts = request_parts();
+            let original = parts.clone();
+            let mut signing =
+                SigningRequest::build(&mut parts).expect("signing request must build successfully");
+            signing
+                .headers
+                .insert("authorization", HeaderValue::from_static("signed"));
+            mutate(&mut signing);
+
+            assert!(signing.apply(&mut parts).is_err());
+            assert_eq!(parts.method, original.method);
+            assert_eq!(parts.uri, original.uri);
+            assert_eq!(parts.version, original.version);
+            assert_eq!(parts.headers, original.headers);
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn apply_omits_request_view_validation_in_release() {
+        let mut parts = request_parts();
+        let original = parts.clone();
+        let mut signing =
+            SigningRequest::build(&mut parts).expect("signing request must build successfully");
+        signing.method = Method::POST;
+        signing.scheme = Scheme::HTTP;
+        signing.authority = "other.example.com".parse().unwrap();
+        signing.path.push_str("/changed");
+        signing.query_push("auth", "value");
+        signing
+            .headers
+            .insert("authorization", HeaderValue::from_static("signed"));
+
+        signing.apply(&mut parts).expect("apply must succeed");
+
+        assert_eq!(parts.method, original.method);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.version, original.version);
+        assert_eq!(
+            parts.headers.get("authorization"),
+            Some(&HeaderValue::from_static("signed"))
+        );
+    }
 }

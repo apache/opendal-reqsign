@@ -100,14 +100,29 @@ where
     }
 }
 
-/// SignRequest is the trait used by signer to build the signing request.
+/// Service-specific request signing.
+///
+/// Implementations receive a request URI that is already percent-encoded and ready
+/// for transport. They must derive canonical paths, queries, and headers as local
+/// views without normalizing or rebuilding the existing wire URI.
+///
+/// Header authentication must preserve the URI. Query authentication must preserve
+/// the existing URI representation and append only protocol-encoded authentication
+/// fields. In particular, existing percent escapes, parameter order, duplicate keys,
+/// empty values, and literal `+` characters are caller-owned wire data.
 pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     /// Credential used by this builder.
     ///
     /// Typically, it will be a credential.
     type Credential: Send + Sync + Unpin + 'static;
 
-    /// Construct the signing request.
+    /// Sign a request head.
+    ///
+    /// On `Err`, an implementation must leave the entire request head unchanged. On
+    /// `Ok`, it may change only `req.uri` and `req.headers`; the method, version, and
+    /// extensions remain caller-owned. [`crate::Signer`] enforces this commit boundary
+    /// when it invokes the implementation, but implementations must also uphold it for
+    /// callers that invoke this method directly.
     ///
     /// ## Credential
     ///
@@ -115,11 +130,10 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     ///
     /// ## Expires In
     ///
-    /// The `expires_in` parameter specifies the expiration time for the result.
-    /// If the signer does not support expiration, it should return an error.
-    ///
-    /// Implementation details determine how to handle the expiration logic. For instance,
-    /// AWS uses a query string that includes an `Expires` parameter.
+    /// The `expires_in` parameter requests a validity duration when the service supports
+    /// one. It is not a universal header-versus-query mode selector. Each service and
+    /// credential type defines whether the value selects presigning, configures an
+    /// expiration, is ignored, or is rejected.
     fn sign_request<'a>(
         &'a self,
         ctx: &'a Context,

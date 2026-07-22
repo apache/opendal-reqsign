@@ -22,7 +22,8 @@ use serde::Deserialize;
 
 /// CredentialsUriCredentialProvider loads temporary credentials from a custom URI.
 ///
-/// Configuration values can be provided directly via [`with_uri`] or through the
+/// Configuration values can be provided directly via
+/// [`CredentialsUriCredentialProvider::with_uri`] or through the
 /// `ALIBABA_CLOUD_CREDENTIALS_URI` environment variable.
 #[derive(Debug, Default, Clone)]
 pub struct CredentialsUriCredentialProvider {
