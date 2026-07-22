@@ -18,9 +18,9 @@
 use crate::Credential;
 use crate::constants::*;
 use http::request::Parts;
-use http::{HeaderValue, header};
+use http::{HeaderValue, Uri, header};
 use log::debug;
-use percent_encoding::percent_encode;
+use percent_encoding::{percent_decode_str, percent_encode};
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningMethod, SigningRequest};
@@ -200,13 +200,15 @@ impl SignRequest for RequestSigner {
             SigningMethod::Header
         };
 
+        let original_uri = req.uri.clone();
         let mut sctx = SigningRequest::build(req)?;
+        let mut final_uri = None;
 
         // Handle different credential types
         match cred {
             Credential::SasToken { token } => {
                 // SAS token authentication
-                sctx.query_append(token);
+                final_uri = Some(append_query_fragment(&original_uri, token)?);
             }
             Credential::BearerToken { token, .. } => {
                 // Bearer token authentication
@@ -221,10 +223,7 @@ impl SignRequest for RequestSigner {
                         let now_time = self.time.unwrap_or_else(Timestamp::now);
                         let expiry = now_time + d;
 
-                        let resource =
-                            crate::service_sas::ServiceSasResource::from_path_percent_decoded(
-                                sctx.path_percent_decoded().as_ref(),
-                            )?;
+                        let resource = service_sas_resource(&sctx.path)?;
                         match (cfg.resource, &resource) {
                             (
                                 SasResourceKind::Container,
@@ -323,9 +322,7 @@ impl SignRequest for RequestSigner {
                             )
                             .with_source(e)
                         })?;
-                        signer_token
-                            .into_iter()
-                            .for_each(|(k, v)| sctx.query_push(k, v));
+                        final_uri = Some(append_query_pairs(&original_uri, &signer_token)?);
                     }
                     SigningMethod::Header => {
                         sctx.headers.insert(
@@ -363,10 +360,7 @@ impl SignRequest for RequestSigner {
                             ));
                         };
 
-                        let resource =
-                            crate::service_sas::ServiceSasResource::from_path_percent_decoded(
-                                sctx.path_percent_decoded().as_ref(),
-                            )?;
+                        let resource = service_sas_resource(&sctx.path)?;
 
                         let mut signer = crate::service_sas::ServiceSharedAccessSignature::new(
                             account_name.clone(),
@@ -392,9 +386,7 @@ impl SignRequest for RequestSigner {
                             reqsign_core::Error::unexpected("failed to generate service SAS token")
                                 .with_source(e)
                         })?;
-                        signer_token
-                            .into_iter()
-                            .for_each(|(k, v)| sctx.query_push(k, v));
+                        final_uri = Some(append_query_pairs(&original_uri, &signer_token)?);
                     }
                     SigningMethod::Header => {
                         let now_time = self.time.unwrap_or_else(Timestamp::now);
@@ -424,13 +416,67 @@ impl SignRequest for RequestSigner {
             }
         }
 
-        // Apply percent encoding for query parameters
-        for (_, v) in sctx.query.iter_mut() {
-            *v = percent_encode(v.as_bytes(), &AZURE_QUERY_ENCODE_SET).to_string();
+        sctx.apply(req)?;
+        if let Some(uri) = final_uri {
+            req.uri = uri;
         }
-
-        sctx.apply(req)
+        Ok(())
     }
+}
+
+fn service_sas_resource(path: &str) -> Result<crate::service_sas::ServiceSasResource> {
+    let mut segments = path
+        .strip_prefix('/')
+        .unwrap_or(path)
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| percent_decode_str(segment).decode_utf8_lossy().into_owned());
+    let container = segments
+        .next()
+        .ok_or_else(|| reqsign_core::Error::request_invalid("missing container in path"))?;
+    let rest = segments.collect::<Vec<_>>();
+
+    if rest.is_empty() {
+        Ok(crate::service_sas::ServiceSasResource::Container { container })
+    } else {
+        Ok(crate::service_sas::ServiceSasResource::Blob {
+            container,
+            blob: rest.join("/"),
+        })
+    }
+}
+
+fn append_query_pairs(uri: &Uri, pairs: &[(String, String)]) -> Result<Uri> {
+    let fragment = pairs
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                percent_encode(key.as_bytes(), &AZURE_QUERY_ENCODE_SET),
+                percent_encode(value.as_bytes(), &AZURE_QUERY_ENCODE_SET)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    append_query_fragment(uri, &fragment)
+}
+
+fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
+    if fragment.is_empty() {
+        return Ok(uri.clone());
+    }
+
+    let mut value = uri.to_string();
+    if uri.query().is_none() {
+        value.push('?');
+    } else if !value.ends_with('?') && !value.ends_with('&') {
+        value.push('&');
+    }
+    value.push_str(fragment);
+
+    value.parse().map_err(|e| {
+        reqsign_core::Error::request_invalid("failed to append SAS query fragment").with_source(e)
+    })
 }
 
 fn infer_account_name(authority: &str) -> Result<String> {
@@ -655,7 +701,7 @@ fn canonicalize_header(ctx: &mut SigningRequest, now_time: Timestamp) -> Result<
 /// ## Reference
 ///
 /// - [Constructing the canonicalized resource string](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-resource-string)
-fn canonicalize_resource(ctx: &mut SigningRequest, account_name: &str) -> String {
+fn canonicalize_resource(ctx: &SigningRequest, account_name: &str) -> String {
     if ctx.query.is_empty() {
         return format!("/{}{}", account_name, ctx.path);
     }
@@ -670,7 +716,7 @@ fn canonicalize_resource(ctx: &mut SigningRequest, account_name: &str) -> String
         "/{}{}\n{}",
         account_name,
         ctx.path,
-        SigningRequest::query_to_percent_decoded_string(query, ":", "\n")
+        SigningRequest::query_to_string(query, ":", "\n")
     )
 }
 
@@ -685,6 +731,38 @@ mod tests {
     use std::str::FromStr;
     use std::time::Duration;
 
+    const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+
+    #[test]
+    fn canonical_resource_decodes_query_once_without_form_semantics() {
+        let mut parts = Request::get(
+            "https://account.blob.core.windows.net/container/blob?versionId=a%2Bb%3Dc%2525%26e&literal=+",
+        )
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+        let signing_req = SigningRequest::build(&mut parts).unwrap();
+
+        assert_eq!(
+            canonicalize_resource(&signing_req, "account"),
+            "/account/container/blob\nliteral:+\nversionid:a+b=c%25&e"
+        );
+        assert_eq!(
+            service_sas_resource("/container/blob%2Fname").unwrap(),
+            crate::service_sas::ServiceSasResource::Blob {
+                container: "container".to_string(),
+                blob: "blob/name".to_string(),
+            }
+        );
+        assert_eq!(
+            service_sas_resource("/container%2Fname").unwrap(),
+            crate::service_sas::ServiceSasResource::Container {
+                container: "container/name".to_string(),
+            }
+        );
+    }
+
     #[tokio::test]
     async fn test_sas_token() {
         let _ = env_logger::builder().is_test(true).try_init();
@@ -698,24 +776,25 @@ mod tests {
         );
 
         let builder = RequestSigner::new();
+        let original_uri =
+            format!("https://test.blob.core.windows.net/testbucket/testblob?{RAW_QUERY}");
 
         // Construct request
-        let req = Request::builder()
-            .uri("https://test.blob.core.windows.net/testbucket/testblob")
-            .body(())
-            .unwrap();
+        let req = Request::builder().uri(&original_uri).body(()).unwrap();
         let (mut parts, _) = req.into_parts();
 
-        // Test query signing
+        // A SAS credential selects query authentication even without expires_in.
         assert!(
             builder
-                .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(1)))
+                .sign_request(&ctx, &mut parts, Some(&cred), None)
                 .await
                 .is_ok()
         );
         assert_eq!(
-            parts.uri,
-            "https://test.blob.core.windows.net/testbucket/testblob?sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx&se=2022-01-01T11:00:14Z&st=2022-01-02T03:00:14Z&spr=https&sig=KEllk4N8f7rJfLjQCmikL2fRVt%2B%2Bl73UBkbgH%2FK3VGE%3D"
+            parts.uri.to_string(),
+            format!(
+                "{original_uri}sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx&se=2022-01-01T11:00:14Z&st=2022-01-02T03:00:14Z&spr=https&sig=KEllk4N8f7rJfLjQCmikL2fRVt%2B%2Bl73UBkbgH%2FK3VGE%3D"
+            )
         )
     }
 
@@ -731,10 +810,9 @@ mod tests {
         );
         let builder = RequestSigner::new();
 
-        let req = Request::builder()
-            .uri("https://test.blob.core.windows.net/testbucket/testblob")
-            .body(())
-            .unwrap();
+        let original_uri =
+            format!("https://test.blob.core.windows.net/testbucket/testblob?{RAW_QUERY}");
+        let req = Request::builder().uri(&original_uri).body(()).unwrap();
         let (mut parts, _) = req.into_parts();
 
         // Can effectively sign request with header method
@@ -751,12 +829,10 @@ mod tests {
             .to_str()
             .unwrap();
         assert_eq!("Bearer token", authorization);
+        assert_eq!(parts.uri.to_string(), original_uri);
 
         // Will not sign request with query method
-        let req = Request::builder()
-            .uri("https://test.blob.core.windows.net/testbucket/testblob")
-            .body(())
-            .unwrap();
+        let req = Request::builder().uri(&original_uri).body(()).unwrap();
         let (mut parts, _) = req.into_parts();
         assert!(
             builder
@@ -764,6 +840,7 @@ mod tests {
                 .await
                 .is_err()
         );
+        assert_eq!(parts.uri.to_string(), original_uri);
     }
 
     #[tokio::test]
@@ -781,10 +858,9 @@ mod tests {
             .with_time(now)
             .with_service_sas_permissions("r");
 
-        let req = Request::builder()
-            .uri("https://account.blob.core.windows.net/container/path/to/blob.txt")
-            .body(())
-            .unwrap();
+        let original_uri =
+            format!("https://account.blob.core.windows.net/container/path/to/blob.txt?{RAW_QUERY}");
+        let req = Request::builder().uri(&original_uri).body(()).unwrap();
         let (mut parts, _) = req.into_parts();
 
         builder
@@ -799,7 +875,9 @@ mod tests {
 
         assert_eq!(
             parts.uri.to_string(),
-            "https://account.blob.core.windows.net/container/path/to/blob.txt?sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
+            format!(
+                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
+            )
         );
     }
 
@@ -919,10 +997,9 @@ mod tests {
             .with_time(now)
             .with_user_delegation_presign(SasResourceKind::Blob, "r");
 
-        let req = Request::builder()
-            .uri("https://account.blob.core.windows.net/container/path/to/blob.txt")
-            .body(())
-            .unwrap();
+        let original_uri =
+            format!("https://account.blob.core.windows.net/container/path/to/blob.txt?{RAW_QUERY}");
+        let req = Request::builder().uri(&original_uri).body(()).unwrap();
         let (mut parts, _) = req.into_parts();
 
         builder
@@ -937,7 +1014,9 @@ mod tests {
 
         assert_eq!(
             parts.uri.to_string(),
-            "https://account.blob.core.windows.net/container/path/to/blob.txt?sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=VkI3h/LWkD6qcDzshjQzCuCdMPDCFA3tMEbxM%2BED5Nc%3D"
+            format!(
+                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=VkI3h/LWkD6qcDzshjQzCuCdMPDCFA3tMEbxM%2BED5Nc%3D"
+            )
         );
     }
 }

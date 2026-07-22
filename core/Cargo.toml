@@ -35,7 +35,6 @@ jwt = ["dep:rsa", "dep:serde", "dep:serde_json"]
 anyhow = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
-form_urlencoded = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }

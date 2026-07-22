@@ -27,7 +27,7 @@ use std::sync::LazyLock;
 
 use crate::constants::*;
 use crate::credential::Credential;
-use crate::uri::{percent_encode_path, percent_encode_query};
+use crate::uri::percent_encode_query;
 
 static HEADER_TOS_DATE: LazyLock<HeaderName> =
     LazyLock::new(|| HeaderName::from_static("x-tos-date"));
@@ -107,8 +107,8 @@ impl SignRequest for RequestSigner {
                 .insert(&*HEADER_TOS_SECURITY_TOKEN, token.parse()?);
         }
 
-        canonicalize_query(&mut signing_req);
-        let (canonical_request_hash, _) = canonical_request_hash(&mut signing_req)?;
+        let canonical_query = canonicalize_query(&signing_req);
+        let (canonical_request_hash, _) = canonical_request_hash(&signing_req, &canonical_query)?;
 
         // Scope: "<date>/<region>/tos/request"
         let credential_scope = format!("{}/{}/tos/request", date_only, self.region);
@@ -150,17 +150,21 @@ impl SignRequest for RequestSigner {
     }
 }
 
-fn canonicalize_query(ctx: &mut SigningRequest) {
-    ctx.query = ctx
+fn canonicalize_query(ctx: &SigningRequest) -> Vec<(String, String)> {
+    let mut query = ctx
         .query
         .iter()
         .map(|(k, v)| (percent_encode_query(k), percent_encode_query(v)))
-        .collect();
+        .collect::<Vec<_>>();
     // Sort by param name
-    ctx.query.sort();
+    query.sort();
+    query
 }
 
-fn canonical_request_hash(ctx: &mut SigningRequest) -> Result<(String, String)> {
+fn canonical_request_hash(
+    ctx: &SigningRequest,
+    canonical_query: &[(String, String)],
+) -> Result<(String, String)> {
     let mut canonical_request = String::with_capacity(256);
 
     // Insert method
@@ -168,16 +172,25 @@ fn canonical_request_hash(ctx: &mut SigningRequest) -> Result<(String, String)> 
     canonical_request.push('\n');
 
     // Insert encoded path
-    let path = percent_decode_str(&ctx.path)
-        .decode_utf8()
-        .map_err(|e| reqsign_core::Error::unexpected(format!("failed to decode path: {e}")))?;
-    let canonical_path = percent_encode_path(&path);
+    let canonical_path = ctx
+        .path
+        .split('/')
+        .map(|segment| {
+            percent_decode_str(segment)
+                .decode_utf8()
+                .map(|segment| percent_encode_query(&segment))
+                .map_err(|e| {
+                    reqsign_core::Error::request_invalid("failed to decode URI path segment")
+                        .with_source(e)
+                })
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("/");
     canonical_request.push_str(&canonical_path);
     canonical_request.push('\n');
 
     // Insert encoded query
-    let query_string = ctx
-        .query
+    let query_string = canonical_query
         .iter()
         .map(|(k, v)| format!("{}={}", k, v))
         .collect::<Vec<_>>()
@@ -289,11 +302,16 @@ mod tests {
             .with_env(OsEnv);
         let signer = Signer::new(ctx, loader, signer);
 
-        let req = http::Request::get("https://bucket.tos-cn-beijing.volces.com?list-type=2&prefix=abc&delimiter=%2F&max-keys=5&continuation-token=whvFnl2rE5vm9cWvQSgxwpc7QXHY7dgUGQ7nxlsVxFymg2%2BK227j5IHQZ32h").body(())?;
+        let raw_query = "list-type=2&prefix=abc&delimiter=%2F&max-keys=5&continuation-token=whvFnl2rE5vm9cWvQSgxwpc7QXHY7dgUGQ7nxlsVxFymg2%2BK227j5IHQZ32h";
+        let req = http::Request::get(format!(
+            "https://bucket.tos-cn-beijing.volces.com?{raw_query}"
+        ))
+        .body(())?;
         let (mut parts, _) = req.into_parts();
 
         signer.sign(&mut parts, None).await?;
 
+        assert_eq!(parts.uri.query(), Some(raw_query));
         let headers = parts.headers;
         let auth = headers.get("Authorization").unwrap();
 
@@ -301,6 +319,33 @@ mod tests {
             "TOS4-HMAC-SHA256 Credential=testAK/20260203/cn-beijing/tos/request, SignedHeaders=host;x-tos-date, Signature=db01ee877fa24847ec042703353a76a0e11bd9b6ce68eabe5ccb2924420156b0",
             auth.to_str()?
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonicalization_and_signing_preserve_wire_uri() -> Result<()> {
+        const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("cn-beijing").with_time(now);
+        let credential = Credential::new("testAK", "testSK");
+        let original_uri =
+            format!("https://bucket.tos-cn-beijing.volces.com/object%2Fname?{RAW_QUERY}");
+        let mut canonical_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        let signing_req = SigningRequest::build(&mut canonical_parts)?;
+        let canonical_query = canonicalize_query(&signing_req);
+        let (_, canonical_request) = canonical_request_hash(&signing_req, &canonical_query)?;
+
+        assert!(canonical_request.starts_with("GET\n/object%2Fname\n"));
+        assert!(canonical_query.contains(&("literal-plus".to_string(), "%2B".to_string())));
+        assert!(canonical_query.contains(&("double".to_string(), "%252F".to_string())));
+
+        let mut parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        signer
+            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .await?;
+
+        assert_eq!(parts.uri.to_string(), original_uri);
         Ok(())
     }
 }
