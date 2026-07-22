@@ -28,15 +28,17 @@ pub const X_AMZ_S3_SESSION_TOKEN: &str = "x-amz-s3session-token";
 pub const AWS_ACCESS_KEY_ID: &str = "AWS_ACCESS_KEY_ID";
 pub const AWS_SECRET_ACCESS_KEY: &str = "AWS_SECRET_ACCESS_KEY";
 pub const AWS_SESSION_TOKEN: &str = "AWS_SESSION_TOKEN";
+#[cfg(not(target_arch = "wasm32"))]
 pub const AWS_PROFILE: &str = "AWS_PROFILE";
+#[cfg(not(target_arch = "wasm32"))]
 pub const AWS_CONFIG_FILE: &str = "AWS_CONFIG_FILE";
+#[cfg(not(target_arch = "wasm32"))]
 pub const AWS_SHARED_CREDENTIALS_FILE: &str = "AWS_SHARED_CREDENTIALS_FILE";
 
 /// AsciiSet for [AWS UriEncode](https://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-header-based-auth.html)
 ///
 /// - URI encode every byte except the unreserved characters: 'A'-'Z', 'a'-'z', '0'-'9', '-', '.', '_', and '~'.
 pub static AWS_URI_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
-    .remove(b'/')
     .remove(b'-')
     .remove(b'.')
     .remove(b'_')

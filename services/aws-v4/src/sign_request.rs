@@ -21,7 +21,7 @@ use crate::constants::{
     X_AMZ_SECURITY_TOKEN,
 };
 use http::request::Parts;
-use http::{HeaderValue, header};
+use http::{HeaderValue, Uri, header};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
@@ -79,21 +79,23 @@ impl SignRequest for RequestSigner {
         };
 
         let now = self.time.unwrap_or_else(Timestamp::now);
+        let original_uri = req.uri.clone();
         let mut signed_req = SigningRequest::build(req)?;
 
         // canonicalize context
         canonicalize_header(&mut signed_req, cred, expires_in, now)?;
-        canonicalize_query(
-            &mut signed_req,
+        let authentication_query = authentication_query(
+            &signed_req,
             cred,
             expires_in,
             now,
             &self.service,
             &self.region,
-        )?;
+        );
+        let canonical_query = canonicalize_query(&signed_req, &authentication_query);
 
         // build canonical request and string to sign.
-        let creq = canonical_request_string(&mut signed_req)?;
+        let creq = canonical_request_string(&signed_req, &canonical_query)?;
         let encoded_req = hex_sha256(creq.as_bytes());
 
         // Scope: "20220313/<region>/<service>/aws4_request"
@@ -133,8 +135,12 @@ impl SignRequest for RequestSigner {
             generate_signing_key(&cred.secret_access_key, now, &self.region, &self.service);
         let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
 
-        if expires_in.is_some() {
-            signed_req.query.push(("X-Amz-Signature".into(), signature));
+        let final_uri = if expires_in.is_some() {
+            let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
+            Some(append_query_fragment(
+                &unsigned_uri,
+                &format!("X-Amz-Signature={signature}"),
+            )?)
         } else {
             let mut authorization = HeaderValue::from_str(&format!(
                 "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
@@ -153,14 +159,22 @@ impl SignRequest for RequestSigner {
             signed_req
                 .headers
                 .insert(header::AUTHORIZATION, authorization);
-        }
+            None
+        };
 
         // Apply to the request.
-        signed_req.apply(req)
+        signed_req.apply(req)?;
+        if let Some(uri) = final_uri {
+            req.uri = uri;
+        }
+        Ok(())
     }
 }
 
-fn canonical_request_string(ctx: &mut SigningRequest) -> Result<String> {
+fn canonical_request_string(
+    ctx: &SigningRequest,
+    canonical_query: &[(String, String)],
+) -> Result<String> {
     // 256 is specially chosen to avoid reallocation for most requests.
     let mut f = String::with_capacity(256);
 
@@ -168,20 +182,14 @@ fn canonical_request_string(ctx: &mut SigningRequest) -> Result<String> {
     writeln!(f, "{}", ctx.method)
         .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write method: {e}")))?;
     // Insert encoded path
-    let path = percent_decode_str(&ctx.path)
-        .decode_utf8()
-        .map_err(|e| reqsign_core::Error::unexpected(format!("failed to decode path: {e}")))?;
-    writeln!(
-        f,
-        "{}",
-        utf8_percent_encode(&path, &super::constants::AWS_URI_ENCODE_SET)
-    )
-    .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}")))?;
+    writeln!(f, "{}", canonical_uri(&ctx.path)?).map_err(|e| {
+        reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}"))
+    })?;
     // Insert query
     writeln!(
         f,
         "{}",
-        ctx.query
+        canonical_query
             .iter()
             .map(|(k, v)| { format!("{k}={v}") })
             .collect::<Vec<_>>()
@@ -191,12 +199,15 @@ fn canonical_request_string(ctx: &mut SigningRequest) -> Result<String> {
     // Insert signed headers
     let signed_headers = ctx.header_name_to_vec_sorted();
     for header in signed_headers.iter() {
-        let value = &ctx.headers[*header];
+        let mut value = ctx.headers[*header].clone();
+        SigningRequest::header_value_normalize(&mut value);
         writeln!(
             f,
             "{}:{}",
             header,
-            value.to_str().expect("header value must be valid")
+            value.to_str().map_err(|e| {
+                reqsign_core::Error::request_invalid("invalid signed header value").with_source(e)
+            })?
         )
         .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write header: {e}")))?;
     }
@@ -232,11 +243,6 @@ fn canonicalize_header(
     expires_in: Option<Duration>,
     now: Timestamp,
 ) -> Result<()> {
-    // Header names and values need to be normalized according to Step 4 of https://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
-    for (_, value) in ctx.headers.iter_mut() {
-        SigningRequest::header_value_normalize(value)
-    }
-
     // Insert HOST header if not present.
     if ctx.headers.get(header::HOST).is_none() {
         ctx.headers.insert(
@@ -291,18 +297,18 @@ fn canonicalize_header(
     Ok(())
 }
 
-fn canonicalize_query(
-    ctx: &mut SigningRequest,
+fn authentication_query(
+    ctx: &SigningRequest,
     cred: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
     service: &str,
     region: &str,
-) -> Result<()> {
+) -> Vec<(String, String)> {
+    let mut query = Vec::new();
     if let Some(expire) = expires_in {
-        ctx.query
-            .push(("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()));
-        ctx.query.push((
+        query.push(("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()));
+        query.push((
             "X-Amz-Credential".into(),
             format!(
                 "{}/{}/{}/{}/aws4_request",
@@ -312,40 +318,87 @@ fn canonicalize_query(
                 service
             ),
         ));
-        ctx.query.push(("X-Amz-Date".into(), now.format_iso8601()));
-        ctx.query
-            .push(("X-Amz-Expires".into(), expire.as_secs().to_string()));
-        ctx.query.push((
+        query.push(("X-Amz-Date".into(), now.format_iso8601()));
+        query.push(("X-Amz-Expires".into(), expire.as_secs().to_string()));
+        query.push((
             "X-Amz-SignedHeaders".into(),
             ctx.header_name_to_vec_sorted().join(";"),
         ));
 
         if let Some(token) = &cred.session_token {
-            ctx.query
-                .push(("X-Amz-Security-Token".into(), token.into()));
+            query.push(("X-Amz-Security-Token".into(), token.into()));
         }
     }
+    query
+}
 
-    // Return if query is empty.
-    if ctx.query.is_empty() {
-        return Ok(());
-    }
-
-    // Sort by param name
-    ctx.query.sort();
-
-    ctx.query = ctx
+fn canonicalize_query(
+    ctx: &SigningRequest,
+    authentication_query: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut query = ctx
         .query
         .iter()
+        .chain(authentication_query)
         .map(|(k, v)| {
             (
                 utf8_percent_encode(k, &AWS_QUERY_ENCODE_SET).to_string(),
                 utf8_percent_encode(v, &AWS_QUERY_ENCODE_SET).to_string(),
             )
         })
-        .collect();
+        .collect::<Vec<_>>();
+    query.sort();
+    query
+}
 
-    Ok(())
+fn canonical_uri(path: &str) -> Result<String> {
+    path.split('/')
+        .map(|segment| {
+            let decoded = percent_decode_str(segment).decode_utf8().map_err(|e| {
+                reqsign_core::Error::request_invalid("failed to decode URI path segment")
+                    .with_source(e)
+            })?;
+            Ok(utf8_percent_encode(&decoded, &super::constants::AWS_URI_ENCODE_SET).to_string())
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|segments| segments.join("/"))
+}
+
+fn append_query_pairs(uri: &Uri, pairs: &[(String, String)]) -> Result<Uri> {
+    let mut pairs = pairs
+        .iter()
+        .map(|(key, value)| {
+            (
+                utf8_percent_encode(key, &AWS_QUERY_ENCODE_SET).to_string(),
+                utf8_percent_encode(value, &AWS_QUERY_ENCODE_SET).to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    pairs.sort();
+    let fragment = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    append_query_fragment(uri, &fragment)
+}
+
+fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
+    if fragment.is_empty() {
+        return Ok(uri.clone());
+    }
+
+    let mut value = uri.to_string();
+    if uri.query().is_none() {
+        value.push('?');
+    } else if !value.ends_with('?') && !value.ends_with('&') {
+        value.push('&');
+    }
+    value.push_str(fragment);
+
+    value.parse().map_err(|e| {
+        reqsign_core::Error::request_invalid("failed to append signing query").with_source(e)
+    })
 }
 
 fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &str) -> Vec<u8> {
@@ -379,6 +432,8 @@ mod tests {
     use reqsign_core::ProvideCredential;
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+    const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
     /// (name, request_builder)
     type TestCase = (&'static str, fn() -> Request<&'static str>);
@@ -553,13 +608,85 @@ mod tests {
         fn format_query(req: &Request<&str>) -> Vec<String> {
             let query = req.uri().query().unwrap_or_default();
             let mut query = form_urlencoded::parse(query.as_bytes())
-                .map(|(k, v)| format!("{}={}", &k, &v))
+                .map(|(k, v)| format!("{k}={v}"))
                 .collect::<Vec<_>>();
             query.sort();
             query
         }
 
         assert_eq!(format_query(l), format_query(r), "{name} query mismatch");
+    }
+
+    #[tokio::test]
+    async fn canonicalization_preserves_wire_uri() -> Result<()> {
+        let credential = Credential {
+            access_key_id: "access_key_id".to_string(),
+            secret_access_key: "secret_access_key".to_string(),
+            ..Default::default()
+        };
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("s3", "test").with_time(now);
+        let original_uri = format!("https://example.com/object%2Fname?{RAW_QUERY}");
+
+        let mut canonical_parts = Request::get(&original_uri).body(())?.into_parts().0;
+        let mut signing_req = SigningRequest::build(&mut canonical_parts)?;
+        canonicalize_header(
+            &mut signing_req,
+            &credential,
+            Some(Duration::from_secs(60)),
+            now,
+        )?;
+        let auth_query = authentication_query(
+            &signing_req,
+            &credential,
+            Some(Duration::from_secs(60)),
+            now,
+            "s3",
+            "test",
+        );
+        let canonical_query = canonicalize_query(&signing_req, &auth_query);
+
+        assert_eq!(canonical_uri(&signing_req.path)?, "/object%2Fname");
+        assert!(canonical_query.contains(&("literal-plus".to_string(), "%2B".to_string())));
+        assert!(canonical_query.contains(&("double".to_string(), "%252F".to_string())));
+        assert!(canonical_query.contains(&(String::new(), "empty-key".to_string())));
+        assert!(canonical_query.contains(&("flag".to_string(), String::new())));
+
+        let mut header_parts = Request::get(&original_uri)
+            .header("x-custom", " value ")
+            .body(())?
+            .into_parts()
+            .0;
+        signer
+            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .await?;
+        assert_eq!(header_parts.uri.to_string(), original_uri);
+        assert_eq!(header_parts.headers["x-custom"], " value ");
+
+        let mut query_parts = Request::get(&original_uri).body(())?.into_parts().0;
+        signer
+            .sign_request(
+                &Context::new(),
+                &mut query_parts,
+                Some(&credential),
+                Some(Duration::from_secs(60)),
+            )
+            .await?;
+        assert!(
+            query_parts
+                .uri
+                .to_string()
+                .starts_with(&format!("{original_uri}X-Amz-Algorithm="))
+        );
+        assert!(
+            query_parts
+                .uri
+                .query()
+                .unwrap()
+                .contains("X-Amz-Signature=")
+        );
+
+        Ok(())
     }
 
     #[tokio::test]

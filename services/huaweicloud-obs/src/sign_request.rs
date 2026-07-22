@@ -21,12 +21,12 @@ use std::fmt::Write;
 use std::sync::LazyLock;
 use std::time::Duration;
 
-use http::HeaderValue;
 use http::header::AUTHORIZATION;
 use http::header::CONTENT_TYPE;
 use http::header::DATE;
+use http::{HeaderValue, Uri};
 use log::debug;
-use percent_encoding::utf8_percent_encode;
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqsign_core::Result;
 
 use super::constants::*;
@@ -34,6 +34,12 @@ use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
+
+static OBS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
 
 /// RequestSigner that implement Huawei Cloud Object Storage Service Authorization.
 ///
@@ -86,13 +92,14 @@ impl SignRequest for RequestSigner {
             SigningMethod::Header
         };
 
+        let original_uri = parts.uri.clone();
         let mut ctx = SigningRequest::build(parts)?;
 
         let string_to_sign = string_to_sign(&mut ctx, cred, now, method, &self.bucket)?;
         let signature =
             base64_hmac_sha1(cred.secret_access_key.as_bytes(), string_to_sign.as_bytes());
 
-        match method {
+        let final_uri = match method {
             SigningMethod::Header => {
                 ctx.headers.insert(DATE, now.format_http_date().parse()?);
                 ctx.headers.insert(AUTHORIZATION, {
@@ -102,19 +109,38 @@ impl SignRequest for RequestSigner {
 
                     value
                 });
+                None
             }
             SigningMethod::Query(expire) => {
                 ctx.headers.insert(DATE, now.format_http_date().parse()?);
-                ctx.query_push("AccessKeyId", &cred.access_key_id);
-                ctx.query_push("Expires", (now + expire).as_second().to_string());
-                ctx.query_push(
-                    "Signature",
-                    utf8_percent_encode(&signature, percent_encoding::NON_ALPHANUMERIC).to_string(),
-                )
+                let mut authentication = Vec::new();
+                if let Some(token) = &cred.security_token {
+                    authentication.push(format!(
+                        "security-token={}",
+                        utf8_percent_encode(token, &OBS_QUERY_ENCODE_SET)
+                    ));
+                }
+                authentication.push(format!(
+                    "AccessKeyId={}",
+                    utf8_percent_encode(&cred.access_key_id, &OBS_QUERY_ENCODE_SET)
+                ));
+                authentication.push(format!("Expires={}", (now + expire).as_second()));
+                authentication.push(format!(
+                    "Signature={}",
+                    utf8_percent_encode(&signature, &OBS_QUERY_ENCODE_SET)
+                ));
+                Some(append_query_fragment(
+                    &original_uri,
+                    &authentication.join("&"),
+                )?)
             }
-        }
+        };
 
-        ctx.apply(parts)
+        ctx.apply(parts)?;
+        if let Some(uri) = final_uri {
+            parts.uri = uri;
+        }
+        Ok(())
     }
 }
 
@@ -169,11 +195,7 @@ fn string_to_sign(
             writeln!(&mut s, "{headers}",)?;
         }
     }
-    write!(
-        &mut s,
-        "{}",
-        canonicalize_resource(ctx, bucket, method, cred)
-    )?;
+    write!(&mut s, "{}", canonicalize_resource(ctx, bucket))?;
 
     debug!("string to sign: {}", s);
     Ok(s)
@@ -204,20 +226,7 @@ fn canonicalize_header(
 /// ## Reference
 ///
 /// - [Authentication of Signature in a Header](https://support.huaweicloud.com/intl/en-us/api-obs/obs_04_0010.html)
-fn canonicalize_resource(
-    ctx: &mut SigningRequest,
-    bucket: &str,
-    method: SigningMethod,
-    cred: &Credential,
-) -> String {
-    if let SigningMethod::Query(_) = method {
-        // Insert security token
-        if let Some(token) = &cred.security_token {
-            ctx.query
-                .push(("security-token".to_string(), token.to_string()));
-        };
-    }
-
+fn canonicalize_resource(ctx: &SigningRequest, bucket: &str) -> String {
     let params = ctx.query_to_vec_with_filter(is_sub_resource);
 
     let params_str = SigningRequest::query_to_string(params, "=", "&");
@@ -227,6 +236,20 @@ fn canonicalize_resource(
     } else {
         format!("/{bucket}{}?{params_str}", ctx.path)
     }
+}
+
+fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
+    let mut value = uri.to_string();
+    if uri.query().is_none() {
+        value.push('?');
+    } else if !value.ends_with('?') && !value.ends_with('&') {
+        value.push('&');
+    }
+    value.push_str(fragment);
+
+    value.parse().map_err(|e| {
+        reqsign_core::Error::request_invalid("failed to append OBS signing query").with_source(e)
+    })
 }
 
 fn is_sub_resource(param: &str) -> bool {
@@ -301,6 +324,8 @@ mod tests {
 
     use super::super::provide_credential::StaticCredentialProvider;
     use super::*;
+
+    const RAW_QUERY: &str = "versionId=a%2Bb%3Dc%2525%26e&slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
     #[tokio::test]
     async fn test_sign() -> Result<()> {
@@ -418,6 +443,46 @@ mod tests {
             "OBS access_key:9OdOsf8PRdhGhpkp7IIbKE0kRvA=",
             auth.to_str()?,
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonicalization_and_signing_preserve_wire_uri() -> Result<()> {
+        let now = Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?;
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None);
+        let original_uri =
+            format!("http://bucket.obs.cn-north-4.myhuaweicloud.com/object%2Fname?{RAW_QUERY}");
+
+        let mut canonical_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        let mut signing_req = SigningRequest::build(&mut canonical_parts)?;
+        let string = string_to_sign(
+            &mut signing_req,
+            &credential,
+            now,
+            SigningMethod::Header,
+            "bucket",
+        )?;
+        assert!(string.ends_with("/bucket/object%2Fname?versionId=a+b=c%25&e"));
+
+        let mut header_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        signer
+            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .await?;
+        assert_eq!(header_parts.uri.to_string(), original_uri);
+
+        let mut query_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        signer
+            .sign_request(
+                &Context::new(),
+                &mut query_parts,
+                Some(&credential),
+                Some(Duration::from_secs(60)),
+            )
+            .await?;
+        assert!(query_parts.uri.to_string().starts_with(&original_uri));
+        assert!(query_parts.uri.query().unwrap().contains("Signature="));
 
         Ok(())
     }
