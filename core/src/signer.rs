@@ -23,7 +23,6 @@ use crate::Result;
 use crate::SignRequest;
 use crate::SignRequestDyn;
 use crate::SigningCredential;
-use crate::time::Timestamp;
 use std::any::type_name;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -92,30 +91,57 @@ impl<K: SigningCredential> Signer<K> {
     /// `expires_in` is a service-specific validity input and does not universally
     /// select query authentication. The configured service signer and credential type
     /// determine how it is interpreted.
+    ///
+    /// Cached credentials must be fresh according to [`SigningCredential::is_valid`]
+    /// and usable through [`SignRequest::required_valid_until`]. A refreshed credential
+    /// only needs to satisfy the exact operation deadline. Provider errors are returned
+    /// without internal retry or fallback to the previous cached credential.
     pub async fn sign(
         &self,
         req: &mut http::request::Parts,
         expires_in: Option<Duration>,
     ) -> Result<()> {
         let credential = self.credential.lock().expect("lock poisoned").clone();
-        let credential = if credential.is_valid()
-            && expires_in.is_none_or(|d| credential.is_valid_at(Timestamp::now() + d))
-        {
-            credential
-        } else {
-            let ctx = self.loader.provide_credential_dyn(&self.ctx).await?;
-            *self.credential.lock().expect("lock poisoned") = ctx.clone();
-            ctx
-        };
+        let credential = match credential {
+            Some(credential)
+                if credential.is_valid()
+                    && credential.is_valid_at(
+                        self.builder
+                            .required_valid_until_dyn(&credential, expires_in),
+                    ) =>
+            {
+                credential
+            }
+            _ => {
+                let credential = self
+                    .loader
+                    .provide_credential_dyn(&self.ctx)
+                    .await?
+                    .ok_or_else(|| {
+                        Error::credential_invalid("failed to load signing credential")
+                            .with_context(format!("credential_type: {}", type_name::<K>()))
+                    })?;
 
-        let credential_ref = credential.as_ref().ok_or_else(|| {
-            Error::credential_invalid("failed to load signing credential")
-                .with_context(format!("credential_type: {}", type_name::<K>()))
-        })?;
+                *self.credential.lock().expect("lock poisoned") = Some(credential.clone());
+
+                let required_until = self
+                    .builder
+                    .required_valid_until_dyn(&credential, expires_in);
+                if !credential.is_valid_at(required_until) {
+                    return Err(Error::credential_invalid(
+                        "signing credential is not valid for the requested operation",
+                    )
+                    .with_context(format!("credential_type: {}", type_name::<K>()))
+                    .with_context(format!("required_valid_until: {required_until}")));
+                }
+
+                credential
+            }
+        };
 
         let mut candidate = req.clone();
         self.builder
-            .sign_request_dyn(&self.ctx, &mut candidate, Some(credential_ref), expires_in)
+            .sign_request_dyn(&self.ctx, &mut candidate, Some(&credential), expires_in)
             .await?;
 
         req.uri = candidate.uri;
@@ -127,8 +153,11 @@ impl<K: SigningCredential> Signer<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ProvideCredential, SignRequest};
+    use crate::time::Timestamp;
+    use crate::{ErrorKind, ProvideCredential, SignRequest};
     use http::{HeaderValue, Method, Request, Version};
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Clone, Debug)]
     struct TestCredential;
@@ -183,6 +212,93 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct ExpiringCredential {
+        generation: u8,
+        fresh: bool,
+        expires_at: Timestamp,
+        required_until: Timestamp,
+    }
+
+    impl SigningCredential for ExpiringCredential {
+        fn is_valid(&self) -> bool {
+            self.fresh
+        }
+
+        fn is_valid_at(&self, timestamp: Timestamp) -> bool {
+            self.expires_at > timestamp
+        }
+    }
+
+    #[derive(Debug)]
+    struct SequenceProvider {
+        responses: Mutex<VecDeque<Result<Option<ExpiringCredential>>>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl SequenceProvider {
+        fn new(
+            responses: impl IntoIterator<Item = Result<Option<ExpiringCredential>>>,
+        ) -> (Self, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            (
+                Self {
+                    responses: Mutex::new(responses.into_iter().collect()),
+                    calls: calls.clone(),
+                },
+                calls,
+            )
+        }
+    }
+
+    impl ProvideCredential for SequenceProvider {
+        type Credential = ExpiringCredential;
+
+        async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.responses
+                .lock()
+                .expect("lock poisoned")
+                .pop_front()
+                .unwrap_or(Ok(None))
+        }
+    }
+
+    #[derive(Debug)]
+    struct OperationSigner;
+
+    impl SignRequest for OperationSigner {
+        type Credential = ExpiringCredential;
+
+        fn required_valid_until(
+            &self,
+            credential: &Self::Credential,
+            _expires_in: Option<Duration>,
+        ) -> Timestamp {
+            credential.required_until
+        }
+
+        async fn sign_request(
+            &self,
+            _ctx: &Context,
+            req: &mut http::request::Parts,
+            credential: Option<&Self::Credential>,
+            expires_in: Option<Duration>,
+        ) -> Result<()> {
+            let credential = credential.expect("credential must be present");
+            if !credential.is_valid_at(self.required_valid_until(credential, expires_in)) {
+                return Err(Error::credential_invalid(
+                    "credential is not valid for operation",
+                ));
+            }
+            req.headers.insert(
+                "x-credential-generation",
+                credential.generation.to_string().parse()?,
+            );
+            Ok(())
         }
     }
 
@@ -250,5 +366,135 @@ mod tests {
             Some(&HeaderValue::from_static("signed"))
         );
         assert!(!parts.headers.contains_key("x-original"));
+    }
+
+    #[test]
+    fn refreshes_cached_credential_for_operation_requirement() {
+        let base = Timestamp::from_second(1_000).expect("timestamp must be valid");
+        let cached = ExpiringCredential {
+            generation: 1,
+            fresh: true,
+            expires_at: base + Duration::from_secs(20),
+            required_until: base + Duration::from_secs(30),
+        };
+        let refreshed = ExpiringCredential {
+            generation: 2,
+            fresh: true,
+            expires_at: base + Duration::from_secs(20),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) = SequenceProvider::new([Ok(Some(refreshed))]);
+        let signer = Signer::new(Context::new(), provider, OperationSigner);
+        *signer.credential.lock().expect("lock poisoned") = Some(cached);
+
+        let mut parts = request_parts();
+        futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect("refreshed credential must satisfy the recomputed requirement");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            parts.headers.get("x-credential-generation"),
+            Some(&HeaderValue::from_static("2"))
+        );
+    }
+
+    #[test]
+    fn uses_refreshed_credential_that_is_usable_but_not_fresh() {
+        let base = Timestamp::from_second(2_000).expect("timestamp must be valid");
+        let credential = ExpiringCredential {
+            generation: 1,
+            fresh: false,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) =
+            SequenceProvider::new([Ok(Some(credential.clone())), Ok(Some(credential))]);
+        let signer = Signer::new(Context::new(), provider, OperationSigner);
+
+        for _ in 0..2 {
+            let mut parts = request_parts();
+            futures::executor::block_on(signer.sign(&mut parts, None))
+                .expect("usable refreshed credential must be accepted");
+        }
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn refresh_error_does_not_fall_back_and_caller_can_retry() {
+        let base = Timestamp::from_second(3_000).expect("timestamp must be valid");
+        let cached = ExpiringCredential {
+            generation: 1,
+            fresh: false,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let refreshed = ExpiringCredential {
+            generation: 2,
+            fresh: true,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) = SequenceProvider::new([
+            Err(Error::unexpected("injected refresh failure")),
+            Ok(Some(refreshed)),
+        ]);
+        let signer = Signer::new(Context::new(), provider, OperationSigner);
+        *signer.credential.lock().expect("lock poisoned") = Some(cached);
+
+        let mut parts = request_parts();
+        let original = parts.clone();
+        let err = futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect_err("refresh error must be returned");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect("caller retry must attempt refresh again");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            parts.headers.get("x-credential-generation"),
+            Some(&HeaderValue::from_static("2"))
+        );
+    }
+
+    #[test]
+    fn missing_refresh_does_not_fall_back_and_caller_can_retry() {
+        let base = Timestamp::from_second(4_000).expect("timestamp must be valid");
+        let cached = ExpiringCredential {
+            generation: 1,
+            fresh: false,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let refreshed = ExpiringCredential {
+            generation: 2,
+            fresh: true,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) = SequenceProvider::new([Ok(None), Ok(Some(refreshed))]);
+        let signer = Signer::new(Context::new(), provider, OperationSigner);
+        *signer.credential.lock().expect("lock poisoned") = Some(cached);
+        let mut parts = request_parts();
+        let original = parts.clone();
+
+        let err = futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect_err("missing credential must fail");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+
+        futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect("caller retry must attempt refresh again");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            parts.headers.get("x-credential-generation"),
+            Some(&HeaderValue::from_static("2"))
+        );
     }
 }

@@ -26,9 +26,11 @@ use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Result, SignRequest, SigningRequest};
+use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
+
+const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 
 /// RequestSigner that implement AWS SigV4.
 ///
@@ -63,9 +65,29 @@ impl RequestSigner {
         self.time = Some(time);
         self
     }
+
+    fn get_time(&self) -> Timestamp {
+        self.time.unwrap_or_else(Timestamp::now)
+    }
+
+    fn required_valid_until_at(
+        &self,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        signing_time + expires_in.unwrap_or(CREDENTIAL_OPERATION_HEADROOM)
+    }
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
+
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until_at(self.get_time(), expires_in)
+    }
 
     async fn sign_request(
         &self,
@@ -78,7 +100,14 @@ impl SignRequest for RequestSigner {
             return Ok(());
         };
 
-        let now = self.time.unwrap_or_else(Timestamp::now);
+        let now = self.get_time();
+        let required_until = self.required_valid_until_at(now, expires_in);
+        if !cred.is_valid_at(required_until) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "credential is not valid for the requested signing operation",
+            ));
+        }
+
         let original_uri = req.uri.clone();
         let mut signed_req = SigningRequest::build(req)?;
 
@@ -429,11 +458,153 @@ mod tests {
     use aws_sigv4::sign::v4;
     use http::Request;
     use http::header;
-    use reqsign_core::ProvideCredential;
+    use reqsign_core::{ErrorKind, ProvideCredential, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+
+    #[derive(Debug)]
+    struct SequenceProvider {
+        credentials: Mutex<VecDeque<Credential>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ProvideCredential for SequenceProvider {
+        type Credential = Credential;
+
+        async fn provide_credential(
+            &self,
+            _ctx: &Context,
+        ) -> reqsign_core::Result<Option<Self::Credential>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.credentials.lock().unwrap().pop_front())
+        }
+    }
+
+    #[test]
+    fn presign_deadline_uses_signing_time_and_requested_expiry() {
+        let now: Timestamp = "2026-07-22T00:00:00Z"
+            .parse()
+            .expect("timestamp must parse");
+        let signer = RequestSigner::new("s3", "test").with_time(now);
+        let credential = Credential::default();
+
+        assert_eq!(
+            signer.required_valid_until(&credential, Some(Duration::from_secs(3600))),
+            now + Duration::from_secs(3600)
+        );
+        assert_eq!(
+            signer.required_valid_until(&credential, None),
+            now + CREDENTIAL_OPERATION_HEADROOM
+        );
+    }
+
+    #[tokio::test]
+    async fn presign_refreshes_credential_that_cannot_cover_url_lifetime() -> Result<()> {
+        let now = Timestamp::now();
+        let short_lived = Credential {
+            access_key_id: "short-lived-ak".to_string(),
+            secret_access_key: "short-lived-sk".to_string(),
+            session_token: Some("short-lived-token".to_string()),
+            expires_in: Some(now + Duration::from_secs(600)),
+        };
+        let long_lived = Credential {
+            access_key_id: "long-lived-ak".to_string(),
+            secret_access_key: "long-lived-sk".to_string(),
+            session_token: Some("long-lived-token".to_string()),
+            expires_in: Some(now + Duration::from_secs(7200)),
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceProvider {
+            credentials: Mutex::new(VecDeque::from([short_lived, long_lived])),
+            calls: calls.clone(),
+        };
+        let signer = Signer::new(
+            Context::new(),
+            provider,
+            RequestSigner::new("s3", "test").with_time(now),
+        );
+
+        let mut header_parts = Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer.sign(&mut header_parts, None).await?;
+
+        let mut query_parts = Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer
+            .sign(&mut query_parts, Some(Duration::from_secs(3600)))
+            .await?;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(
+            query_parts
+                .uri
+                .query()
+                .expect("presigned query must exist")
+                .contains("X-Amz-Credential=long-lived-ak%2F")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_refreshed_credential_that_cannot_cover_url_lifetime() -> Result<()> {
+        let now = Timestamp::now();
+        let short_lived = Credential {
+            access_key_id: "short-lived-ak".to_string(),
+            secret_access_key: "short-lived-sk".to_string(),
+            session_token: Some("short-lived-token".to_string()),
+            expires_in: Some(now + Duration::from_secs(600)),
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = SequenceProvider {
+            credentials: Mutex::new(VecDeque::from([short_lived])),
+            calls: calls.clone(),
+        };
+        let signer = Signer::new(
+            Context::new(),
+            provider,
+            RequestSigner::new("s3", "test").with_time(now),
+        );
+        let mut parts = Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign(&mut parts, Some(Duration::from_secs(3600)))
+            .await
+            .expect_err("credential must cover the entire presigned URL lifetime");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+
+        let mut header_parts = Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer.sign(&mut header_parts, None).await?;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(
+            header_parts
+                .headers
+                .get(header::AUTHORIZATION)
+                .expect("authorization header must exist")
+                .to_str()?
+                .contains("Credential=short-lived-ak/")
+        );
+        Ok(())
+    }
 
     /// (name, request_builder)
     type TestCase = (&'static str, fn() -> Request<&'static str>);

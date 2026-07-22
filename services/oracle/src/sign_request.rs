@@ -22,7 +22,7 @@ use http::request::Parts;
 use log::debug;
 use reqsign_core::Result;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, SignRequest, SigningRequest};
+use reqsign_core::{Context, SignRequest, SigningCredential, SigningRequest};
 use rsa::pkcs1v15::SigningKey;
 use rsa::sha2::Sha256;
 use rsa::signature::{SignatureEncoding, Signer};
@@ -51,6 +51,14 @@ impl Default for RequestSigner {
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        _expires_in: Option<Duration>,
+    ) -> Timestamp {
+        Timestamp::now()
+    }
+
     async fn sign_request(
         &self,
         ctx: &Context,
@@ -63,6 +71,12 @@ impl SignRequest for RequestSigner {
         };
 
         let now = Timestamp::now();
+        if !cred.is_valid_at(now) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "credential is not valid for the requested signing operation",
+            ));
+        }
+
         let request_target = req
             .uri
             .path_and_query()

@@ -33,7 +33,7 @@ use super::constants::*;
 use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{SignRequest, SigningMethod, SigningRequest};
+use reqsign_core::{SignRequest, SigningCredential, SigningMethod, SigningRequest};
 
 static OBS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
     .remove(b'-')
@@ -70,9 +70,29 @@ impl RequestSigner {
         self.time = Some(time);
         self
     }
+
+    fn get_time(&self) -> Timestamp {
+        self.time.unwrap_or_else(Timestamp::now)
+    }
+
+    fn required_valid_until_at(
+        &self,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        signing_time + expires_in.unwrap_or_default()
+    }
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
+
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until_at(self.get_time(), expires_in)
+    }
 
     async fn sign_request(
         &self,
@@ -84,7 +104,14 @@ impl SignRequest for RequestSigner {
         let Some(cred) = credential else {
             return Ok(());
         };
-        let now = self.time.unwrap_or_else(Timestamp::now);
+
+        let now = self.get_time();
+        let required_until = self.required_valid_until_at(now, expires_in);
+        if !cred.is_valid_at(required_until) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "credential is not valid for the requested signing operation",
+            ));
+        }
 
         let method = if let Some(expires_in) = expires_in {
             SigningMethod::Query(expires_in)

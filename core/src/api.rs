@@ -22,15 +22,20 @@ use std::future::Future;
 use std::ops::Deref;
 use std::time::Duration;
 
-/// SigningCredential is the trait used by signer as the signing credential.
+/// A credential that can distinguish cache freshness from exact usability.
+///
+/// Both checks must reject credentials that lack fields required for authentication.
 pub trait SigningCredential: Clone + Debug + Send + Sync + Unpin + 'static {
-    /// Check if the signing credential is valid.
+    /// Return whether a cached credential can be reused without refreshing it.
     ///
-    /// Note: this will be removed in favor of `is_valid_at` in a future
-    /// release.
+    /// Implementations may include a proactive refresh window in this check.
     fn is_valid(&self) -> bool;
 
-    /// Check if the signing credential will be valid at the given timestamp.
+    /// Return whether the credential is usable at this exact timestamp.
+    ///
+    /// Implementations with an expiration time should not add a refresh or
+    /// operation-specific buffer here. The default preserves the behavior of
+    /// implementations that only provide [`SigningCredential::is_valid`].
     fn is_valid_at(&self, _ts: Timestamp) -> bool {
         self.is_valid()
     }
@@ -43,6 +48,14 @@ impl<T: SigningCredential> SigningCredential for Option<T> {
         };
 
         ctx.is_valid()
+    }
+
+    fn is_valid_at(&self, ts: Timestamp) -> bool {
+        let Some(ctx) = self else {
+            return false;
+        };
+
+        ctx.is_valid_at(ts)
     }
 }
 
@@ -116,6 +129,22 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     /// Typically, it will be a credential.
     type Credential: Send + Sync + Unpin + 'static;
 
+    /// Return the timestamp through which the credential must remain usable
+    /// for the requested signing operation.
+    ///
+    /// Implementations own the signing clock, the service-specific meaning of
+    /// `expires_in`, and any transport, RPC, or artifact-lifetime headroom. This
+    /// method must not perform I/O or mutate state. When a deadline depends on an
+    /// artifact's signing time, [`SignRequest::sign_request`] must derive both the
+    /// deadline check and the artifact from the same captured timestamp.
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        Timestamp::now() + expires_in.unwrap_or_default()
+    }
+
     /// Sign a request head.
     ///
     /// On `Err`, an implementation must leave the entire request head unchanged. On
@@ -127,6 +156,10 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     /// ## Credential
     ///
     /// The `credential` parameter is the credential required by the signer to sign the request.
+    /// Implementations with expiring credentials must validate it against
+    /// [`SignRequest::required_valid_until`] before mutating the request or performing
+    /// external signing calls. [`crate::Signer`] performs the same validation before
+    /// invoking this method, while direct callers rely on the implementation.
     ///
     /// ## Expires In
     ///
@@ -148,6 +181,15 @@ pub trait SignRequestDyn: Debug + Send + Sync + Unpin + 'static {
     /// Credential used by this builder.
     type Credential: Send + Sync + Unpin + 'static;
 
+    /// Dyn version of [`SignRequest::required_valid_until`].
+    fn required_valid_until_dyn(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        Timestamp::now() + expires_in.unwrap_or_default()
+    }
+
     /// Dyn version of [`SignRequest::sign_request`].
     fn sign_request_dyn<'a>(
         &'a self,
@@ -163,6 +205,14 @@ where
     T: SignRequest + ?Sized,
 {
     type Credential = T::Credential;
+
+    fn required_valid_until_dyn(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until(credential, expires_in)
+    }
 
     fn sign_request_dyn<'a>(
         &'a self,
@@ -180,6 +230,15 @@ where
     T: SignRequestDyn + ?Sized,
 {
     type Credential = T::Credential;
+
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.deref()
+            .required_valid_until_dyn(credential, expires_in)
+    }
 
     async fn sign_request(
         &self,
@@ -325,5 +384,37 @@ where
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct ExactCredential {
+        valid_at: Timestamp,
+    }
+
+    impl SigningCredential for ExactCredential {
+        fn is_valid(&self) -> bool {
+            false
+        }
+
+        fn is_valid_at(&self, timestamp: Timestamp) -> bool {
+            self.valid_at == timestamp
+        }
+    }
+
+    #[test]
+    fn option_forwards_exact_validity_check() {
+        let timestamp = Timestamp::from_second(42).expect("timestamp must be valid");
+        let credential = Some(ExactCredential {
+            valid_at: timestamp,
+        });
+
+        assert!(credential.is_valid_at(timestamp));
+        assert!(!credential.is_valid_at(timestamp + Duration::from_secs(1)));
+        assert!(!None::<ExactCredential>.is_valid_at(timestamp));
     }
 }
