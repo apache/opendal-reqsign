@@ -129,7 +129,7 @@ impl<K: SigningCredential> Signer<K> {
                     .required_valid_until_dyn(&credential, expires_in);
                 if !credential.is_valid_at(required_until) {
                     return Err(Error::credential_invalid(
-                        "signing credential is not valid for the requested operation",
+                        "refreshed signing credential expires before the requested operation deadline",
                     )
                     .with_context(format!("credential_type: {}", type_name::<K>()))
                     .with_context(format!("required_valid_until: {required_until}")));

@@ -92,7 +92,7 @@ impl SignRequest for RequestSigner {
         let required_until = self.required_valid_until_at(now, expires_in);
         if !cred.is_valid_at(required_until) {
             return Err(reqsign_core::Error::credential_invalid(
-                "credential is not valid for the requested signing operation",
+                "credential expires before the requested signing operation deadline",
             ));
         }
 
