@@ -24,13 +24,29 @@ use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
 use std::fmt::Write;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use crate::constants::*;
 use crate::credential::Credential;
 use crate::uri::percent_encode_query;
 
+const TOS_ALGORITHM: &str = "TOS4-HMAC-SHA256";
+const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
+const TOS_AUTH_QUERY_NAMES: &[&str] = &[
+    "x-tos-algorithm",
+    "x-tos-credential",
+    "x-tos-date",
+    "x-tos-expires",
+    "x-tos-policy",
+    "x-tos-security-token",
+    "x-tos-signature",
+    "x-tos-signedheaders",
+];
+
 static HEADER_TOS_DATE: LazyLock<HeaderName> =
     LazyLock::new(|| HeaderName::from_static("x-tos-date"));
+static HEADER_TOS_CONTENT_SHA256: LazyLock<HeaderName> =
+    LazyLock::new(|| HeaderName::from_static("x-tos-content-sha256"));
 static HEADER_TOS_SECURITY_TOKEN: LazyLock<HeaderName> =
     LazyLock::new(|| HeaderName::from_static("x-tos-security-token"));
 
@@ -84,7 +100,7 @@ impl SignRequest for RequestSigner {
         _ctx: &Context,
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
-        _expires_in: Option<std::time::Duration>,
+        expires_in: Option<Duration>,
     ) -> Result<()> {
         let Some(cred) = credential else {
             return Ok(());
@@ -97,38 +113,44 @@ impl SignRequest for RequestSigner {
             ));
         }
 
+        let original_uri = req.uri.clone();
         let mut signing_req = SigningRequest::build(req)?;
-
-        // Insert HOST header if not present.
-        if signing_req.headers.get(header::HOST).is_none() {
-            signing_req.headers.insert(
-                header::HOST,
-                signing_req.authority.as_str().parse().map_err(|e| {
-                    reqsign_core::Error::unexpected(format!(
-                        "failed to parse authority as header value: {e}"
-                    ))
-                })?,
-            );
-        }
+        validate_authentication_carriers(&signing_req)?;
 
         let date_str = now.format_iso8601();
         let date_only = now.format_date();
 
-        signing_req
-            .headers
-            .insert(&*HEADER_TOS_DATE, date_str.parse()?);
-
-        if let Some(token) = &cred.session_token {
-            signing_req
-                .headers
-                .insert(&*HEADER_TOS_SECURITY_TOKEN, token.parse()?);
-        }
-
-        let canonical_query = canonicalize_query(&signing_req);
-        let (canonical_request_hash, _) = canonical_request_hash(&signing_req, &canonical_query)?;
-
         // Scope: "<date>/<region>/tos/request"
         let credential_scope = format!("{}/{}/tos/request", date_only, self.region);
+
+        canonicalize_header(&mut signing_req, cred, &date_str, expires_in)?;
+        let signed_headers = signed_header_names(&signing_req, expires_in.is_some());
+        let authentication_query = authentication_query(
+            cred,
+            &credential_scope,
+            &date_str,
+            expires_in,
+            &signed_headers,
+        );
+        let canonical_query = canonicalize_query(&signing_req, &authentication_query);
+        let payload_hash = if expires_in.is_some() {
+            match signing_req.headers.get(&*HEADER_TOS_CONTENT_SHA256) {
+                Some(value) => value.to_str().map_err(|e| {
+                    reqsign_core::Error::unexpected(format!(
+                        "invalid x-tos-content-sha256 header value: {e}"
+                    ))
+                })?,
+                None => UNSIGNED_PAYLOAD,
+            }
+        } else {
+            EMPTY_PAYLOAD_SHA256
+        };
+        let (canonical_request_hash, _) = canonical_request_hash(
+            &signing_req,
+            &canonical_query,
+            &signed_headers,
+            payload_hash,
+        )?;
 
         // StringToSign:
         //
@@ -138,7 +160,7 @@ impl SignRequest for RequestSigner {
         // <hashed_canonical_request>
         let string_to_sign = {
             let mut s = String::new();
-            writeln!(s, "TOS4-HMAC-SHA256")?;
+            writeln!(s, "{TOS_ALGORITHM}")?;
             writeln!(s, "{}", date_str)?;
             writeln!(s, "{}", credential_scope)?;
             s.push_str(&canonical_request_hash);
@@ -147,30 +169,122 @@ impl SignRequest for RequestSigner {
 
         debug!("string to sign: {}", string_to_sign);
 
-        let signed_headers_str = signing_req.header_name_to_vec_sorted().join(";");
-
         let signing_key = generate_signing_key(&cred.secret_access_key, &date_only, &self.region);
         let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
 
-        let authorization = format!(
-            "TOS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-            cred.access_key_id, credential_scope, signed_headers_str, signature
-        );
+        let final_uri = if expires_in.is_some() {
+            let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
+            Some(append_query_fragment(
+                &unsigned_uri,
+                &format!("X-Tos-Signature={signature}"),
+            )?)
+        } else {
+            let signed_headers_str = signed_headers.join(";");
+            let authorization = format!(
+                "{TOS_ALGORITHM} Credential={}/{}, SignedHeaders={}, Signature={}",
+                cred.access_key_id, credential_scope, signed_headers_str, signature
+            );
 
-        debug!("authorization: {}", authorization);
+            debug!("authorization: {}", authorization);
 
-        let mut auth_value: HeaderValue = authorization.parse()?;
-        auth_value.set_sensitive(true);
-        signing_req.headers.insert(AUTHORIZATION, auth_value);
+            let mut auth_value: HeaderValue = authorization.parse()?;
+            auth_value.set_sensitive(true);
+            signing_req.headers.insert(AUTHORIZATION, auth_value);
+            None
+        };
 
-        signing_req.apply(req)
+        signing_req.apply(req)?;
+        if let Some(uri) = final_uri {
+            req.uri = uri;
+        }
+        Ok(())
     }
 }
 
-fn canonicalize_query(ctx: &SigningRequest) -> Vec<(String, String)> {
+fn canonicalize_header(
+    ctx: &mut SigningRequest,
+    cred: &Credential,
+    date_str: &str,
+    expires_in: Option<Duration>,
+) -> Result<()> {
+    // Insert HOST header if not present.
+    if ctx.headers.get(header::HOST).is_none() {
+        ctx.headers.insert(
+            header::HOST,
+            ctx.authority.as_str().parse().map_err(|e| {
+                reqsign_core::Error::unexpected(format!(
+                    "failed to parse authority as header value: {e}"
+                ))
+            })?,
+        );
+    }
+
+    if expires_in.is_none() {
+        ctx.headers.insert(&*HEADER_TOS_DATE, date_str.parse()?);
+
+        if let Some(token) = &cred.session_token {
+            let mut token: HeaderValue = token.parse()?;
+            token.set_sensitive(true);
+            ctx.headers.insert(&*HEADER_TOS_SECURITY_TOKEN, token);
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_authentication_carriers(ctx: &SigningRequest) -> Result<()> {
+    if ctx.headers.contains_key(AUTHORIZATION) {
+        return Err(reqsign_core::Error::request_invalid(
+            "request already contains an authorization header",
+        ));
+    }
+
+    if let Some((name, _)) = ctx.query.iter().find(|(name, _)| {
+        TOS_AUTH_QUERY_NAMES
+            .iter()
+            .any(|candidate| name.eq_ignore_ascii_case(candidate))
+    }) {
+        return Err(reqsign_core::Error::request_invalid(format!(
+            "request query already contains TOS authentication field: {name}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn authentication_query(
+    cred: &Credential,
+    credential_scope: &str,
+    date_str: &str,
+    expires_in: Option<Duration>,
+    signed_headers: &[&str],
+) -> Vec<(String, String)> {
+    let mut query = Vec::new();
+    if let Some(expires) = expires_in {
+        query.push(("X-Tos-Algorithm".into(), TOS_ALGORITHM.into()));
+        query.push((
+            "X-Tos-Credential".into(),
+            format!("{}/{}", cred.access_key_id, credential_scope),
+        ));
+        query.push(("X-Tos-Date".into(), date_str.into()));
+        query.push(("X-Tos-Expires".into(), expires.as_secs().to_string()));
+        query.push(("X-Tos-SignedHeaders".into(), signed_headers.join(";")));
+
+        if let Some(token) = &cred.session_token {
+            query.push(("X-Tos-Security-Token".into(), token.into()));
+        }
+    }
+    query
+}
+
+fn canonicalize_query(
+    ctx: &SigningRequest,
+    authentication_query: &[(String, String)],
+) -> Vec<(String, String)> {
     let mut query = ctx
         .query
         .iter()
+        .chain(authentication_query)
         .map(|(k, v)| (percent_encode_query(k), percent_encode_query(v)))
         .collect::<Vec<_>>();
     // Sort by param name
@@ -178,9 +292,54 @@ fn canonicalize_query(ctx: &SigningRequest) -> Vec<(String, String)> {
     query
 }
 
+fn append_query_pairs(uri: &http::Uri, pairs: &[(String, String)]) -> Result<http::Uri> {
+    let mut pairs = pairs
+        .iter()
+        .map(|(key, value)| (percent_encode_query(key), percent_encode_query(value)))
+        .collect::<Vec<_>>();
+    pairs.sort();
+    let fragment = pairs
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>()
+        .join("&");
+    append_query_fragment(uri, &fragment)
+}
+
+fn append_query_fragment(uri: &http::Uri, fragment: &str) -> Result<http::Uri> {
+    if fragment.is_empty() {
+        return Ok(uri.clone());
+    }
+
+    let mut value = uri.to_string();
+    if uri.query().is_none() {
+        value.push('?');
+    } else if !value.ends_with('?') && !value.ends_with('&') {
+        value.push('&');
+    }
+    value.push_str(fragment);
+
+    value.parse().map_err(|e| {
+        reqsign_core::Error::request_invalid("failed to append signing query").with_source(e)
+    })
+}
+
+fn signed_header_names(ctx: &SigningRequest, is_presign: bool) -> Vec<&str> {
+    let mut headers = ctx
+        .headers
+        .keys()
+        .map(|k| k.as_str())
+        .filter(|header| !is_presign || *header == "host" || header.starts_with("x-tos-"))
+        .collect::<Vec<_>>();
+    headers.sort_unstable();
+    headers
+}
+
 fn canonical_request_hash(
     ctx: &SigningRequest,
     canonical_query: &[(String, String)],
+    signed_headers: &[&str],
+    payload_hash: &str,
 ) -> Result<(String, String)> {
     let mut canonical_request = String::with_capacity(256);
 
@@ -217,15 +376,22 @@ fn canonical_request_hash(
     canonical_request.push('\n');
 
     // Insert signed headers
-    let signed_headers = ctx.header_name_to_vec_sorted();
-
-    for header in &signed_headers {
-        let value = &ctx.headers[*header];
+    for header in signed_headers {
+        let mut value = ctx.headers[*header].clone();
+        SigningRequest::header_value_normalize(&mut value);
+        let value = value
+            .to_str()
+            .map_err(|e| {
+                reqsign_core::Error::request_invalid(format!(
+                    "invalid header value for TOS signing: {e}"
+                ))
+            })?
+            .split_ascii_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         canonical_request.push_str(header);
         canonical_request.push(':');
-        if let Ok(value_str) = value.to_str() {
-            canonical_request.push_str(value_str.trim());
-        }
+        canonical_request.push_str(&value);
         canonical_request.push('\n');
     }
 
@@ -233,7 +399,7 @@ fn canonical_request_hash(
     canonical_request.push_str(signed_headers.join(";").as_str());
     canonical_request.push('\n');
 
-    canonical_request.push_str(EMPTY_PAYLOAD_SHA256);
+    canonical_request.push_str(payload_hash);
 
     let hash = hex_sha256(canonical_request.as_bytes());
 
@@ -254,6 +420,7 @@ fn generate_signing_key(secret: &str, date: &str, region: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+    use std::time::Duration;
 
     use http::Uri;
 
@@ -262,6 +429,21 @@ mod tests {
     use reqsign_core::{Context, OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+    async fn presign_request(
+        req: http::Request<()>,
+        credential: &Credential,
+        region: &str,
+        expires: Duration,
+    ) -> Result<http::request::Parts> {
+        let signer = RequestSigner::new(region)
+            .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
+        let (mut parts, _) = req.into_parts();
+        signer
+            .sign_request(&Context::new(), &mut parts, Some(credential), Some(expires))
+            .await?;
+        Ok(parts)
+    }
 
     #[tokio::test]
     async fn test_sign_request() -> Result<()> {
@@ -340,6 +522,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_presign_request() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let get_req = "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject";
+        let req = http::Request::get(Uri::from_str(get_req)?).body(())?;
+        let parts = presign_request(
+            req,
+            &Credential::new("testAK", "testSK"),
+            "ap-southeast-1",
+            Duration::from_secs(86400),
+        )
+        .await?;
+
+        assert!(parts.headers.get("Authorization").is_none());
+        assert!(parts.headers.get("x-tos-date").is_none());
+        assert_eq!(
+            "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=testAK%2F20220101%2Fap-southeast-1%2Ftos%2Frequest&X-Tos-Date=20220101T000000Z&X-Tos-Expires=86400&X-Tos-SignedHeaders=host&X-Tos-Signature=d235179a42db6eefabd0c312a8f7e33c03a939ac2deb6e7c0ac4058117fc882b",
+            parts.uri.to_string()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_presign_with_session_token() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let req =
+            http::Request::get("https://examplebucket.tos-cn-beijing.volces.com/object").body(())?;
+        let parts = presign_request(
+            req,
+            &Credential::new("testAK", "testSK").with_session_token("session/token"),
+            "cn-beijing",
+            Duration::from_secs(3600),
+        )
+        .await?;
+
+        assert!(parts.headers.get("x-tos-security-token").is_none());
+        assert_eq!(
+            "https://examplebucket.tos-cn-beijing.volces.com/object?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=testAK%2F20220101%2Fcn-beijing%2Ftos%2Frequest&X-Tos-Date=20220101T000000Z&X-Tos-Expires=3600&X-Tos-Security-Token=session%2Ftoken&X-Tos-SignedHeaders=host&X-Tos-Signature=7346fb25f8454f6b4c0531038ae3d8e1ba74e6bffa95513812ea1ebaec601ba2",
+            parts.uri.to_string()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_presign_with_signed_headers() -> Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let mut req = http::Request::get(
+            "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject",
+        )
+        .header("x-tos-content-sha256", EMPTY_PAYLOAD_SHA256)
+        .body(())?;
+        let mut metadata = HeaderValue::from_static("alpha   beta");
+        metadata.set_sensitive(true);
+        req.headers_mut().insert("x-tos-meta-note", metadata);
+        let parts = presign_request(
+            req,
+            &Credential::new("testAK", "testSK"),
+            "ap-southeast-1",
+            Duration::from_secs(86400),
+        )
+        .await?;
+
+        assert_eq!("alpha   beta", parts.headers["x-tos-meta-note"]);
+        assert!(parts.headers["x-tos-meta-note"].is_sensitive());
+        assert_eq!(
+            "https://examplebucket.tos-ap-southeast-1.bytepluses.com/exampleobject?X-Tos-Algorithm=TOS4-HMAC-SHA256&X-Tos-Credential=testAK%2F20220101%2Fap-southeast-1%2Ftos%2Frequest&X-Tos-Date=20220101T000000Z&X-Tos-Expires=86400&X-Tos-SignedHeaders=host%3Bx-tos-content-sha256%3Bx-tos-meta-note&X-Tos-Signature=bb27db860abc9394068d1f22c229f2dfe01e58d8f6f2a65f06f2e78114af9195",
+            parts.uri.to_string(),
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn canonicalization_and_signing_preserve_wire_uri() -> Result<()> {
         const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -349,20 +608,136 @@ mod tests {
         let original_uri =
             format!("https://bucket.tos-cn-beijing.volces.com/object%2Fname?{RAW_QUERY}");
         let mut canonical_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
-        let signing_req = SigningRequest::build(&mut canonical_parts)?;
-        let canonical_query = canonicalize_query(&signing_req);
-        let (_, canonical_request) = canonical_request_hash(&signing_req, &canonical_query)?;
+        let mut signing_req = SigningRequest::build(&mut canonical_parts)?;
+        let date_str = now.format_iso8601();
+        let credential_scope = format!("{}/cn-beijing/tos/request", now.format_date());
+        canonicalize_header(
+            &mut signing_req,
+            &credential,
+            &date_str,
+            Some(Duration::from_secs(60)),
+        )?;
+        let signed_headers = signed_header_names(&signing_req, true);
+        let authentication_query = authentication_query(
+            &credential,
+            &credential_scope,
+            &date_str,
+            Some(Duration::from_secs(60)),
+            &signed_headers,
+        );
+        let canonical_query = canonicalize_query(&signing_req, &authentication_query);
+        let (_, canonical_request) = canonical_request_hash(
+            &signing_req,
+            &canonical_query,
+            &signed_headers,
+            UNSIGNED_PAYLOAD,
+        )?;
 
         assert!(canonical_request.starts_with("GET\n/object%2Fname\n"));
         assert!(canonical_query.contains(&("literal-plus".to_string(), "%2B".to_string())));
         assert!(canonical_query.contains(&("double".to_string(), "%252F".to_string())));
 
-        let mut parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        let mut header_parts = http::Request::get(&original_uri)
+            .header("x-custom", "alpha   beta")
+            .body(())?
+            .into_parts()
+            .0;
+        header_parts
+            .headers
+            .get_mut("x-custom")
+            .unwrap()
+            .set_sensitive(true);
         signer
-            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
             .await?;
+        assert_eq!(header_parts.uri.to_string(), original_uri);
+        assert_eq!(header_parts.headers["x-custom"], "alpha   beta");
+        assert!(header_parts.headers["x-custom"].is_sensitive());
 
-        assert_eq!(parts.uri.to_string(), original_uri);
+        let mut query_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
+        signer
+            .sign_request(
+                &Context::new(),
+                &mut query_parts,
+                Some(&credential),
+                Some(Duration::from_secs(60)),
+            )
+            .await?;
+        assert!(
+            query_parts
+                .uri
+                .to_string()
+                .starts_with(&format!("{original_uri}X-Tos-Algorithm="))
+        );
+        assert!(
+            query_parts
+                .uri
+                .query()
+                .unwrap()
+                .contains("X-Tos-Signature=")
+        );
+
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn authentication_carrier_collisions_are_atomic() -> Result<()> {
+        let signer = RequestSigner::new("cn-beijing").with_time("2026-07-22T00:00:00Z".parse()?);
+        let credential = Credential::new("testAK", "testSK");
+
+        let mut query_parts = http::Request::get(
+            "https://bucket.tos-cn-beijing.volces.com/object?x-tos-signature=stale&key=value",
+        )
+        .body(())?
+        .into_parts()
+        .0;
+        query_parts.headers.insert(
+            HeaderName::from_static("x-original"),
+            HeaderValue::from_static("value"),
+        );
+        query_parts.extensions.insert(7_u8);
+        let original_query_parts = query_parts.clone();
+
+        signer
+            .sign_request(
+                &Context::new(),
+                &mut query_parts,
+                Some(&credential),
+                Some(Duration::from_secs(60)),
+            )
+            .await
+            .expect_err("an existing TOS signature must be rejected");
+        assert_request_head_unchanged(&query_parts, &original_query_parts);
+
+        let mut header_parts =
+            http::Request::get("https://bucket.tos-cn-beijing.volces.com/object?key=value")
+                .header(AUTHORIZATION, "stale")
+                .body(())?
+                .into_parts()
+                .0;
+        header_parts.extensions.insert(9_u8);
+        let original_header_parts = header_parts.clone();
+
+        signer
+            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .await
+            .expect_err("an existing authorization header must be rejected");
+        assert_request_head_unchanged(&header_parts, &original_header_parts);
+
+        Ok(())
+    }
+
+    fn assert_request_head_unchanged(
+        actual: &http::request::Parts,
+        expected: &http::request::Parts,
+    ) {
+        assert_eq!(actual.method, expected.method);
+        assert_eq!(actual.uri, expected.uri);
+        assert_eq!(actual.version, expected.version);
+        assert_eq!(actual.headers, expected.headers);
+        assert_eq!(
+            actual.extensions.get::<u8>(),
+            expected.extensions.get::<u8>()
+        );
     }
 }
