@@ -19,6 +19,8 @@ use reqsign_core::{Result, SigningCredential as KeyTrait, time::Timestamp, utils
 use std::fmt::{self, Debug};
 use std::time::Duration;
 
+const TOKEN_REFRESH_BUFFER: Duration = Duration::from_secs(120);
+
 /// ServiceAccount holds the client email and private key for service account authentication.
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +37,12 @@ impl Debug for ServiceAccount {
             .field("client_email", &self.client_email)
             .field("private_key", &Redact::from(&self.private_key))
             .finish()
+    }
+}
+
+impl ServiceAccount {
+    pub(crate) fn is_valid(&self) -> bool {
+        !self.private_key.is_empty() && !self.client_email.is_empty()
     }
 }
 
@@ -238,18 +246,16 @@ impl Debug for Token {
 
 impl KeyTrait for Token {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + TOKEN_REFRESH_BUFFER)
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
         if self.access_token.is_empty() {
             return false;
         }
 
-        match self.expires_at {
-            Some(expires_at) => {
-                // Consider token invalid if it expires within 2 minutes
-                let buffer = Duration::from_secs(120);
-                Timestamp::now() < expires_at - buffer
-            }
-            None => true, // No expiration means always valid
-        }
+        self.expires_at
+            .is_none_or(|expires_at| expires_at > timestamp)
     }
 }
 
@@ -309,8 +315,20 @@ impl Credential {
 
 impl KeyTrait for Credential {
     fn is_valid(&self) -> bool {
-        // A credential is valid if it has a service account or a valid token
-        self.service_account.is_some() || self.has_valid_token()
+        self.service_account
+            .as_ref()
+            .is_some_and(ServiceAccount::is_valid)
+            || self.has_valid_token()
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
+        self.service_account
+            .as_ref()
+            .is_some_and(ServiceAccount::is_valid)
+            || self
+                .token
+                .as_ref()
+                .is_some_and(|token| token.is_valid_at(timestamp))
     }
 }
 
@@ -384,10 +402,12 @@ mod tests {
         // Token that expires within 2 minutes
         token.expires_at = Some(Timestamp::now() + Duration::from_secs(30));
         assert!(!token.is_valid());
+        assert!(token.is_valid_at(Timestamp::now() + Duration::from_secs(10)));
 
         // Expired token
         token.expires_at = Some(Timestamp::now() - Duration::from_secs(3600));
         assert!(!token.is_valid());
+        assert!(!token.is_valid_at(Timestamp::now()));
 
         // Empty access token
         token.access_token = String::new();
@@ -527,6 +547,14 @@ mod tests {
         assert!(cred.is_valid());
         assert!(cred.has_service_account());
         assert!(!cred.has_token());
+
+        // Incomplete service account
+        let cred = Credential::with_service_account(ServiceAccount {
+            client_email: String::new(),
+            private_key: "key".to_string(),
+        });
+        assert!(!cred.is_valid());
+        assert!(!cred.is_valid_at(Timestamp::now()));
 
         // Valid token only
         let cred = Credential::with_token(Token {

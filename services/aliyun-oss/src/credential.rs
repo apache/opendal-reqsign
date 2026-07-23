@@ -47,19 +47,44 @@ impl Debug for Credential {
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
-        if (self.access_key_id.is_empty() || self.access_key_secret.is_empty())
-            && self.security_token.is_none()
-        {
+        self.is_valid_at(Timestamp::now() + Duration::from_secs(120))
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
+        if self.access_key_id.is_empty() || self.access_key_secret.is_empty() {
             return false;
         }
-        // Take 120s as buffer to avoid edge cases.
-        if let Some(valid) = self
-            .expires_in
-            .map(|v| v > Timestamp::now() + Duration::from_secs(120))
-        {
-            return valid;
-        }
 
-        true
+        self.expires_in.is_none_or(|expires| expires > timestamp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separates_cache_freshness_from_exact_validity() {
+        let now = Timestamp::now();
+        let credential = Credential {
+            access_key_id: "access-key".to_string(),
+            access_key_secret: "secret-key".to_string(),
+            security_token: Some("token".to_string()),
+            expires_in: Some(now + Duration::from_secs(30)),
+        };
+
+        assert!(!credential.is_valid());
+        assert!(credential.is_valid_at(now + Duration::from_secs(10)));
+        assert!(!credential.is_valid_at(now + Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn security_token_does_not_replace_signing_keys() {
+        let credential = Credential {
+            security_token: Some("token".to_string()),
+            ..Default::default()
+        };
+
+        assert!(!credential.is_valid_at(Timestamp::now()));
     }
 }

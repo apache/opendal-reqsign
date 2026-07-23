@@ -50,6 +50,12 @@
 //! header and query authentication. The service and credential type determine the
 //! authentication mode.
 //!
+//! [`SigningCredential::is_valid`] controls whether a cached credential can be reused
+//! without refresh. [`SigningCredential::is_valid_at`] checks exact usability at the
+//! timestamp returned by [`SignRequest::required_valid_until`]. A refreshed credential
+//! only needs to satisfy the exact operation requirement; provider errors are returned
+//! without retrying internally or falling back to the old cached credential.
+//!
 //! ## Example
 //!
 //! ```no_run

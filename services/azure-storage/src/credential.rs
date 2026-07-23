@@ -71,6 +71,10 @@ impl Debug for Credential {
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + Duration::from_secs(20))
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
         match self {
             Credential::SharedKey {
                 account_name,
@@ -81,12 +85,7 @@ impl SigningCredential for Credential {
                 if token.is_empty() {
                     return false;
                 }
-                // Check expiration for bearer tokens (take 20s as buffer to avoid edge cases)
-                if let Some(expires) = expires_in {
-                    *expires > Timestamp::now() + Duration::from_secs(20)
-                } else {
-                    true
-                }
+                expires_in.is_none_or(|expires| expires > timestamp)
             }
         }
     }
@@ -114,5 +113,21 @@ impl Credential {
             token: bearer_token.to_string(),
             expires_in,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separates_bearer_cache_freshness_from_exact_validity() {
+        let now = Timestamp::now();
+        let credential =
+            Credential::with_bearer_token("token", Some(now + Duration::from_secs(10)));
+
+        assert!(!credential.is_valid());
+        assert!(credential.is_valid_at(now + Duration::from_secs(5)));
+        assert!(!credential.is_valid_at(now + Duration::from_secs(10)));
     }
 }
