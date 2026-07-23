@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-tencent-cos"
-version = "3.0.2"
+version = "3.0.3"
 
 description = "Tencent Cloud COS signing implementation for reqsign."
 
