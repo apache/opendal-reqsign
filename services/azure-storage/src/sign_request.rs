@@ -23,10 +23,14 @@ use log::debug;
 use percent_encoding::{percent_decode_str, percent_encode};
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Result, SignRequest, SigningMethod, SigningRequest};
+use reqsign_core::{
+    Context, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
+};
 use std::fmt::Write;
 use std::sync::Mutex;
 use std::time::Duration;
+
+const BEARER_TOKEN_OPERATION_HEADROOM: Duration = Duration::from_secs(20);
 
 /// Resource kind required by SAS generation.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -173,6 +177,39 @@ impl RequestSigner {
         self.time = Some(time);
         self
     }
+
+    fn get_time(&self) -> Timestamp {
+        self.time.unwrap_or_else(Timestamp::now)
+    }
+
+    fn required_valid_until_at(
+        &self,
+        credential: &Credential,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        match credential {
+            Credential::BearerToken { .. } => {
+                let cached_key_covers_operation = expires_in.is_some_and(|expires| {
+                    self.user_delegation_key_cache
+                        .lock()
+                        .expect("lock poisoned")
+                        .as_ref()
+                        .is_some_and(|key| {
+                            key.signed_expiry
+                                > signing_time + expires + BEARER_TOKEN_OPERATION_HEADROOM
+                        })
+                });
+
+                if cached_key_covers_operation {
+                    signing_time
+                } else {
+                    signing_time + BEARER_TOKEN_OPERATION_HEADROOM
+                }
+            }
+            Credential::SharedKey { .. } | Credential::SasToken { .. } => signing_time,
+        }
+    }
 }
 
 impl Default for RequestSigner {
@@ -182,6 +219,14 @@ impl Default for RequestSigner {
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
+
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until_at(credential, self.get_time(), expires_in)
+    }
 
     async fn sign_request(
         &self,
@@ -194,6 +239,13 @@ impl SignRequest for RequestSigner {
             return Ok(());
         };
 
+        let signing_time = self.get_time();
+        let required_until = self.required_valid_until_at(cred, signing_time, expires_in);
+        if !cred.is_valid_at(required_until) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "credential expires before the requested signing operation deadline",
+            ));
+        }
         let method = if let Some(expires_in) = expires_in {
             SigningMethod::Query(expires_in)
         } else {
@@ -220,8 +272,7 @@ impl SignRequest for RequestSigner {
                             ));
                         };
 
-                        let now_time = self.time.unwrap_or_else(Timestamp::now);
-                        let expiry = now_time + d;
+                        let expiry = signing_time + d;
 
                         let resource = service_sas_resource(&sctx.path)?;
                         match (cfg.resource, &resource) {
@@ -259,10 +310,10 @@ impl SignRequest for RequestSigner {
                                             scheme: sctx.scheme.as_str(),
                                             authority: sctx.authority.as_str(),
                                             bearer_token: token,
-                                            start: now_time,
+                                            start: signing_time,
                                             expiry,
                                             service_version: version,
-                                            now: now_time,
+                                            now: signing_time,
                                         },
                                     )
                                     .await?;
@@ -280,10 +331,10 @@ impl SignRequest for RequestSigner {
                                         scheme: sctx.scheme.as_str(),
                                         authority: sctx.authority.as_str(),
                                         bearer_token: token,
-                                        start: now_time,
+                                        start: signing_time,
                                         expiry,
                                         service_version: version,
-                                        now: now_time,
+                                        now: signing_time,
                                     },
                                 )
                                 .await?;
@@ -327,7 +378,7 @@ impl SignRequest for RequestSigner {
                     SigningMethod::Header => {
                         sctx.headers.insert(
                             X_MS_DATE,
-                            Timestamp::now().format_http_date().parse().map_err(|e| {
+                            signing_time.format_http_date().parse().map_err(|e| {
                                 reqsign_core::Error::unexpected("failed to parse date header")
                                     .with_source(e)
                             })?,
@@ -353,7 +404,6 @@ impl SignRequest for RequestSigner {
                 // Shared key authentication
                 match method {
                     SigningMethod::Query(d) => {
-                        let now_time = self.time.unwrap_or_else(Timestamp::now);
                         let Some(permissions) = &self.service_sas_permissions else {
                             return Err(reqsign_core::Error::request_invalid(
                                 "Service SAS permissions are required for presign",
@@ -367,7 +417,7 @@ impl SignRequest for RequestSigner {
                             account_key.clone(),
                             resource,
                             permissions.to_string(),
-                            now_time + d,
+                            signing_time + d,
                         );
                         if let Some(start) = self.service_sas_start {
                             signer = signer.with_start(start);
@@ -389,8 +439,7 @@ impl SignRequest for RequestSigner {
                         final_uri = Some(append_query_pairs(&original_uri, &signer_token)?);
                     }
                     SigningMethod::Header => {
-                        let now_time = self.time.unwrap_or_else(Timestamp::now);
-                        let string_to_sign = string_to_sign(&mut sctx, account_name, now_time)?;
+                        let string_to_sign = string_to_sign(&mut sctx, account_name, signing_time)?;
                         let decode_content = base64_decode(account_key).map_err(|e| {
                             reqsign_core::Error::unexpected("failed to decode account key")
                                 .with_source(e)
@@ -729,9 +778,30 @@ mod tests {
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::str::FromStr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+
+    #[test]
+    fn bearer_deadline_covers_rpc_not_generated_sas_lifetime() {
+        let now: Timestamp = "2026-07-22T00:00:00Z"
+            .parse()
+            .expect("timestamp must parse");
+        let signer = RequestSigner::new().with_time(now);
+        let bearer = Credential::with_bearer_token("token", None);
+        let shared_key = Credential::with_shared_key("account", "key");
+
+        assert_eq!(
+            signer.required_valid_until(&bearer, Some(Duration::from_secs(3600))),
+            now + BEARER_TOKEN_OPERATION_HEADROOM
+        );
+        assert_eq!(
+            signer.required_valid_until(&shared_key, Some(Duration::from_secs(3600))),
+            now
+        );
+    }
 
     #[test]
     fn canonical_resource_decodes_query_once_without_form_semantics() {
@@ -881,13 +951,16 @@ mod tests {
         );
     }
 
-    #[derive(Debug)]
-    struct MockUserDelegationHttpSend;
+    #[derive(Clone, Debug, Default)]
+    struct MockUserDelegationHttpSend {
+        calls: Arc<AtomicUsize>,
+    }
     impl HttpSend for MockUserDelegationHttpSend {
         async fn http_send(
             &self,
             req: http::Request<Bytes>,
         ) -> reqsign_core::Result<http::Response<Bytes>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             if req.method() != http::Method::POST {
                 return Err(reqsign_core::Error::unexpected("unexpected request method")
                     .with_context(req.method().to_string()));
@@ -987,9 +1060,10 @@ mod tests {
     async fn test_bearer_token_presign_user_delegation_sas() {
         let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
 
+        let http_send = MockUserDelegationHttpSend::default();
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
-            .with_http_send(MockUserDelegationHttpSend)
+            .with_http_send(http_send.clone())
             .with_env(OsEnv);
 
         let cred = Credential::with_bearer_token("token", None);
@@ -1018,5 +1092,26 @@ mod tests {
                 "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=VkI3h/LWkD6qcDzshjQzCuCdMPDCFA3tMEbxM%2BED5Nc%3D"
             )
         );
+
+        let near_expiry_cred =
+            Credential::with_bearer_token("token", Some(now + Duration::from_secs(5)));
+        assert_eq!(
+            builder.required_valid_until(&near_expiry_cred, Some(Duration::from_secs(300))),
+            now
+        );
+
+        let req = Request::builder().uri(&original_uri).body(()).unwrap();
+        let (mut cached_parts, _) = req.into_parts();
+        builder
+            .sign_request(
+                &ctx,
+                &mut cached_parts,
+                Some(&near_expiry_cred),
+                Some(Duration::from_secs(300)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cached_parts.uri, parts.uri);
+        assert_eq!(http_send.calls.load(Ordering::SeqCst), 1);
     }
 }

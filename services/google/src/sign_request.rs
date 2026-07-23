@@ -32,6 +32,8 @@ use reqsign_core::{
 use crate::constants::{DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE};
 use crate::credential::{Credential, ServiceAccount, Token};
 
+const TOKEN_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
+
 /// Claims is used to build JWT for Google Cloud.
 #[derive(Debug, Serialize)]
 struct Claims {
@@ -130,6 +132,10 @@ impl RequestSigner {
     pub fn with_region(mut self, region: impl Into<String>) -> Self {
         self.region = region.into();
         self
+    }
+
+    fn token_required_until(&self) -> Timestamp {
+        Timestamp::now() + TOKEN_OPERATION_HEADROOM
     }
 
     /// Exchange a service account for an access token.
@@ -378,6 +384,22 @@ impl RequestSigner {
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        _expires_in: Option<Duration>,
+    ) -> Timestamp {
+        if credential
+            .service_account
+            .as_ref()
+            .is_some_and(ServiceAccount::is_valid)
+        {
+            Timestamp::now()
+        } else {
+            self.token_required_until()
+        }
+    }
+
     async fn sign_request(
         &self,
         ctx: &Context,
@@ -389,17 +411,28 @@ impl SignRequest for RequestSigner {
             return Ok(());
         };
 
+        let required_until = self.required_valid_until(cred, expires_in);
+        if !cred.is_valid_at(required_until) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "credential expires before the requested signing operation deadline",
+            ));
+        }
+
         let (signing_req, final_uri) = match expires_in {
             // Query signing - prefer ServiceAccount, otherwise use IAMCredentials signBlob if possible.
             Some(expires) => {
-                if let Some(sa) = cred.service_account.as_ref() {
+                if let Some(sa) = cred
+                    .service_account
+                    .as_ref()
+                    .filter(|service_account| service_account.is_valid())
+                {
                     let (signing_req, uri) =
                         self.build_signed_query_with_service_account(req, sa, expires)?;
                     (signing_req, Some(uri))
                 } else if let (Some(token), Some(signer_email)) =
                     (cred.token.as_ref(), self.signer_email.as_deref())
                 {
-                    if !token.is_valid() {
+                    if !token.is_valid_at(required_until) {
                         return Err(reqsign_core::Error::credential_invalid(
                             "token required for iamcredentials signBlob query signing",
                         ));
@@ -423,24 +456,42 @@ impl SignRequest for RequestSigner {
             }
             // Header authentication - prefer valid token, otherwise exchange from SA
             None => {
-                // Check if we have a valid token
+                let token_required_until = self.token_required_until();
                 if let Some(token) = &cred.token {
-                    if token.is_valid() {
+                    if token.is_valid_at(token_required_until) {
                         (self.build_token_auth(req, token)?, None)
-                    } else if let Some(sa) = &cred.service_account {
+                    } else if let Some(sa) = cred
+                        .service_account
+                        .as_ref()
+                        .filter(|service_account| service_account.is_valid())
+                    {
                         // Token expired, but we have SA, exchange for new token
                         debug!("token expired, exchanging service account for new token");
                         let new_token = self.exchange_token(ctx, sa).await?;
+                        if !new_token.is_valid_at(self.token_required_until()) {
+                            return Err(reqsign_core::Error::credential_invalid(
+                                "exchanged token is not valid long enough for header authentication",
+                            ));
+                        }
                         (self.build_token_auth(req, &new_token)?, None)
                     } else {
                         return Err(reqsign_core::Error::credential_invalid(
                             "token expired and no service account available",
                         ));
                     }
-                } else if let Some(sa) = &cred.service_account {
+                } else if let Some(sa) = cred
+                    .service_account
+                    .as_ref()
+                    .filter(|service_account| service_account.is_valid())
+                {
                     // No token but have SA, exchange for token
                     debug!("no token available, exchanging service account for token");
                     let token = self.exchange_token(ctx, sa).await?;
+                    if !token.is_valid_at(self.token_required_until()) {
+                        return Err(reqsign_core::Error::credential_invalid(
+                            "exchanged token is not valid long enough for header authentication",
+                        ));
+                    }
                     (self.build_token_auth(req, &token)?, None)
                 } else {
                     return Err(reqsign_core::Error::credential_invalid(
@@ -633,7 +684,8 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use http::header;
-    use reqsign_core::HttpSend;
+    use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
@@ -690,6 +742,21 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct RepeatingProvider {
+        credential: Credential,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ProvideCredential for RepeatingProvider {
+        type Credential = Credential;
+
+        async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(self.credential.clone()))
+        }
+    }
+
     fn query_get<'a>(query: &'a str, key: &str) -> Option<&'a str> {
         query.split('&').find_map(|kv| {
             let (k, v) = kv.split_once('=')?;
@@ -717,10 +784,11 @@ mod tests {
 
         let cred = Credential::with_token(Token {
             access_token: "test-access-token".to_string(),
-            expires_at: None,
+            expires_at: Some(Timestamp::now() + Duration::from_secs(60)),
         });
+        assert!(!cred.is_valid());
 
-        let expires_in = Duration::from_secs(60);
+        let expires_in = Duration::from_secs(3600);
         let original_uri =
             format!("https://storage.googleapis.com/test-bucket/test%2Fobject?{RAW_QUERY}");
 
@@ -785,6 +853,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn signer_refreshes_near_expiry_token_without_binding_it_to_signed_url_lifetime()
+    -> Result<()> {
+        let mock_http = MockHttpSend::default();
+        let ctx = Context::new().with_http_send(mock_http);
+        let credential = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(60)),
+        });
+        assert!(!credential.is_valid());
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = RepeatingProvider {
+            credential,
+            calls: calls.clone(),
+        };
+        let signer = Signer::new(
+            ctx,
+            provider,
+            RequestSigner::new("storage").with_signer_email("test-signer@example.com"),
+        );
+
+        for _ in 0..2 {
+            let mut parts = http::Request::get("https://storage.googleapis.com/test-bucket/object")
+                .body(())?
+                .into_parts()
+                .0;
+
+            signer
+                .sign(&mut parts, Some(Duration::from_secs(3600)))
+                .await?;
+            assert!(
+                parts
+                    .uri
+                    .query()
+                    .expect("signed URL query must exist")
+                    .contains("X-Goog-Signature=010203")
+            );
+        }
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn bearer_authentication_preserves_uri_and_header_values() -> Result<()> {
         let signer = RequestSigner::new("storage");
         let credential = Credential::with_token(Token {
@@ -808,6 +920,87 @@ mod tests {
             parts.headers[header::AUTHORIZATION],
             "Bearer test-access-token"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bearer_authentication_uses_token_inside_refresh_window() -> Result<()> {
+        let signer = RequestSigner::new("storage");
+        let credential = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(30)),
+        });
+        assert!(!credential.is_valid());
+
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .await?;
+
+        assert_eq!(
+            parts.headers[header::AUTHORIZATION],
+            "Bearer test-access-token"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn signer_reuses_refreshed_token_for_operation_but_refreshes_next_time() -> Result<()> {
+        let credential = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(30)),
+        });
+        assert!(!credential.is_valid());
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = RepeatingProvider {
+            credential,
+            calls: calls.clone(),
+        };
+        let signer = Signer::new(Context::new(), provider, RequestSigner::new("storage"));
+
+        for _ in 0..2 {
+            let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                .body(())?
+                .into_parts()
+                .0;
+
+            signer.sign(&mut parts, None).await?;
+            assert_eq!(
+                parts.headers[header::AUTHORIZATION],
+                "Bearer test-access-token"
+            );
+        }
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bearer_authentication_rejects_token_shorter_than_operation_headroom() -> Result<()> {
+        let signer = RequestSigner::new("storage");
+        let credential = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(5)),
+        });
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .await
+            .expect_err("token must cover the operation headroom");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
         Ok(())
     }
 }

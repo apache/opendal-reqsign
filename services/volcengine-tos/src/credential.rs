@@ -16,6 +16,7 @@
 // under the License.
 
 use reqsign_core::SigningCredential;
+use reqsign_core::time::Timestamp;
 use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
 
@@ -58,5 +59,21 @@ impl Debug for Credential {
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
         !self.access_key_id.is_empty() && !self.secret_access_key.is_empty()
+    }
+
+    fn is_valid_at(&self, _timestamp: Timestamp) -> bool {
+        self.is_valid()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_validity_checks_structure() {
+        let credential = Credential::new("", "");
+
+        assert!(!credential.is_valid_at(Timestamp::now()));
     }
 }

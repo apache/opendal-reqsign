@@ -24,13 +24,14 @@ use reqsign_core::hash::{
     base64_hmac_sha1, base64_hmac_sha256, hex_hmac_sha256, hex_sha256, hmac_sha256,
 };
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Error, SignRequest, SigningRequest};
+use reqsign_core::{Context, Error, SignRequest, SigningCredential, SigningRequest};
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::sync::LazyLock;
 use std::time::Duration;
 
 const CONTENT_MD5: &str = "content-md5";
+const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 const IF_MODIFIED_SINCE: &str = "if-modified-since";
 const OSS_V2_ALGORITHM: &str = "OSS2";
 const OSS_V4_ALGORITHM: &str = "OSS4-HMAC-SHA256";
@@ -138,9 +139,25 @@ impl RequestSigner {
     fn get_time(&self) -> Timestamp {
         self.time.unwrap_or_else(Timestamp::now)
     }
+
+    fn required_valid_until_at(
+        &self,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        signing_time + expires_in.unwrap_or(CREDENTIAL_OPERATION_HEADROOM)
+    }
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
+
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until_at(self.get_time(), expires_in)
+    }
 
     async fn sign_request(
         &self,
@@ -154,6 +171,13 @@ impl SignRequest for RequestSigner {
         };
 
         let signing_time = self.get_time();
+        let required_until = self.required_valid_until_at(signing_time, expires_in);
+        if !cred.is_valid_at(required_until) {
+            return Err(Error::credential_invalid(
+                "credential expires before the requested signing operation deadline",
+            ));
+        }
+
         let mut candidate = req.clone();
 
         match self.signing_version {
@@ -1191,6 +1215,22 @@ mod tests {
 
     fn test_time() -> Timestamp {
         Timestamp::from_second(1_717_332_000).expect("timestamp must be valid")
+    }
+
+    #[test]
+    fn header_deadline_includes_transport_headroom() {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse().unwrap();
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::default();
+
+        assert_eq!(
+            signer.required_valid_until(&credential, None),
+            now + CREDENTIAL_OPERATION_HEADROOM
+        );
+        assert_eq!(
+            signer.required_valid_until(&credential, Some(Duration::from_secs(3600))),
+            now + Duration::from_secs(3600)
+        );
     }
 
     #[test]

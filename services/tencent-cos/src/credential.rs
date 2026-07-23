@@ -47,17 +47,34 @@ impl Debug for Credential {
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + Duration::from_secs(120))
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
         if self.secret_id.is_empty() || self.secret_key.is_empty() {
             return false;
         }
-        // Take 120s as buffer to avoid edge cases.
-        if let Some(valid) = self
-            .expires_in
-            .map(|v| v > Timestamp::now() + Duration::from_secs(120))
-        {
-            return valid;
-        }
 
-        true
+        self.expires_in.is_none_or(|expires| expires > timestamp)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separates_cache_freshness_from_exact_validity() {
+        let now = Timestamp::now();
+        let credential = Credential {
+            secret_id: "secret-id".to_string(),
+            secret_key: "secret-key".to_string(),
+            security_token: Some("token".to_string()),
+            expires_in: Some(now + Duration::from_secs(30)),
+        };
+
+        assert!(!credential.is_valid());
+        assert!(credential.is_valid_at(now + Duration::from_secs(10)));
+        assert!(!credential.is_valid_at(now + Duration::from_secs(30)));
     }
 }

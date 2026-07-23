@@ -24,7 +24,7 @@ use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{hex_hmac_sha1, hex_sha1};
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Result, SignRequest, SigningRequest};
+use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
 use std::time::Duration;
 
 /// RequestSigner that implements Tencent COS signing.
@@ -52,9 +52,30 @@ impl RequestSigner {
         self.time = Some(time);
         self
     }
+
+    fn get_time(&self) -> Timestamp {
+        self.time.unwrap_or_else(Timestamp::now)
+    }
+
+    fn required_valid_until_at(
+        &self,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        let signature_lifetime = expires_in.unwrap_or_else(|| Duration::from_secs(3600));
+        signing_time + signature_lifetime
+    }
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
+
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until_at(self.get_time(), expires_in)
+    }
 
     async fn sign_request(
         &self,
@@ -67,7 +88,14 @@ impl SignRequest for RequestSigner {
             return Ok(());
         };
 
-        let now = self.time.unwrap_or_else(Timestamp::now);
+        let now = self.get_time();
+        let required_until = self.required_valid_until_at(now, expires_in);
+        if !cred.is_valid_at(required_until) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "credential expires before the requested signing operation deadline",
+            ));
+        }
+
         let original_uri = req.uri.clone();
         let mut signing_req = SigningRequest::build(req)?;
 
@@ -230,6 +258,23 @@ mod tests {
     use super::*;
 
     const RAW_QUERY: &str = "versionId=a%2Bb%3Dc%2525%26e&slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+
+    #[test]
+    fn deadline_matches_actual_signature_lifetime() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new().with_time(now);
+        let credential = Credential::default();
+
+        assert_eq!(
+            signer.required_valid_until(&credential, None),
+            now + Duration::from_secs(3600)
+        );
+        assert_eq!(
+            signer.required_valid_until(&credential, Some(Duration::from_secs(60))),
+            now + Duration::from_secs(60)
+        );
+        Ok(())
+    }
 
     #[tokio::test]
     async fn canonicalization_and_signing_preserve_wire_uri() -> Result<()> {

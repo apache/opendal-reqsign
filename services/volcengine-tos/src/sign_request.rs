@@ -21,7 +21,7 @@ use log::debug;
 use percent_encoding::percent_decode_str;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Result, SignRequest, SigningRequest};
+use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
 use std::fmt::Write;
 use std::sync::LazyLock;
 
@@ -63,9 +63,21 @@ impl RequestSigner {
         self.time = Some(time);
         self
     }
+
+    fn get_time(&self) -> Timestamp {
+        self.time.unwrap_or_else(Timestamp::now)
+    }
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
+
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        _expires_in: Option<std::time::Duration>,
+    ) -> Timestamp {
+        self.get_time()
+    }
 
     async fn sign_request(
         &self,
@@ -78,7 +90,12 @@ impl SignRequest for RequestSigner {
             return Ok(());
         };
 
-        let now = self.time.unwrap_or_else(Timestamp::now);
+        let now = self.get_time();
+        if !cred.is_valid_at(now) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "credential expires before the requested signing operation deadline",
+            ));
+        }
 
         let mut signing_req = SigningRequest::build(req)?;
 
