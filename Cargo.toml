@@ -28,7 +28,9 @@ rust-version = "1.85.0"
 [workspace.dependencies]
 # Workspace dependencies
 reqsign-aliyun-oss = { version = "3.1.2", path = "services/aliyun-oss" }
+reqsign-aws-core = { version = "3.0.3", path = "services/aws-core" }
 reqsign-aws-v4 = { version = "3.0.3", path = "services/aws-v4" }
+reqsign-aws-v4a = { version = "3.0.3", path = "services/aws-v4a" }
 reqsign-azure-storage = { version = "3.1.1", path = "services/azure-storage" }
 reqsign-command-execute-tokio = { version = "3.0.3", path = "context/command-execute-tokio" }
 reqsign-core = { version = "3.2.0", path = "core" }
@@ -56,6 +58,7 @@ jiff = "0.2"
 log = "0.4"
 pem = "3.0"
 percent-encoding = "2"
+p256 = { version = "0.13.2", default-features = false, features = ["ecdsa"] }
 pretty_assertions = "1.3"
 quick-xml = { version = "0.41.0", features = ["serialize"] }
 reqwest = { version = "0.13.1", default-features = false }
@@ -67,3 +70,4 @@ sha1 = "0.11"
 sha2 = { version = "0.11", features = ["oid"] }
 tempfile = "3.8"
 tokio = { version = "1", default-features = false }
+zeroize = "1"

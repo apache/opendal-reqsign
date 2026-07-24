@@ -31,7 +31,7 @@ pub use context::default_context;
 #[cfg(feature = "aliyun")]
 pub mod aliyun;
 
-#[cfg(feature = "aws")]
+#[cfg(any(feature = "aws-v4", feature = "aws-v4a"))]
 pub mod aws;
 
 #[cfg(feature = "azure")]

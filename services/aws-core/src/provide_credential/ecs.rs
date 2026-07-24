@@ -61,7 +61,7 @@ const ECS_CONTAINER_METADATA_URI: &str = "ECS_CONTAINER_METADATA_URI";
 /// # Examples
 ///
 /// ```rust,no_run
-/// use reqsign_aws_v4::ECSCredentialProvider;
+/// use reqsign_aws_core::ECSCredentialProvider;
 ///
 /// // Configure for ECS with relative URI
 /// let provider = ECSCredentialProvider::new()

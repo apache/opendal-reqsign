@@ -15,5 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod s3_express_session;
-pub use s3_express_session::S3ExpressSessionProvider;
+#![doc = include_str!("../README.md")]
+
+mod region_set;
+mod sign_request;
+
+pub use region_set::SigningRegionSet;
+pub use reqsign_aws_core::constants;
+pub use reqsign_aws_core::{
+    AssumeRoleCredentialProvider, AssumeRoleWithWebIdentityCredentialProvider,
+    CognitoIdentityCredentialProvider, Credential, DefaultCredentialProvider,
+    DefaultCredentialProviderBuilder, ECSCredentialProvider, EMPTY_STRING_SHA256,
+    EnvCredentialProvider, IMDSv2CredentialProvider, ProfileCredentialProvider,
+    StaticCredentialProvider,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
+pub use sign_request::RequestSigner;
