@@ -463,9 +463,10 @@ access_key_secret = profile_secret_key
 "#
             .to_vec(),
         )]));
+        let http_send = CountingHttpSend::new([]);
         let ctx = Context::new()
             .with_file_read(file_read.clone())
-            .with_http_send(ReqwestHttpSend::default())
+            .with_http_send(http_send.clone())
             .with_env(StaticEnv {
                 home_dir: None,
                 envs: HashMap::from_iter([
@@ -480,6 +481,10 @@ access_key_secret = profile_secret_key
                     (
                         OSS_CREDENTIAL_PROFILES_FILE.to_string(),
                         "/mock/credentials".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA_DISABLED.to_string(),
+                        "true".to_string(),
                     ),
                 ]),
             });
@@ -518,6 +523,7 @@ access_key_secret = profile_secret_key
             .await
             .unwrap();
         assert!(credential.is_none());
+        assert_eq!(0, http_send.calls());
     }
 
     #[tokio::test]
