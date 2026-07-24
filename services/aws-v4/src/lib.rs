@@ -112,6 +112,19 @@
 //!     .build();
 //! ```
 //!
+//! ### Selecting a Profile
+//!
+//! Use one explicit profile for the shared profile, SSO, and process credential
+//! sources:
+//!
+//! ```no_run
+//! use reqsign_aws_v4::DefaultCredentialProvider;
+//!
+//! let provider = DefaultCredentialProvider::builder()
+//!     .with_profile("production")
+//!     .build();
+//! ```
+//!
 //! ### Custom Credential Provider
 //!
 //! You can create custom credential providers by implementing the `ProvideCredential` trait:

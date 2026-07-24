@@ -48,6 +48,20 @@ async fn main() -> anyhow::Result<()> {
 
 On `wasm32`, the non-portable `sso` and `process` slots are not available.
 
+## Select a Profile
+
+Use `with_profile(...)` to select one profile consistently for the shared
+profile, SSO, and process credential sources. The explicit selection takes
+precedence over `AWS_PROFILE`.
+
+```rust,no_run
+use reqsign_aws_v4::DefaultCredentialProvider;
+
+let provider = DefaultCredentialProvider::builder()
+    .with_profile("production")
+    .build();
+```
+
 ## Customize Slots
 
 Use `DefaultCredentialProvider::builder()` to replace or remove individual slots.

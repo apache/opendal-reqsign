@@ -122,6 +122,34 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
+    /// Select the AWS profile used by all profile-aware provider slots.
+    ///
+    /// The explicit profile is applied to the shared profile, SSO, and process
+    /// providers that are still enabled. Other settings on those providers are
+    /// preserved, and slots removed with `no_profile()`, `no_sso()`, or
+    /// `no_process()` remain removed.
+    ///
+    /// An explicitly selected profile takes precedence over `AWS_PROFILE`.
+    /// Slot-level methods called after this method can still replace or remove
+    /// individual providers.
+    pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
+        let profile = profile.into();
+
+        self.profile = self
+            .profile
+            .map(|provider| provider.with_profile(profile.clone()));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.sso = self
+                .sso
+                .map(|provider| provider.with_profile(profile.clone()));
+            self.process = self.process.map(|provider| provider.with_profile(profile));
+        }
+
+        self
+    }
+
     /// Override the environment credential provider slot.
     pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
         self.env = Some(provider);
@@ -263,15 +291,21 @@ impl ProvideCredential for DefaultCredentialProvider {
 mod tests {
     use super::*;
     use crate::constants::{
-        AWS_ACCESS_KEY_ID, AWS_CONFIG_FILE, AWS_SECRET_ACCESS_KEY, AWS_SHARED_CREDENTIALS_FILE,
+        AWS_ACCESS_KEY_ID, AWS_CONFIG_FILE, AWS_PROFILE, AWS_SECRET_ACCESS_KEY,
+        AWS_SHARED_CREDENTIALS_FILE,
     };
     #[cfg(not(target_arch = "wasm32"))]
     use reqsign_command_execute_tokio::TokioCommandExecute;
+    #[cfg(not(target_arch = "wasm32"))]
+    use reqsign_core::ErrorKind;
     use reqsign_core::{OsEnv, StaticEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
     use std::env;
+    use std::fs::File;
+    use std::io::Write;
+    use tempfile::tempdir;
 
     #[tokio::test]
     async fn test_credential_env_loader_without_env() {
@@ -564,6 +598,147 @@ mod tests {
         let cred = cred.expect("credential should exist");
         assert_eq!("config_access_key_id", cred.access_key_id);
         assert_eq!("config_secret_access_key", cred.secret_access_key);
+    }
+
+    #[tokio::test]
+    async fn test_with_profile_configures_profile_slot() -> anyhow::Result<()> {
+        let tmp_dir = tempdir()?;
+        let credentials_file = tmp_dir.path().join("credentials");
+        let mut file = File::create(&credentials_file)?;
+        writeln!(file, "[ambient]")?;
+        writeln!(file, "aws_access_key_id = AMBIENT")?;
+        writeln!(file, "aws_secret_access_key = ambient-secret")?;
+        writeln!(file)?;
+        writeln!(file, "[selected]")?;
+        writeln!(file, "aws_access_key_id = SELECTED")?;
+        writeln!(file, "aws_secret_access_key = selected-secret")?;
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([(AWS_PROFILE.to_string(), "ambient".to_string())]),
+            });
+
+        let builder = DefaultCredentialProvider::builder()
+            .profile(
+                ProfileCredentialProvider::new()
+                    .with_credentials_file(credentials_file.to_string_lossy()),
+            )
+            .with_profile("selected");
+        let provider = builder.profile.expect("profile slot must remain enabled");
+
+        let credential = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("selected profile must provide credentials");
+        assert_eq!("SELECTED", credential.access_key_id);
+        assert_eq!("selected-secret", credential.secret_access_key);
+
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_with_profile_configures_sso_slot() -> anyhow::Result<()> {
+        let tmp_dir = tempdir()?;
+        let config_file = tmp_dir.path().join("config");
+        let mut file = File::create(&config_file)?;
+        writeln!(file, "[profile selected]")?;
+        writeln!(file, "sso_account_id = 123456789012")?;
+        writeln!(file, "sso_region = us-east-1")?;
+        writeln!(file, "sso_role_name = Developer")?;
+        writeln!(file, "sso_start_url = https://example.awsapps.com/start")?;
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_env(StaticEnv {
+                home_dir: Some(tmp_dir.path().to_path_buf()),
+                envs: HashMap::from([
+                    (
+                        AWS_CONFIG_FILE.to_string(),
+                        config_file.to_string_lossy().into(),
+                    ),
+                    (AWS_PROFILE.to_string(), "ambient".to_string()),
+                ]),
+            });
+
+        let builder = DefaultCredentialProvider::builder().with_profile("selected");
+        let provider = builder.sso.expect("SSO slot must remain enabled");
+
+        let error = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("selected SSO profile must be loaded before cache lookup");
+        assert_eq!(ErrorKind::ConfigInvalid, error.kind());
+        assert_eq!(
+            "No valid SSO token found. Please run 'aws sso login' first",
+            error.to_string()
+        );
+
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_with_profile_configures_process_slot() -> anyhow::Result<()> {
+        let tmp_dir = tempdir()?;
+        let config_file = tmp_dir.path().join("config");
+        let helper = format!(
+            "{}/tests/mocks/credential_process_helper.py",
+            env::current_dir()?.to_string_lossy()
+        );
+        let mut file = File::create(&config_file)?;
+        writeln!(file, "[profile ambient]")?;
+        writeln!(file, "credential_process = python3 {helper}")?;
+        writeln!(file)?;
+        writeln!(file, "[profile selected]")?;
+        writeln!(file, "credential_process = python3 {helper} --profile test")?;
+
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_command_execute(TokioCommandExecute)
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([
+                    (
+                        AWS_CONFIG_FILE.to_string(),
+                        config_file.to_string_lossy().into(),
+                    ),
+                    (AWS_PROFILE.to_string(), "ambient".to_string()),
+                ]),
+            });
+
+        let builder = DefaultCredentialProvider::builder().with_profile("selected");
+        let provider = builder.process.expect("process slot must remain enabled");
+
+        let credential = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("selected process profile must provide credentials");
+        assert_eq!("ASIAPROCESSTEST", credential.access_key_id);
+        assert_eq!(
+            "process/test/secret/key/EXAMPLE",
+            credential.secret_access_key
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_with_profile_preserves_removed_slots() {
+        let builder = DefaultCredentialProvider::builder().no_profile();
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.no_sso().no_process();
+
+        let builder = builder.with_profile("selected");
+
+        assert!(builder.profile.is_none());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            assert!(builder.sso.is_none());
+            assert!(builder.process.is_none());
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
