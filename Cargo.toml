@@ -44,7 +44,7 @@ reqsign-volcengine-tos = { version = "3.0.3", path = "services/volcengine-tos" }
 
 # Crates.io dependencies
 anyhow = "1"
-base64 = "0.22"
+base64 = { version = "0.23", default-features = false, features = ["std"] }
 bytes = "1"
 criterion = { version = "0.8.1", features = ["async_tokio", "html_reports"] }
 dotenvy = "0.15"
@@ -58,7 +58,7 @@ jiff = "0.2"
 log = "0.4"
 pem = "3.0"
 percent-encoding = "2"
-p256 = { version = "0.13.2", default-features = false, features = ["ecdsa"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 pretty_assertions = "1.3"
 quick-xml = { version = "0.41.0", features = ["serialize"] }
 reqwest = { version = "0.13.1", default-features = false }

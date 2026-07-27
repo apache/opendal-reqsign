@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn signing_key_matches_aws_public_key_vector() -> AnyResult<()> {
         let signing_key = generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
-        let public_key = signing_key.verifying_key().to_encoded_point(false);
+        let public_key = signing_key.verifying_key().to_sec1_point(false);
 
         assert_eq!(
             hex::encode(public_key.x().expect("uncompressed key has x")),
