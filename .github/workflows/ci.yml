@@ -82,7 +82,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,azure,aliyun,tencent
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -95,8 +95,10 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo check -p reqsign-core --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,azure,aliyun,tencent
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,aws,azure,aliyun,tencent
+          cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
+          cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,aws,aws-v4a,azure,aliyun,tencent
 
   unit:
     runs-on: ubuntu-latest

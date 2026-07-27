@@ -41,7 +41,7 @@ use serde_json::json;
 ///
 /// # Usage
 /// ```rust,no_run
-/// use reqsign_aws_v4::CognitoIdentityCredentialProvider;
+/// use reqsign_aws_core::CognitoIdentityCredentialProvider;
 ///
 /// let provider = CognitoIdentityCredentialProvider::new()
 ///     .with_identity_pool_id("us-east-1:12345678-1234-1234-1234-123456789012")

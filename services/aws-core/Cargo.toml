@@ -16,44 +16,38 @@
 # under the License.
 
 [package]
-name = "reqsign-aws-v4"
+name = "reqsign-aws-core"
 version = "3.0.3"
 
-description = "AWS SigV4 signing implementation for reqsign."
+description = "Shared AWS credential and request canonicalization support for reqsign."
 
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[[bench]]
-harness = false
-name = "aws"
-
 [dependencies]
 bytes = { workspace = true }
+form_urlencoded = { workspace = true }
+hex = { workspace = true }
 http = { workspace = true }
 log = { workspace = true }
+percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
-reqsign-aws-core = { workspace = true }
 reqsign-core = { workspace = true }
+rust-ini = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+serde_urlencoded = "0.7"
+sha1 = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
-aws-credential-types = "1.1.8"
-aws-sigv4 = "1.2.0"
-criterion = { workspace = true }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }
-form_urlencoded = { workspace = true }
-hex = { workspace = true }
-percent-encoding = { workspace = true }
 pretty_assertions = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["default-tls"] }
-serde_json = { workspace = true }
-sha2 = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 

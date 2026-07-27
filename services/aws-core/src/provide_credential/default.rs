@@ -70,7 +70,7 @@ impl DefaultCredentialProvider {
     /// # Example
     ///
     /// ```no_run
-    /// use reqsign_aws_v4::{DefaultCredentialProvider, StaticCredentialProvider};
+    /// use reqsign_aws_core::{DefaultCredentialProvider, StaticCredentialProvider};
     ///
     /// let provider = DefaultCredentialProvider::new()
     ///     .push_front(StaticCredentialProvider::new("access_key_id", "secret_access_key"));
@@ -302,10 +302,17 @@ mod tests {
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
-    use std::env;
     use std::fs::File;
     use std::io::Write;
+    use std::path::Path;
     use tempfile::tempdir;
+
+    fn test_path(path: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(path)
+            .to_string_lossy()
+            .into_owned()
+    }
 
     #[tokio::test]
     async fn test_credential_env_loader_without_env() {
@@ -414,21 +421,11 @@ mod tests {
             envs: HashMap::from_iter([
                 (
                     AWS_CONFIG_FILE.to_string(),
-                    format!(
-                        "{}/testdata/default_config",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
+                    test_path("testdata/default_config"),
                 ),
                 (
                     AWS_SHARED_CREDENTIALS_FILE.to_string(),
-                    format!(
-                        "{}/testdata/not_exist",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
+                    test_path("testdata/not_exist"),
                 ),
             ]),
         });
@@ -450,23 +447,10 @@ mod tests {
         let ctx = ctx.with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::from_iter([
-                (
-                    AWS_CONFIG_FILE.to_string(),
-                    format!(
-                        "{}/testdata/not_exist",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
-                ),
+                (AWS_CONFIG_FILE.to_string(), test_path("testdata/not_exist")),
                 (
                     AWS_SHARED_CREDENTIALS_FILE.to_string(),
-                    format!(
-                        "{}/testdata/default_credential",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
+                    test_path("testdata/default_credential"),
                 ),
             ]),
         });
@@ -528,21 +512,11 @@ mod tests {
             envs: HashMap::from_iter([
                 (
                     AWS_CONFIG_FILE.to_string(),
-                    format!(
-                        "{}/testdata/default_config",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
+                    test_path("testdata/default_config"),
                 ),
                 (
                     AWS_SHARED_CREDENTIALS_FILE.to_string(),
-                    format!(
-                        "{}/testdata/not_exist",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
+                    test_path("testdata/not_exist"),
                 ),
             ]),
         });
@@ -580,12 +554,7 @@ mod tests {
         });
 
         // Build a custom chain with Profile provider using a custom config file
-        let custom_config = format!(
-            "{}/testdata/default_config",
-            env::current_dir()
-                .expect("current_dir must exist")
-                .to_string_lossy()
-        );
+        let custom_config = test_path("testdata/default_config");
 
         let provider = DefaultCredentialProvider::builder()
             .profile(ProfileCredentialProvider::new().with_config_file(custom_config))
@@ -684,10 +653,7 @@ mod tests {
     async fn test_with_profile_configures_process_slot() -> anyhow::Result<()> {
         let tmp_dir = tempdir()?;
         let config_file = tmp_dir.path().join("config");
-        let helper = format!(
-            "{}/tests/mocks/credential_process_helper.py",
-            env::current_dir()?.to_string_lossy()
-        );
+        let helper = test_path("tests/mocks/credential_process_helper.py");
         let mut file = File::create(&config_file)?;
         writeln!(file, "[profile ambient]")?;
         writeln!(file, "credential_process = python3 {helper}")?;
@@ -756,12 +722,7 @@ mod tests {
             envs: HashMap::new(),
         });
 
-        let helper = format!(
-            "{}/tests/mocks/credential_process_helper.py",
-            env::current_dir()
-                .expect("current_dir must exist")
-                .to_string_lossy()
-        );
+        let helper = test_path("tests/mocks/credential_process_helper.py");
 
         let provider = DefaultCredentialProvider::builder()
             .no_env()
@@ -797,12 +758,7 @@ mod tests {
             envs: HashMap::new(),
         });
 
-        let helper = format!(
-            "{}/tests/mocks/credential_process_helper.py",
-            env::current_dir()
-                .expect("current_dir must exist")
-                .to_string_lossy()
-        );
+        let helper = test_path("tests/mocks/credential_process_helper.py");
 
         let provider = DefaultCredentialProvider::builder()
             .no_env()
@@ -836,21 +792,11 @@ mod tests {
             envs: HashMap::from_iter([
                 (
                     AWS_CONFIG_FILE.to_string(),
-                    format!(
-                        "{}/testdata/default_config",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
+                    test_path("testdata/default_config"),
                 ),
                 (
                     AWS_SHARED_CREDENTIALS_FILE.to_string(),
-                    format!(
-                        "{}/testdata/default_credential",
-                        env::current_dir()
-                            .expect("current_dir must exist")
-                            .to_string_lossy()
-                    ),
+                    test_path("testdata/default_credential"),
                 ),
             ]),
         });

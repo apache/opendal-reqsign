@@ -151,14 +151,18 @@
 //! - [S3 signing example](examples/s3_sign.rs)
 //! - [DynamoDB signing example](examples/dynamodb_sign.rs)
 
-mod constants;
-
-mod credential;
-pub use credential::Credential;
 mod sign_request;
 pub use sign_request::RequestSigner;
 mod provide_credential;
-pub use provide_credential::*;
+pub use provide_credential::S3ExpressSessionProvider;
+pub use reqsign_aws_core::constants;
+pub use reqsign_aws_core::{
+    AssumeRoleCredentialProvider, AssumeRoleWithWebIdentityCredentialProvider,
+    CognitoIdentityCredentialProvider, Credential, DefaultCredentialProvider,
+    DefaultCredentialProviderBuilder, ECSCredentialProvider, EnvCredentialProvider,
+    IMDSv2CredentialProvider, ProfileCredentialProvider, StaticCredentialProvider,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 
-pub const EMPTY_STRING_SHA256: &str =
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+pub const EMPTY_STRING_SHA256: &str = reqsign_aws_core::EMPTY_STRING_SHA256;

@@ -114,6 +114,16 @@ let signer = aws::default_signer("s3", "us-east-1")
 
 ### More Services Examples
 
+#### AWS SigV4a
+
+```rust
+use reqsign::aws::v4a::{SigningRegionSet, default_signer};
+
+let region_set = SigningRegionSet::new("us-east-1,us-west-2")?;
+let signer = default_signer("s3", region_set);
+# Ok::<(), reqsign_core::Error>(())
+```
+
 #### Azure Storage
 
 ```rust
@@ -155,7 +165,9 @@ let signer = aliyun::default_signer();
 - Test again official SDK and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
+  - AWS shared credentials and canonicalization: `reqsign-aws-core`
   - AWS services (SigV4): `reqsign-aws-v4`
+  - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`

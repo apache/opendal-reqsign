@@ -15,6 +15,8 @@ The codebase is a Cargo workspace with three layers:
 - **`context/*`**: pluggable runtime adapters (`file-read-tokio`,
   `http-send-reqwest`, `command-execute-tokio`).
 - **`services/*`**: per-cloud signing implementations, each its own crate.
+  AWS support is split into shared credentials/canonicalization (`aws-core`),
+  SigV4 (`aws-v4`), and SigV4a (`aws-v4a`).
 - **`reqsign`**: facade crate re-exporting everything behind feature flags;
   provides `default_context()` and per-service `default_signer()`.
 
@@ -62,8 +64,9 @@ servers checked into `services/aws-v4/tests/mocks/`.
 
 ## WASM Compatibility
 
-`reqsign-core` and a subset of services (`aws`, `azure`, `aliyun`, `tencent`)
-must compile for `wasm32-unknown-unknown`. CI verifies this supported subset.
+`reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
+`aliyun`, `tencent`) must compile for `wasm32-unknown-unknown`. CI verifies
+this supported subset.
 
 ## Versioning
 

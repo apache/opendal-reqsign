@@ -237,7 +237,8 @@ NAME
 
    ```bash
    for c in \
-     reqsign reqsign-core reqsign-aliyun-oss reqsign-aws-v4 reqsign-azure-storage \
+     reqsign reqsign-core reqsign-aliyun-oss reqsign-aws-core reqsign-aws-v4 \
+     reqsign-aws-v4a reqsign-azure-storage \
      reqsign-command-execute-tokio reqsign-file-read-tokio reqsign-google \
      reqsign-http-send-reqwest reqsign-huaweicloud-obs reqsign-oracle \
      reqsign-tencent-cos reqsign-volcengine-tos

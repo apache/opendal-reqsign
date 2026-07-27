@@ -15,5 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod s3_express_session;
-pub use s3_express_session::S3ExpressSessionProvider;
+#![doc = include_str!("../README.md")]
+
+pub mod constants;
+
+mod credential;
+pub use credential::Credential;
+
+mod provide_credential;
+pub use provide_credential::*;
+
+#[doc(hidden)]
+pub mod signing;
+
+pub const EMPTY_STRING_SHA256: &str =
+    "e3b0c44298fc1c149afbf4b8996fb92427ae41e4649b934ca495991b7852b855";
