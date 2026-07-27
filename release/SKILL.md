@@ -12,7 +12,8 @@ Use this skill when preparing or executing an Apache OpenDAL reqsign release.
 - Do not push the formal `vX.Y.Z` tag before the Apache vote passes.
 - The voted release candidate tag is `vX.Y.Z-rc.N`; it must be a signed tag.
 - The formal `vX.Y.Z` tag must point to the exact same commit as the voted RC tag, even if `main` has advanced after the vote started.
-- The repo release workflow is only for formal `vX.Y.Z` tags. It runs `cargo publish --workspace`.
+- Every crate in the current publish plan must exist with the exact `apache/opendal-reqsign`, `release.yml`, `release` Trusted Publisher and `trustpub_only` enabled before creating the RC tag.
+- The repo release workflow publishes only formal `vX.Y.Z` tags. It uses short-lived GitHub OIDC credentials and never a long-lived crates.io token.
 - Source release artifacts live under Apache dist:
   - RC: `https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z/`
   - Final: `https://dist.apache.org/repos/dist/release/opendal/reqsign-X.Y.Z/`
@@ -40,13 +41,78 @@ Use this skill when preparing or executing an Apache OpenDAL reqsign release.
    - Other workspace crates published in the same workspace release: patch bump.
    - Keep root `[workspace.dependencies]` version requirements aligned with each crate manifest.
 
-3. Merge the version bump PR into `main`.
+3. Validate the publish plan and packages.
+
+   ```bash
+   python3 -m unittest discover \
+     -s .github/scripts/release_rust \
+     -p "test_*.py"
+   python3 .github/scripts/release_rust/plan.py
+   cargo publish --workspace --dry-run --allow-dirty
+   ```
+
+4. Merge the version bump PR into `main`.
 
    Do not create the RC tag from an unmerged side branch unless the release manager explicitly accepts that the voted commit will not be on `main`.
+
+## Bootstrap Rust Crates
+
+Wait until the intended crate-name set is present on the
+`apache/opendal-reqsign` `main` branch. The release manager chooses the exact
+reservation time, normally about three days before the planned release. At that
+time, check out the current `main` commit and run:
+
+```bash
+release/scripts/bootstrap-rust-crates.sh
+```
+
+This command performs the transition to a bootstrapped publish plan. Run it
+without asking for a second confirmation after a PMC release manager explicitly
+chooses the reservation time. Do not run it for release status checks or dry-run
+planning. Publishing a `0.0.0` package is externally visible and irreversible,
+but it is a namespace reservation rather than an ASF software release.
+
+The helper:
+
+- Requires a clean checkout at the current `apache/opendal-reqsign` `main`.
+- Verifies that the `rust-bootstrap` environment has required reviewers.
+- Dispatches the input-free `bootstrap_rust_crates.yml` workflow.
+- Resolves the exact run, verifies its `headSha`, and waits for completion.
+- Blocks while the protected environment awaits PMC approval.
+- Verifies publicly that every crate in the checked publish plan exists and has
+  `trustpub_only` enabled.
+
+The protected job authenticates ownership and audits the complete publish plan
+before any write. Established crates must already have exactly one Trusted
+Publisher with:
+
+- Repository owner: `apache`
+- Repository name: `opendal-reqsign`
+- Workflow filename: `release.yml`
+- Environment: `release`
+
+The job never changes an established crate. Migrate those crates through
+crates.io before using the bootstrap workflow and enable `trustpub_only` on
+each. For a missing name, the workflow publishes a dependency-free `0.0.0`
+placeholder, creates the expected Trusted Publisher, enables `trustpub_only`,
+and reconciles partial placeholders on rerun.
+
+ASF Infrastructure provisions the `release` and `rust-bootstrap` environments
+from `.asf.yaml`. A PMC release manager must add
+`CARGO_REGISTRY_BOOTSTRAP_TOKEN` to the `rust-bootstrap` environment. The token
+must have only the `publish-new` and `trusted-publishing` endpoint scopes, with
+crate scopes restricted to reqsign package names. Never expose it to the normal
+release workflow.
+
+Run the helper again if the publish plan gains another crate after a successful
+bootstrap.
 
 ## Create RC Tag
 
 Create the RC tag from the merged version-bump commit on `main`.
+
+Before tagging, confirm that the bootstrap workflow succeeded for the current
+publish plan and that no later commit added another crate.
 
 ```bash
 git fetch origin main --tags
@@ -233,6 +299,11 @@ NAME
    gh run view RUN_ID --repo apache/opendal-reqsign --json status,conclusion,url,jobs
    ```
 
+   The workflow validates the complete workspace package set, then publishes
+   crates in dependency order. Every package attempt receives a new
+   OIDC-derived crates.io token that is revoked immediately afterward. Reruns
+   skip versions already published by an earlier partial run.
+
 6. Verify crates.io versions.
 
    ```bash
@@ -255,3 +326,5 @@ NAME
 
 - If `main` advances after the vote starts, formal `vX.Y.Z` still points to the RC commit, not latest `origin/main`.
 - If SVN authentication fails, retry with `--force-interactive`; run `svn cleanup` if a killed commit leaves the working copy locked.
+- If crates.io publishing fails after some packages succeed, rerun the exact formal-tag workflow. Do not create another tag or use a long-lived token; the publisher resumes after matching already-published versions.
+- If the bootstrap workflow fails, inspect the authenticated preflight first. It deliberately refuses to modify established crates or continue with unexpected repository or Trusted Publisher metadata.
