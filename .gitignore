@@ -1,5 +1,6 @@
 /target
 Cargo.lock
 .env
+__pycache__/
 .claude/*.local.json
 .idea

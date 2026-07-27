@@ -34,6 +34,35 @@ github:
     issues: true
     projects: false
     discussions: true
+  environments:
+    release:
+      wait_timer: 0
+      deployment_branch_policy:
+        protected_branches: false
+        policies:
+          - name: "v*.*.*"
+            type: tag
+    rust-bootstrap:
+      required_reviewers:
+        - id: Xuanwo
+          type: User
+        - id: dentiny
+          type: User
+        - id: erickguan
+          type: User
+        - id: tisonkun
+          type: User
+        - id: koushiro
+          type: User
+        - id: PsiACE
+          type: User
+      wait_timer: 0
+      prevent_self_review: true
+      deployment_branch_policy:
+        protected_branches: false
+        policies:
+          - name: main
+            type: branch
   custom_subjects:
     new_discussion: "{title}"
     edit_discussion: "Re: {title}"
