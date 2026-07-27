@@ -243,9 +243,7 @@ fn generate_signing_key(access_key_id: &str, secret_access_key: &str) -> Result<
     input_key.extend_from_slice(secret_access_key.as_bytes());
 
     for counter in 1_u8..=254 {
-        let mut input = Zeroizing::new(Vec::with_capacity(
-            ALGORITHM.len() + access_key_id.len() + 11,
-        ));
+        let mut input = Vec::with_capacity(ALGORITHM.len() + access_key_id.len() + 11);
         input.extend_from_slice(&1_u32.to_be_bytes());
         input.extend_from_slice(ALGORITHM.as_bytes());
         input.push(0);
