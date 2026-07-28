@@ -35,6 +35,8 @@ pub enum Credential {
     SasToken {
         /// SAS token.
         token: String,
+        /// Optional absolute expiration time for this SAS token.
+        expires_at: Option<Timestamp>,
     },
     /// Bearer token for OAuth authentication
     BearerToken {
@@ -56,9 +58,10 @@ impl Debug for Credential {
                 .field("account_name", &Redact::from(account_name))
                 .field("account_key", &Redact::from(account_key))
                 .finish(),
-            Credential::SasToken { token } => f
+            Credential::SasToken { token, expires_at } => f
                 .debug_struct("Credential::SasToken")
                 .field("token", &Redact::from(token))
+                .field("expires_at", expires_at)
                 .finish(),
             Credential::BearerToken { token, expires_in } => f
                 .debug_struct("Credential::BearerToken")
@@ -80,7 +83,9 @@ impl SigningCredential for Credential {
                 account_name,
                 account_key,
             } => !account_name.is_empty() && !account_key.is_empty(),
-            Credential::SasToken { token } => !token.is_empty(),
+            Credential::SasToken { token, expires_at } => {
+                !token.is_empty() && expires_at.is_none_or(|expires| expires > timestamp)
+            }
             Credential::BearerToken { token, expires_in } => {
                 if token.is_empty() {
                     return false;
@@ -104,6 +109,15 @@ impl Credential {
     pub fn with_sas_token(sas_token: &str) -> Self {
         Self::SasToken {
             token: sas_token.to_string(),
+            expires_at: None,
+        }
+    }
+
+    /// Create a new credential with an expiring SAS token.
+    pub fn with_sas_token_expires_at(sas_token: &str, expires_at: Timestamp) -> Self {
+        Self::SasToken {
+            token: sas_token.to_string(),
+            expires_at: Some(expires_at),
         }
     }
 
@@ -125,6 +139,19 @@ mod tests {
         let now = Timestamp::now();
         let credential =
             Credential::with_bearer_token("token", Some(now + Duration::from_secs(10)));
+
+        assert!(!credential.is_valid());
+        assert!(credential.is_valid_at(now + Duration::from_secs(5)));
+        assert!(!credential.is_valid_at(now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn separates_sas_cache_freshness_from_exact_validity() {
+        let now = Timestamp::now();
+        let credential = Credential::with_sas_token_expires_at(
+            "sv=2020-12-06&sig=secret",
+            now + Duration::from_secs(10),
+        );
 
         assert!(!credential.is_valid());
         assert!(credential.is_valid_at(now + Duration::from_secs(5)));

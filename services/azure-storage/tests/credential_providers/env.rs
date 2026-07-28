@@ -94,7 +94,7 @@ async fn test_env_provider_sas_token() {
     let cred = cred.unwrap();
 
     match cred {
-        Credential::SasToken { token } => {
+        Credential::SasToken { token, .. } => {
             assert_eq!(token, sas_token);
         }
         _ => panic!("Expected SasToken credential"),

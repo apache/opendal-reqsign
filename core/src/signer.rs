@@ -24,6 +24,7 @@ use crate::SignRequest;
 use crate::SignRequestDyn;
 use crate::SigningCredential;
 use std::any::type_name;
+use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -31,12 +32,20 @@ use std::time::Duration;
 ///
 /// The service-specific [`SignRequest`] runs against a private candidate. Only the
 /// candidate URI and headers are committed after successful signing.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Signer<K: SigningCredential> {
     ctx: Context,
     loader: Arc<dyn ProvideCredentialDyn<Credential = K>>,
     builder: Arc<dyn SignRequestDyn<Credential = K>>,
     credential: Arc<Mutex<Option<K>>>,
+}
+
+impl<K: SigningCredential> Debug for Signer<K> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Signer")
+            .field("credential_type", &type_name::<K>())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<K: SigningCredential> Signer<K> {
@@ -496,5 +505,21 @@ mod tests {
             parts.headers.get("x-credential-generation"),
             Some(&HeaderValue::from_static("2"))
         );
+    }
+
+    #[test]
+    fn debug_is_opaque() {
+        let signer = Signer::new(
+            Context::new(),
+            StaticProvider,
+            MutatingSigner { fail: false },
+        );
+        *signer.credential.lock().expect("lock poisoned") = Some(TestCredential);
+
+        let debug = format!("{signer:?}");
+        assert!(debug.starts_with("Signer"));
+        assert!(!debug.contains("StaticProvider"));
+        assert!(!debug.contains("MutatingSigner"));
+        assert!(!debug.contains("credential:"));
     }
 }
