@@ -208,6 +208,8 @@ pub use context::OsEnv;
 pub use context::StaticEnv;
 
 mod api;
+pub use api::GrantCredential;
+pub use api::GrantCredentialDyn;
 pub use api::ProvideCredential;
 pub use api::ProvideCredentialChain;
 pub use api::ProvideCredentialDyn;
@@ -218,3 +220,5 @@ mod request;
 pub use request::{SigningMethod, SigningRequest};
 mod signer;
 pub use signer::Signer;
+mod granter;
+pub use granter::Granter;

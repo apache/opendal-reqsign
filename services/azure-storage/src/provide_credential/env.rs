@@ -126,7 +126,7 @@ mod tests {
         let cred = provider.provide_credential(&ctx).await.unwrap();
 
         match cred {
-            Some(Credential::SasToken { token }) => {
+            Some(Credential::SasToken { token, .. }) => {
                 assert_eq!(token, "mysastoken");
             }
             _ => panic!("Expected SasToken credential"),

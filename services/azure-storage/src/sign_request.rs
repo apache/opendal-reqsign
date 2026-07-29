@@ -17,6 +17,10 @@
 
 use crate::Credential;
 use crate::constants::*;
+use crate::user_delegation::{
+    MAX_USER_DELEGATION_KEY_LIFETIME, UserDelegationKeyCache, ceil_to_wire_second,
+    floor_to_wire_second, user_delegation_key_covers,
+};
 use http::request::Parts;
 use http::{HeaderValue, Uri, header};
 use log::debug;
@@ -27,6 +31,7 @@ use reqsign_core::{
     Context, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
 };
 use std::fmt::Write;
+use std::fmt::{Debug, Formatter};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -44,7 +49,6 @@ pub enum SasResourceKind {
 /// RequestSigner that implement Azure Storage Shared Key Authorization.
 ///
 /// - [Authorize with Shared Key](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key)
-#[derive(Debug)]
 pub struct RequestSigner {
     time: Option<Timestamp>,
     service_sas_permissions: Option<String>,
@@ -54,7 +58,7 @@ pub struct RequestSigner {
     service_sas_version: Option<String>,
 
     user_delegation_presign: Option<UserDelegationPresignConfig>,
-    user_delegation_key_cache: Mutex<Option<crate::user_delegation::UserDelegationKey>>,
+    user_delegation_key_cache: Mutex<UserDelegationKeyCache<UserDelegationPresignCacheKey>>,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +69,20 @@ struct UserDelegationPresignConfig {
     ip: Option<String>,
     protocol: Option<String>,
     version: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct UserDelegationPresignCacheKey {
+    account: String,
+    endpoint: String,
+    source_authority: String,
+    version: String,
+}
+
+impl Debug for RequestSigner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestSigner").finish_non_exhaustive()
+    }
 }
 
 impl RequestSigner {
@@ -79,7 +97,7 @@ impl RequestSigner {
             service_sas_version: None,
 
             user_delegation_presign: None,
-            user_delegation_key_cache: Mutex::new(None),
+            user_delegation_key_cache: Mutex::new(UserDelegationKeyCache::default()),
         }
     }
 
@@ -186,27 +204,10 @@ impl RequestSigner {
         &self,
         credential: &Credential,
         signing_time: Timestamp,
-        expires_in: Option<Duration>,
+        _expires_in: Option<Duration>,
     ) -> Timestamp {
         match credential {
-            Credential::BearerToken { .. } => {
-                let cached_key_covers_operation = expires_in.is_some_and(|expires| {
-                    self.user_delegation_key_cache
-                        .lock()
-                        .expect("lock poisoned")
-                        .as_ref()
-                        .is_some_and(|key| {
-                            key.signed_expiry
-                                > signing_time + expires + BEARER_TOKEN_OPERATION_HEADROOM
-                        })
-                });
-
-                if cached_key_covers_operation {
-                    signing_time
-                } else {
-                    signing_time + BEARER_TOKEN_OPERATION_HEADROOM
-                }
-            }
+            Credential::BearerToken { .. } => signing_time + BEARER_TOKEN_OPERATION_HEADROOM,
             Credential::SharedKey { .. } | Credential::SasToken { .. } => signing_time,
         }
     }
@@ -258,7 +259,7 @@ impl SignRequest for RequestSigner {
 
         // Handle different credential types
         match cred {
-            Credential::SasToken { token } => {
+            Credential::SasToken { token, .. } => {
                 // SAS token authentication
                 final_uri = Some(append_query_fragment(&original_uri, token)?);
             }
@@ -271,8 +272,31 @@ impl SignRequest for RequestSigner {
                                 "BearerToken can't be used in query string",
                             ));
                         };
-
-                        let expiry = signing_time + d;
+                        if d.is_zero() || d > MAX_USER_DELEGATION_KEY_LIFETIME {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "Azure user delegation SAS lifetime must be greater than zero and at most seven days",
+                            ));
+                        }
+                        let expiry = floor_to_wire_second(signing_time + d)?;
+                        if expiry <= signing_time {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "Azure user delegation SAS lifetime does not reach a future wire timestamp",
+                            ));
+                        }
+                        let start = cfg.start.map(ceil_to_wire_second).transpose()?;
+                        if start.is_some_and(|start| start >= expiry) {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "Azure user delegation SAS start time must be before its expiration",
+                            ));
+                        }
+                        let key_start = floor_to_wire_second(
+                            start.map_or(signing_time, |start| start.min(signing_time)),
+                        )?;
+                        if expiry > key_start + MAX_USER_DELEGATION_KEY_LIFETIME {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "Azure user delegation SAS interval exceeds the seven-day user delegation key limit",
+                            ));
+                        }
 
                         let resource = service_sas_resource(&sctx.path)?;
                         match (cfg.resource, &resource) {
@@ -292,56 +316,69 @@ impl SignRequest for RequestSigner {
                         }
 
                         let account = infer_account_name(sctx.authority.as_str())?;
+                        let version = cfg.version.as_deref().unwrap_or("2020-12-06");
+                        let cache_key = UserDelegationPresignCacheKey {
+                            account: account.clone(),
+                            endpoint: format!("{}://{}", sctx.scheme, sctx.authority),
+                            source_authority: reqsign_core::hash::hex_sha256(token.as_bytes()),
+                            version: version.to_string(),
+                        };
 
+                        let effective_start = start.unwrap_or(signing_time);
                         let key = {
                             let cached = self
                                 .user_delegation_key_cache
                                 .lock()
                                 .expect("lock poisoned")
-                                .clone();
-                            if let Some(cached) = cached {
-                                if cached.signed_expiry > expiry + Duration::from_secs(20) {
-                                    cached
-                                } else {
-                                    let version = cfg.version.as_deref().unwrap_or("2020-12-06");
-                                    let fetched = crate::user_delegation::get_user_delegation_key(
-                                        context,
-                                        crate::user_delegation::UserDelegationKeyRequest {
-                                            scheme: sctx.scheme.as_str(),
-                                            authority: sctx.authority.as_str(),
-                                            bearer_token: token,
-                                            start: signing_time,
-                                            expiry,
-                                            service_version: version,
-                                            now: signing_time,
-                                        },
+                                .find_cloned(&cache_key, |key| {
+                                    user_delegation_key_covers(
+                                        key,
+                                        effective_start,
+                                        expiry,
+                                        signing_time,
+                                        version,
                                     )
-                                    .await?;
-                                    *self
-                                        .user_delegation_key_cache
-                                        .lock()
-                                        .expect("lock poisoned") = Some(fetched.clone());
-                                    fetched
-                                }
+                                });
+                            if let Some(cached) = cached {
+                                cached
                             } else {
-                                let version = cfg.version.as_deref().unwrap_or("2020-12-06");
+                                let required_until =
+                                    self.get_time() + BEARER_TOKEN_OPERATION_HEADROOM;
+                                if !cred.is_valid_at(required_until) {
+                                    return Err(reqsign_core::Error::credential_invalid(
+                                        "Azure bearer token expires before the user delegation key request can complete",
+                                    ));
+                                }
                                 let fetched = crate::user_delegation::get_user_delegation_key(
                                     context,
                                     crate::user_delegation::UserDelegationKeyRequest {
                                         scheme: sctx.scheme.as_str(),
                                         authority: sctx.authority.as_str(),
                                         bearer_token: token,
-                                        start: signing_time,
+                                        start: key_start,
                                         expiry,
                                         service_version: version,
                                         now: signing_time,
                                     },
                                 )
                                 .await?;
-                                *self
+                                let after_io = self.get_time();
+                                if !user_delegation_key_covers(
+                                    &fetched,
+                                    effective_start,
+                                    expiry,
+                                    after_io,
+                                    version,
+                                ) {
+                                    return Err(reqsign_core::Error::credential_invalid(
+                                        "Azure user delegation key does not cover the requested SAS interval",
+                                    ));
+                                }
+                                let mut cache = self
                                     .user_delegation_key_cache
                                     .lock()
-                                    .expect("lock poisoned") = Some(fetched.clone());
+                                    .expect("lock poisoned");
+                                cache.insert(cache_key, fetched.clone(), after_io);
                                 fetched
                             }
                         };
@@ -350,11 +387,11 @@ impl SignRequest for RequestSigner {
                             crate::user_delegation::UserDelegationSharedAccessSignature::new(
                                 account,
                                 key,
-                                resource,
+                                resource.into(),
                                 cfg.permissions.to_string(),
                                 expiry,
                             );
-                        if let Some(start) = cfg.start {
+                        if let Some(start) = start {
                             signer = signer.with_start(start);
                         }
                         if let Some(ip) = &cfg.ip {
@@ -1058,7 +1095,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bearer_token_presign_user_delegation_sas() {
-        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
+        let now = Timestamp::from_str("2022-03-01T08:12:34.500Z").unwrap();
 
         let http_send = MockUserDelegationHttpSend::default();
         let ctx = Context::new()
@@ -1089,7 +1126,7 @@ mod tests {
         assert_eq!(
             parts.uri.to_string(),
             format!(
-                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=VkI3h/LWkD6qcDzshjQzCuCdMPDCFA3tMEbxM%2BED5Nc%3D"
+                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=ZEuqL17Enw3SO6zeRjYDnedXYngQ8GrQMUBx82BGelY%3D"
             )
         );
 
@@ -1097,12 +1134,12 @@ mod tests {
             Credential::with_bearer_token("token", Some(now + Duration::from_secs(5)));
         assert_eq!(
             builder.required_valid_until(&near_expiry_cred, Some(Duration::from_secs(300))),
-            now
+            now + BEARER_TOKEN_OPERATION_HEADROOM
         );
 
         let req = Request::builder().uri(&original_uri).body(()).unwrap();
         let (mut cached_parts, _) = req.into_parts();
-        builder
+        let err = builder
             .sign_request(
                 &ctx,
                 &mut cached_parts,
@@ -1110,8 +1147,8 @@ mod tests {
                 Some(Duration::from_secs(300)),
             )
             .await
-            .unwrap();
-        assert_eq!(cached_parts.uri, parts.uri);
+            .expect_err("request-blind preflight must retain Bearer I/O headroom");
+        assert_eq!(err.kind(), reqsign_core::ErrorKind::CredentialInvalid);
         assert_eq!(http_send.calls.load(Ordering::SeqCst), 1);
     }
 }

@@ -173,11 +173,15 @@
 mod constants;
 mod service_sas;
 mod user_delegation;
+mod user_delegation_sas;
 
 mod credential;
 pub use credential::Credential;
 
 pub use service_sas::{ServiceSasResource, ServiceSharedAccessSignature};
+pub use user_delegation_sas::{
+    SasProtocol, UserDelegationSasGrant, UserDelegationSasGranter, UserDelegationSasPermissions,
+};
 
 mod sign_request;
 pub use sign_request::RequestSigner;

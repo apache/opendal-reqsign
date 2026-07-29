@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 
 use crate::credential::Credential;
@@ -25,18 +26,28 @@ pub struct StaticCredentialProvider {
 }
 
 impl StaticCredentialProvider {
+    /// Create a provider for a static Azure Storage shared key.
     pub fn new_shared_key(account_name: &str, account_key: &str) -> Self {
         Self {
             credential: Credential::with_shared_key(account_name, account_key),
         }
     }
 
+    /// Create a provider for a static SAS token with unknown expiration.
     pub fn new_sas_token(sas_token: &str) -> Self {
         Self {
             credential: Credential::with_sas_token(sas_token),
         }
     }
 
+    /// Create a provider for a static SAS token with an absolute expiration.
+    pub fn new_sas_token_expires_at(sas_token: &str, expires_at: Timestamp) -> Self {
+        Self {
+            credential: Credential::with_sas_token_expires_at(sas_token, expires_at),
+        }
+    }
+
+    /// Create a provider for a static bearer token with unknown expiration.
     pub fn new_bearer_token(bearer_token: &str) -> Self {
         Self {
             credential: Credential::with_bearer_token(bearer_token, None),
@@ -92,10 +103,31 @@ mod tests {
         let cred = provider.provide_credential(&ctx).await.unwrap();
 
         match cred {
-            Some(Credential::SasToken { token }) => {
+            Some(Credential::SasToken { token, .. }) => {
                 assert_eq!(token, "mysastoken");
             }
             _ => panic!("Expected SasToken credential"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_static_credential_provider_expiring_sas_token() {
+        let expires_at = Timestamp::now() + std::time::Duration::from_secs(60);
+        let provider = StaticCredentialProvider::new_sas_token_expires_at("mysastoken", expires_at);
+        let credential = provider
+            .provide_credential(&Context::new())
+            .await
+            .expect("provider must succeed");
+
+        match credential {
+            Some(Credential::SasToken {
+                token,
+                expires_at: Some(actual),
+            }) => {
+                assert_eq!(token, "mysastoken");
+                assert_eq!(actual, expires_at);
+            }
+            other => panic!("expected expiring SAS token, got {other:?}"),
         }
     }
 

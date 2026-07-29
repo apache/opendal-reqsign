@@ -326,7 +326,7 @@ mod tests {
 
         let cred = loader.provide_credential(&ctx).await.unwrap().unwrap();
         match cred {
-            crate::Credential::SasToken { token } => {
+            crate::Credential::SasToken { token, .. } => {
                 assert_eq!(token, "sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx");
             }
             _ => panic!("Expected SasToken credential"),

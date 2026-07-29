@@ -113,6 +113,122 @@ where
     }
 }
 
+/// Service-specific credential granting.
+///
+/// A granter uses an existing service credential to authorize one bounded,
+/// expiring credential transition. The source and result remain in the same
+/// service credential family, while the concrete implementation owns the
+/// service-specific resource, permission, policy, and identity semantics.
+///
+/// This trait standardizes orchestration and lifecycle, not a cross-service
+/// scope model, and does not promise that every service can express strict
+/// monotonic downscoping. Implementations must validate the concrete source
+/// credential variant before performing I/O. Returned credentials must own
+/// credential material that is independent from the source credential and
+/// must not retain or share its secret buffers. Implementations must also keep
+/// secrets out of [`Debug`] output and returned errors.
+pub trait GrantCredential: Debug + Send + Sync + Unpin + 'static {
+    /// Credential used as the source and returned as the granted result.
+    type Credential: SigningCredential;
+
+    /// Return the timestamp through which the source credential must remain usable.
+    ///
+    /// This method must not perform I/O or mutate state. It must conservatively
+    /// include any service I/O headroom unless current service-specific cache
+    /// state proves that the operation can complete without that I/O.
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp;
+
+    /// Grant a bounded, expiring credential from an existing service credential.
+    ///
+    /// `expires_in` is a service-specific requested lifetime. `None` does not
+    /// mean that the returned credential may be non-expiring. After all I/O,
+    /// the implementation must ensure that the returned credential remains
+    /// exactly usable at the actual completion time and carries or reliably
+    /// derives its absolute expiration.
+    fn grant_credential<'a>(
+        &'a self,
+        ctx: &'a Context,
+        credential: &'a Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> impl Future<Output = Result<Self::Credential>> + MaybeSend + 'a;
+}
+
+/// Dyn version of [`GrantCredential`].
+pub trait GrantCredentialDyn: Debug + Send + Sync + Unpin + 'static {
+    /// Credential used as the source and returned as the granted result.
+    type Credential: SigningCredential;
+
+    /// Dyn version of [`GrantCredential::required_valid_until`].
+    fn required_valid_until_dyn(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp;
+
+    /// Dyn version of [`GrantCredential::grant_credential`].
+    fn grant_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        credential: &'a Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<Self::Credential>>;
+}
+
+impl<T> GrantCredentialDyn for T
+where
+    T: GrantCredential + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn required_valid_until_dyn(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until(credential, expires_in)
+    }
+
+    fn grant_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        credential: &'a Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<Self::Credential>> {
+        Box::pin(self.grant_credential(ctx, credential, expires_in))
+    }
+}
+
+impl<T> GrantCredential for std::sync::Arc<T>
+where
+    T: GrantCredentialDyn + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.deref()
+            .required_valid_until_dyn(credential, expires_in)
+    }
+
+    async fn grant_credential(
+        &self,
+        ctx: &Context,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Result<Self::Credential> {
+        self.deref()
+            .grant_credential_dyn(ctx, credential, expires_in)
+            .await
+    }
+}
+
 /// Service-specific request signing.
 ///
 /// Implementations receive a request URI that is already percent-encoded and ready

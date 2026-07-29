@@ -153,6 +153,7 @@ async fn test_chain_stops_at_first_success() {
             name: "provider3".to_string(),
             return_credential: Some(Credential::SasToken {
                 token: "sv=2021-01-01&ss=b".to_string(),
+                expires_at: None,
             }),
             call_count: count3.clone(),
         });
