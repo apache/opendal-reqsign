@@ -16,6 +16,10 @@
 // under the License.
 
 //! Google Service Signer
+//!
+//! Typed server-side Cloud Storage Credential Access Boundary downscoping is
+//! always available. Enable the `credential-access-boundary-client-side`
+//! feature for local client-side token generation.
 
 mod constants;
 
@@ -23,9 +27,11 @@ mod credential;
 pub use credential::{Credential, ServiceAccount, Token};
 
 mod credential_access_boundary;
+#[cfg(feature = "credential-access-boundary-client-side")]
+pub use credential_access_boundary::ClientSideCredentialAccessBoundaryGranter;
 pub use credential_access_boundary::{
-    CredentialAccessBoundaryGrant, CredentialAccessBoundaryGranter,
-    CredentialAccessBoundaryPermissions,
+    CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions,
+    ServerSideCredentialAccessBoundaryGranter,
 };
 
 mod sign_request;

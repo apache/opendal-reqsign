@@ -216,6 +216,10 @@ impl<T: FileReadDyn + ?Sized> FileRead for Arc<T> {
 ///
 /// For example, fetch IMDS token from AWS or OAuth2 refresh token. This trait is designed
 /// especially for the signer, please don't use it as a general http client.
+///
+/// Requests and responses can contain credentials in headers or bodies.
+/// Implementations must not log or include their raw contents in `Debug` output or returned
+/// errors.
 pub trait HttpSend: Debug + Send + Sync + 'static {
     /// Send http request and return the response.
     fn http_send(

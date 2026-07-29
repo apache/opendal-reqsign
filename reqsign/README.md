@@ -182,6 +182,7 @@ let signer = oracle::default_signer();
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `google`: Enable Google Cloud support
+- `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `huaweicloud`: Enable Huawei Cloud OBS support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support
