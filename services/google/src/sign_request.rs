@@ -29,10 +29,11 @@ use reqsign_core::{
     Context, Result, SignRequest, SigningCredential, SigningRequest, hash::hex_sha256, time::*,
 };
 
-use crate::constants::{DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE};
+use crate::constants::{
+    DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE,
+    TOKEN_OPERATION_HEADROOM,
+};
 use crate::credential::{Credential, ServiceAccount, Token};
-
-const TOKEN_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 
 /// Claims is used to build JWT for Google Cloud.
 #[derive(Debug, Serialize)]

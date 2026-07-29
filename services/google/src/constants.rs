@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use std::time::Duration;
+
 use percent_encoding::AsciiSet;
 use percent_encoding::NON_ALPHANUMERIC;
 
@@ -24,6 +26,8 @@ pub const GOOGLE_SCOPE: &str = "GOOGLE_SCOPE";
 
 // Default OAuth2 scope for Google Cloud services
 pub const DEFAULT_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
+
+pub(crate) const TOKEN_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 
 /// AsciiSet for [Google UriEncode](https://cloud.google.com/storage/docs/authentication/canonical-requests)
 ///

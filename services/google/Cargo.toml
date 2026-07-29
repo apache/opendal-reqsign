@@ -27,6 +27,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+bytes = { workspace = true }
 form_urlencoded = { workspace = true }
 http = { workspace = true }
 log = { workspace = true }
@@ -42,7 +43,6 @@ tokio = { workspace = true, features = ["time"] }
 reqsign-core = { workspace = true, features = ["jwt"] }
 
 [dev-dependencies]
-bytes = { workspace = true }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }

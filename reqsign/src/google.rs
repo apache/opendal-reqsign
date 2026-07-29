@@ -19,6 +19,43 @@
 //!
 //! This module provides Google Cloud signing functionality along with convenience
 //! functions for common use cases.
+//!
+//! ## Credential Access Boundary downscoping
+//!
+//! A control plane can exchange a source OAuth access token for a token restricted
+//! to selected Cloud Storage buckets or object prefixes:
+//!
+//! ```no_run
+//! use std::time::Duration;
+//!
+//! use reqsign::{Context, Granter, time::Timestamp};
+//! use reqsign::google::{
+//!     CredentialAccessBoundaryGrant, CredentialAccessBoundaryGranter,
+//!     CredentialAccessBoundaryPermissions, TokenCredentialProvider,
+//! };
+//!
+//! # async fn example() -> reqsign_core::Result<()> {
+//! let source = TokenCredentialProvider::new("source-oauth-token")
+//!     .with_expires_at(Timestamp::now() + Duration::from_secs(3600));
+//! let grant = CredentialAccessBoundaryGrant::for_object_prefix(
+//!     "example-bucket",
+//!     "customer-a/",
+//!     CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
+//! );
+//! // The context must be configured with an HttpSend implementation. When the
+//! // `default-context` feature is enabled, use `reqsign::default_context()`.
+//! let context = Context::new();
+//! let downscoped = Granter::new(
+//!     context,
+//!     source,
+//!     CredentialAccessBoundaryGranter::new(grant),
+//! )
+//! .grant(None)
+//! .await?;
+//! # let _ = downscoped;
+//! # Ok(())
+//! # }
+//! ```
 
 // Re-export all Google Cloud signing types
 pub use reqsign_google::*;
