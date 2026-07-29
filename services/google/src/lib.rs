@@ -22,6 +22,12 @@ mod constants;
 mod credential;
 pub use credential::{Credential, ServiceAccount, Token};
 
+mod credential_access_boundary;
+pub use credential_access_boundary::{
+    CredentialAccessBoundaryGrant, CredentialAccessBoundaryGranter,
+    CredentialAccessBoundaryPermissions,
+};
+
 mod sign_request;
 pub use sign_request::RequestSigner;
 

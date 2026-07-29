@@ -15,15 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use log::debug;
+use std::fmt::{self, Debug};
 use std::time::Duration;
 
+use log::debug;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 
 use crate::credential::{Credential, Token};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum TokenSource {
     Inline(String),
     Path(String),
@@ -36,10 +37,17 @@ enum Expiration {
 }
 
 /// TokenCredentialProvider loads a raw OAuth access token from memory or a file path.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TokenCredentialProvider {
     source: TokenSource,
     expiration: Option<Expiration>,
+}
+
+impl Debug for TokenCredentialProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenCredentialProvider")
+            .finish_non_exhaustive()
+    }
 }
 
 impl TokenCredentialProvider {
@@ -109,5 +117,23 @@ impl ProvideCredential for TokenCredentialProvider {
         };
 
         self.build_token(access_token).map(Some)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_inline_token_and_path() {
+        let inline_secret = "inline-source-token-secret";
+        let path_secret = "/secret/token/path";
+        let inline =
+            TokenCredentialProvider::new(inline_secret).with_expires_in(Duration::from_secs(3600));
+        let path = TokenCredentialProvider::from_path(path_secret)
+            .with_expires_at(Timestamp::now() + Duration::from_secs(3600));
+
+        assert!(!format!("{inline:?}").contains(inline_secret));
+        assert!(!format!("{path:?}").contains(path_secret));
     }
 }
