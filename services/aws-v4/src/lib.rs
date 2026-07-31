@@ -159,7 +159,10 @@ pub use s3_access_grants::{
     S3AccessGrantsPrivilege, S3AccessGrantsTarget,
 };
 mod provide_credential;
-pub use provide_credential::S3ExpressSessionProvider;
+pub use provide_credential::{
+    S3ExpressSessionConfig, S3ExpressSessionGrant, S3ExpressSessionGranter, S3ExpressSessionMode,
+    S3ExpressSessionPartition, S3ExpressSessionProvider,
+};
 pub use reqsign_aws_core::constants;
 pub use reqsign_aws_core::{
     AssumeRoleCredentialProvider, AssumeRoleWithWebIdentityCredentialProvider,
