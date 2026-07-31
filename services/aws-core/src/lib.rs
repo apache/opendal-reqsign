@@ -29,4 +29,20 @@ pub use provide_credential::*;
 pub mod signing;
 
 pub const EMPTY_STRING_SHA256: &str =
-    "e3b0c44298fc1c149afbf4b8996fb92427ae41e4649b934ca495991b7852b855";
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+#[cfg(test)]
+mod tests {
+    use reqsign_core::hash::hex_sha256;
+
+    use super::EMPTY_STRING_SHA256;
+
+    #[test]
+    fn empty_string_sha256_matches_computed_digest() {
+        assert_eq!(EMPTY_STRING_SHA256, hex_sha256(b""));
+        assert_eq!(
+            EMPTY_STRING_SHA256,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+}

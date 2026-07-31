@@ -21,7 +21,7 @@ use http::{HeaderValue, header};
 use log::debug;
 use reqsign_aws_core::signing::{
     append_query_fragment, append_query_pairs, canonical_request_string, canonicalize_headers,
-    canonicalize_query,
+    canonicalize_headers_with_standard_session_token, canonicalize_query,
 };
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
@@ -38,6 +38,7 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 pub struct RequestSigner {
     service: String,
     region: String,
+    force_standard_session_token: bool,
 
     time: Option<Timestamp>,
 }
@@ -48,9 +49,16 @@ impl RequestSigner {
         Self {
             service: service.into(),
             region: region.into(),
+            force_standard_session_token: false,
 
             time: None,
         }
+    }
+
+    /// Always use `x-amz-security-token` for temporary credentials.
+    pub(crate) fn with_standard_session_token_header(mut self) -> Self {
+        self.force_standard_session_token = true;
+        self
     }
 
     /// Specify the signing time.
@@ -111,7 +119,16 @@ impl SignRequest for RequestSigner {
         let mut signed_req = SigningRequest::build(req)?;
 
         // canonicalize context
-        canonicalize_headers(&mut signed_req, cred, expires_in, now)?;
+        if self.force_standard_session_token {
+            canonicalize_headers_with_standard_session_token(
+                &mut signed_req,
+                cred,
+                expires_in,
+                now,
+            )?;
+        } else {
+            canonicalize_headers(&mut signed_req, cred, expires_in, now)?;
+        }
         let authentication_query = authentication_query(
             &signed_req,
             cred,
@@ -307,6 +324,48 @@ mod tests {
             signer.required_valid_until(&credential, None),
             now + CREDENTIAL_OPERATION_HEADROOM
         );
+    }
+
+    #[tokio::test]
+    async fn standard_session_token_override_preserves_s3_express_default() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = Credential {
+            access_key_id: "access-key".to_string(),
+            secret_access_key: "secret-key".to_string(),
+            session_token: Some("session-token".to_string()),
+            expires_in: Some(now + Duration::from_secs(60)),
+        };
+        let uri = "https://bucket--use2-az1--x-s3.s3express-use2-az1.amazonaws.com/object";
+
+        let mut express_parts = Request::get(uri).body(())?.into_parts().0;
+        RequestSigner::new("s3express", "us-east-2")
+            .with_time(now)
+            .sign_request(&Context::new(), &mut express_parts, Some(&credential), None)
+            .await?;
+        assert_eq!(
+            express_parts.headers["x-amz-s3session-token"],
+            "session-token"
+        );
+        assert!(!express_parts.headers.contains_key("x-amz-security-token"));
+
+        let mut standard_parts = Request::get(uri).body(())?.into_parts().0;
+        RequestSigner::new("s3", "us-east-2")
+            .with_standard_session_token_header()
+            .with_time(now)
+            .sign_request(
+                &Context::new(),
+                &mut standard_parts,
+                Some(&credential),
+                None,
+            )
+            .await?;
+        assert_eq!(
+            standard_parts.headers["x-amz-security-token"],
+            "session-token"
+        );
+        assert!(!standard_parts.headers.contains_key("x-amz-s3session-token"));
+
+        Ok(())
     }
 
     #[tokio::test]
