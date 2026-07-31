@@ -19,6 +19,10 @@
 
 pub mod constants;
 
+#[doc(hidden)]
+pub mod assume_role;
+pub use assume_role::AssumeRoleGrant;
+
 mod credential;
 pub use credential::Credential;
 

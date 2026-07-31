@@ -220,25 +220,16 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
                 .set_retryable(true)
         })?;
 
-        // Extract request ID and status before consuming response
         let status = resp.status();
-        let request_id = resp
-            .headers()
-            .get("x-amzn-requestid")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
 
         if status != http::StatusCode::OK {
             let content = resp.into_body();
-            return Err(parse_sts_error(
-                "AssumeRoleWithWebIdentity",
-                status,
-                &content,
-                request_id.as_deref(),
-            )
-            .with_context(format!("role_arn: {role_arn}"))
-            .with_context(format!("session_name: {session_name}"))
-            .with_context(format!("token_file: {token_file}")));
+            return Err(
+                parse_sts_error("AssumeRoleWithWebIdentity", status, &content)
+                    .with_context(format!("role_arn: {role_arn}"))
+                    .with_context(format!("session_name: {session_name}"))
+                    .with_context(format!("token_file: {token_file}")),
+            );
         }
 
         let body = resp.into_body();

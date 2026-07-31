@@ -151,6 +151,8 @@
 //! - [S3 signing example](examples/s3_sign.rs)
 //! - [DynamoDB signing example](examples/dynamodb_sign.rs)
 
+mod assume_role;
+pub use assume_role::AssumeRoleGranter;
 mod sign_request;
 pub use sign_request::RequestSigner;
 mod s3_access_grants;
@@ -165,7 +167,7 @@ pub use provide_credential::{
 };
 pub use reqsign_aws_core::constants;
 pub use reqsign_aws_core::{
-    AssumeRoleCredentialProvider, AssumeRoleWithWebIdentityCredentialProvider,
+    AssumeRoleCredentialProvider, AssumeRoleGrant, AssumeRoleWithWebIdentityCredentialProvider,
     CognitoIdentityCredentialProvider, Credential, DefaultCredentialProvider,
     DefaultCredentialProviderBuilder, ECSCredentialProvider, EnvCredentialProvider,
     IMDSv2CredentialProvider, ProfileCredentialProvider, StaticCredentialProvider,
