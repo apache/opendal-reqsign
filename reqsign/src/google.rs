@@ -22,15 +22,25 @@
 //!
 //! ## Credential Access Boundary downscoping
 //!
-//! A control plane can exchange a source OAuth access token for a token restricted
-//! to selected Cloud Storage buckets or object prefixes:
+//! [`ServerSideCredentialAccessBoundaryGranter`] performs an STS exchange for
+//! every output and is available with the `google` feature. Enable
+//! `google-credential-access-boundary-client-side` to use
+//! `ClientSideCredentialAccessBoundaryGranter`, which caches intermediary
+//! material and generates each downscoped token locally. Callers choose the
+//! mode explicitly; there is no implicit fallback between them.
+//!
+//! A control plane can obtain reusable intermediary material from Google STS and
+//! locally generate distinct tokens restricted to selected Cloud Storage buckets
+//! or object prefixes:
 //!
 //! ```no_run
+//! # #[cfg(feature = "google-credential-access-boundary-client-side")]
+//! # mod credential_access_boundary_example {
 //! use std::time::Duration;
 //!
 //! use reqsign::{Context, Granter, time::Timestamp};
 //! use reqsign::google::{
-//!     CredentialAccessBoundaryGrant, CredentialAccessBoundaryGranter,
+//!     ClientSideCredentialAccessBoundaryGranter, CredentialAccessBoundaryGrant,
 //!     CredentialAccessBoundaryPermissions, TokenCredentialProvider,
 //! };
 //!
@@ -48,12 +58,13 @@
 //! let downscoped = Granter::new(
 //!     context,
 //!     source,
-//!     CredentialAccessBoundaryGranter::new(grant),
+//!     ClientSideCredentialAccessBoundaryGranter::new(grant),
 //! )
 //! .grant(None)
 //! .await?;
 //! # let _ = downscoped;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 

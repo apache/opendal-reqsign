@@ -47,8 +47,8 @@ jobs:
         working-directory: ./services/google
         run: |
           echo "::group::Running unit tests"
-          cargo test --lib --no-fail-fast
-          cargo test --doc --no-fail-fast
+          cargo test --lib --all-features --no-fail-fast
+          cargo test --doc --all-features --no-fail-fast
           echo "::endgroup::"
 
   # Check if we can run integration tests

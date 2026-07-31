@@ -67,6 +67,10 @@ aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
 google = ["dep:reqsign-google"]
+google-credential-access-boundary-client-side = [
+  "google",
+  "reqsign-google/credential-access-boundary-client-side",
+]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
@@ -79,6 +83,7 @@ full = [
   "aws-v4a",
   "azure",
   "google",
+  "google-credential-access-boundary-client-side",
   "huaweicloud",
   "oracle",
   "tencent",
