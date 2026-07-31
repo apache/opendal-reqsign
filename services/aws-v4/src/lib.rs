@@ -153,6 +153,11 @@
 
 mod sign_request;
 pub use sign_request::RequestSigner;
+mod s3_access_grants;
+pub use s3_access_grants::{
+    S3AccessGrantsConfig, S3AccessGrantsGrant, S3AccessGrantsGranter, S3AccessGrantsPermission,
+    S3AccessGrantsPrivilege, S3AccessGrantsTarget,
+};
 mod provide_credential;
 pub use provide_credential::S3ExpressSessionProvider;
 pub use reqsign_aws_core::constants;

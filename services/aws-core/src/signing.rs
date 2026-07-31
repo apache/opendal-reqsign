@@ -101,6 +101,31 @@ pub fn canonicalize_headers(
     expires_in: Option<Duration>,
     now: Timestamp,
 ) -> Result<()> {
+    canonicalize_headers_inner(request, credential, expires_in, now, false)
+}
+
+/// Add SigV4 headers while always using the standard AWS session-token header.
+///
+/// S3 Express is the only supported AWS flow that uses
+/// `x-amz-s3session-token`. Operations whose endpoint is configurable must not
+/// infer that service semantic from an arbitrary hostname.
+#[doc(hidden)]
+pub fn canonicalize_headers_with_standard_session_token(
+    request: &mut SigningRequest,
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+) -> Result<()> {
+    canonicalize_headers_inner(request, credential, expires_in, now, true)
+}
+
+fn canonicalize_headers_inner(
+    request: &mut SigningRequest,
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+    force_standard_session_token: bool,
+) -> Result<()> {
     if request.headers.get(header::HOST).is_none() {
         request.headers.insert(
             header::HOST,
@@ -136,8 +161,9 @@ pub fn canonicalize_headers(
         })?;
         value.set_sensitive(true);
 
-        let is_s3_express = request.authority.as_str().contains("s3express")
-            || request.authority.as_str().contains("--x-s3");
+        let is_s3_express = !force_standard_session_token
+            && (request.authority.as_str().contains("s3express")
+                || request.authority.as_str().contains("--x-s3"));
         if is_s3_express {
             request.headers.insert(X_AMZ_S3_SESSION_TOKEN, value);
         } else {

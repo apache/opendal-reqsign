@@ -82,6 +82,43 @@ let provider = DefaultCredentialProvider::builder()
 For advanced composition, use `DefaultCredentialProvider::with_chain(...)` or
 prepend a higher-priority source with `DefaultCredentialProvider::push_front(...)`.
 
+## S3 Access Grants
+
+Use `S3AccessGrantsGranter` to authorize one typed `GetDataAccess` request with
+an existing AWS credential and return the temporary credential issued by S3
+Access Grants. The result can be passed directly to the existing AWS signer.
+
+```rust,no_run
+use std::time::Duration;
+
+use reqsign_aws_v4::{
+    DefaultCredentialProvider, S3AccessGrantsConfig, S3AccessGrantsGrant,
+    S3AccessGrantsGranter, S3AccessGrantsPermission, S3AccessGrantsPrivilege,
+    S3AccessGrantsTarget,
+};
+use reqsign_core::{Context, Granter};
+use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+# async fn example() -> reqsign_core::Result<()> {
+let grant = S3AccessGrantsGrant::new(
+    S3AccessGrantsTarget::for_prefix("example-bucket", "customer-a/"),
+    S3AccessGrantsPermission::Read,
+    S3AccessGrantsPrivilege::Minimal,
+);
+let granter = Granter::new(
+    Context::new().with_http_send(ReqwestHttpSend::default()),
+    DefaultCredentialProvider::new(),
+    S3AccessGrantsGranter::new(
+        S3AccessGrantsConfig::new("111122223333", "us-east-2"),
+        grant,
+    ),
+);
+let credential = granter.grant(Some(Duration::from_secs(900))).await?;
+# let _ = credential;
+# Ok(())
+# }
+```
+
 ## Examples
 
 - [S3 signing example](examples/s3_sign.rs)
