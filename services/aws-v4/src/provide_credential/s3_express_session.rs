@@ -764,6 +764,11 @@ fn infer_region_from_zone_id(zone_id: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_credential_types::Credentials as AwsCredentials;
+    use aws_sigv4::http_request::{
+        PayloadChecksumKind, PercentEncodingMode, SignableBody, SignableRequest, SigningSettings,
+    };
+    use aws_sigv4::sign::v4;
     use http::{HeaderMap, Response, Uri};
     use reqsign_core::{
         ErrorKind, Granter, HttpSend, ProvideCredential, Signer, SigningCredential,
@@ -882,6 +887,66 @@ mod tests {
             session_token: Some("source-session-token".to_string()),
             expires_in: None,
         }
+    }
+
+    fn sign_with_aws_sdk(request: &CapturedRequest, region: &str) -> String {
+        let mut reference = Request::builder()
+            .method(request.method.clone())
+            .uri(request.uri.clone())
+            .header(header::HOST, request.headers[header::HOST].clone())
+            .header(
+                "x-amz-content-sha256",
+                request.headers["x-amz-content-sha256"].clone(),
+            )
+            .header(
+                "x-amz-create-session-mode",
+                request.headers["x-amz-create-session-mode"].clone(),
+            )
+            .body(request.body.clone())
+            .expect("AWS SDK reference request must build");
+        let identity = AwsCredentials::new(
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            Some("source-session-token".to_string()),
+            None,
+            "reqsign-s3-express-test",
+        )
+        .into();
+        let mut settings = SigningSettings::default();
+        settings.percent_encoding_mode = PercentEncodingMode::Double;
+        settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        let params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region(region)
+            .name("s3express")
+            .time(timestamp("2030-01-01T00:00:00Z").as_system_time())
+            .settings(settings)
+            .build()
+            .expect("AWS SDK reference signing parameters must build");
+        let output = aws_sigv4::http_request::sign(
+            SignableRequest::new(
+                reference.method().as_str(),
+                reference.uri().to_string(),
+                reference.headers().iter().map(|(name, value)| {
+                    (
+                        name.as_str(),
+                        value
+                            .to_str()
+                            .expect("AWS SDK reference header must be text"),
+                    )
+                }),
+                SignableBody::Bytes(reference.body()),
+            )
+            .expect("AWS SDK reference request must be signable"),
+            &params.into(),
+        )
+        .expect("AWS SDK reference signing must succeed");
+        let (instructions, _) = output.into_parts();
+        instructions.apply_to_request_http1x(&mut reference);
+        reference.headers()[header::AUTHORIZATION]
+            .to_str()
+            .expect("AWS SDK authorization must be ASCII")
+            .to_string()
     }
 
     fn config() -> S3ExpressSessionConfig {
@@ -1138,7 +1203,7 @@ mod tests {
         );
         assert_eq!(
             request.headers["x-amz-content-sha256"],
-            crate::EMPTY_STRING_SHA256
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
         assert_eq!(request.headers["x-amz-date"], "20300101T000000Z");
@@ -1149,12 +1214,14 @@ mod tests {
         assert!(request.headers["x-amz-security-token"].is_sensitive());
         assert!(!request.headers.contains_key("x-amz-s3session-token"));
         assert!(request.headers[header::AUTHORIZATION].is_sensitive());
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
         assert_eq!(
-            request.headers[header::AUTHORIZATION]
-                .to_str()
-                .expect("authorization must be ASCII"),
-            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=9dbbac1f6c2300e0bdbc43bbd4f44384ce8ca6d4820447478a90e616ecb89acc"
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=8bced65039aee22da12f49209a59ab8890db30e8d49889c09943697d684ddc1d"
         );
+        assert_eq!(sign_with_aws_sdk(&request, "us-west-2"), authorization);
     }
 
     #[tokio::test]
@@ -1196,13 +1263,24 @@ mod tests {
             request.headers[header::HOST],
             "example--cnn1-pkx1-az1--x-s3.s3express-cnn1-pkx1-az1.cn-north-1.amazonaws.com.cn"
         );
-        assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
         assert_eq!(
-            request.headers[header::AUTHORIZATION]
-                .to_str()
-                .expect("authorization must be ASCII"),
-            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/cn-north-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=110a8acca9067dccbd29dfa3d93f7b5f681fe7d3efcf86e50fb90b4de52831aa"
+            request.headers["x-amz-content-sha256"],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+        assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
+        assert_eq!(request.headers["x-amz-date"], "20300101T000000Z");
+        assert_eq!(
+            request.headers["x-amz-security-token"],
+            "source-session-token"
+        );
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/cn-north-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=48449b573534252c610bc8a20a8c76017039bb6c59b56120d41bbdae44fb47a3"
+        );
+        assert_eq!(sign_with_aws_sdk(&request, "cn-north-1"), authorization);
     }
 
     #[test]
