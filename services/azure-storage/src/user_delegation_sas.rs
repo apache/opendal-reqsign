@@ -133,7 +133,7 @@ impl BitOrAssign for UserDelegationSasPermissions {
     }
 }
 
-/// Protocol restriction embedded in a user delegation SAS.
+/// Protocol restriction embedded in an Azure Storage SAS.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SasProtocol {
     /// Require HTTPS for every request that uses the SAS.
@@ -144,7 +144,7 @@ pub enum SasProtocol {
 }
 
 impl SasProtocol {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Https => "https",
             Self::HttpsAndHttp => "https,http",
