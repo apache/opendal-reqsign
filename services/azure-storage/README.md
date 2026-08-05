@@ -105,6 +105,45 @@ let static_provider = StaticCredentialProvider::new_shared_key(
 );
 ```
 
+## Grant a Service SAS
+
+Use a Shared Key source to mint an independently usable, expiration-aware SAS
+for one typed container or blob grant:
+
+```rust
+use std::time::Duration;
+
+use reqsign_azure_storage::{
+    ServiceSasBlobPermissions, ServiceSasConfig, ServiceSasGrant,
+    ServiceSasGranter, StaticCredentialProvider,
+};
+use reqsign_core::{Context, Granter};
+
+# async fn example() -> reqsign_core::Result<()> {
+let grant = ServiceSasGrant::for_blob(
+    "customer-data",
+    "reports/current.csv",
+    ServiceSasBlobPermissions::READ,
+);
+let credential = Granter::new(
+    Context::new(),
+    StaticCredentialProvider::new_shared_key(
+        "mystorageaccount",
+        "<base64-encoded 512-bit account key>",
+    ),
+    ServiceSasGranter::new(ServiceSasConfig::new("mystorageaccount"), grant),
+)
+.grant(Some(Duration::from_secs(900)))
+.await?;
+# let _ = credential;
+# Ok(())
+# }
+```
+
+The configured account must match the Shared Key source. The returned
+`Credential::SasToken` can be supplied directly to the existing Azure
+`RequestSigner`.
+
 ## Examples
 
 Run the example:

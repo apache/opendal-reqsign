@@ -17,9 +17,10 @@
 
 use reqsign_core::SigningCredential;
 use reqsign_core::time::Timestamp;
-use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
 use std::time::Duration;
+
+const REDACTED: &str = "REDACTED";
 
 /// Credential enum for different Azure Storage authentication methods.
 #[derive(Clone)]
@@ -50,22 +51,19 @@ pub enum Credential {
 impl Debug for Credential {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Credential::SharedKey {
-                account_name,
-                account_key,
-            } => f
+            Credential::SharedKey { .. } => f
                 .debug_struct("Credential::SharedKey")
-                .field("account_name", &Redact::from(account_name))
-                .field("account_key", &Redact::from(account_key))
+                .field("account_name", &REDACTED)
+                .field("account_key", &REDACTED)
                 .finish(),
-            Credential::SasToken { token, expires_at } => f
+            Credential::SasToken { expires_at, .. } => f
                 .debug_struct("Credential::SasToken")
-                .field("token", &Redact::from(token))
+                .field("token", &REDACTED)
                 .field("expires_at", expires_at)
                 .finish(),
-            Credential::BearerToken { token, expires_in } => f
+            Credential::BearerToken { expires_in, .. } => f
                 .debug_struct("Credential::BearerToken")
-                .field("token", &Redact::from(token))
+                .field("token", &REDACTED)
                 .field("expires_in", expires_in)
                 .finish(),
         }
@@ -156,5 +154,44 @@ mod tests {
         assert!(!credential.is_valid());
         assert!(credential.is_valid_at(now + Duration::from_secs(5)));
         assert!(!credential.is_valid_at(now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn debug_fully_redacts_credential_material() {
+        let debug = [
+            format!(
+                "{:?}",
+                Credential::with_shared_key(
+                    "accountprefixmiddlesuffixaccount",
+                    "keyprefix-middle-keysuffix",
+                )
+            ),
+            format!(
+                "{:?}",
+                Credential::with_sas_token("sv=2020-12-06&sig=sasprefix-middle-sassignaturesuffix",)
+            ),
+            format!(
+                "{:?}",
+                Credential::with_bearer_token("bearerprefix-middle-bearersuffix", None,)
+            ),
+        ]
+        .join("\n");
+
+        assert!(debug.contains("Credential::SharedKey"));
+        assert!(debug.contains("Credential::SasToken"));
+        assert!(debug.contains("Credential::BearerToken"));
+        assert!(debug.contains(REDACTED));
+        for fragment in [
+            "accountprefix",
+            "suffixaccount",
+            "keyprefix",
+            "keysuffix",
+            "sasprefix",
+            "sassignaturesuffix",
+            "bearerprefix",
+            "bearersuffix",
+        ] {
+            assert!(!debug.contains(fragment));
+        }
     }
 }
