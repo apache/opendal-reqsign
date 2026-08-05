@@ -1,0 +1,78 @@
+---
+title: Download
+description: Official Apache source releases, signatures, checksums, and crates.io convenience packages for Apache OpenDAL Reqsign.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+# Download
+
+## Official Apache source releases
+
+The official distribution channel for Apache OpenDAL™ Reqsign is the source
+release published through the ASF mirror system. Each release ships a source
+archive with a PGP signature and SHA-512 checksum:
+
+- **[Download source releases](https://www.apache.org/dyn/closer.lua/opendal/)**
+  — via the ASF mirror resolver.
+- **[KEYS](https://downloads.apache.org/opendal/KEYS)** — release managers'
+  public signing keys.
+
+### Verifying a release
+
+```bash
+# Import the release signing keys once:
+curl -O https://downloads.apache.org/opendal/KEYS
+gpg --import KEYS
+
+# Verify the signature and checksum of a downloaded artifact:
+gpg --verify apache-opendal-reqsign-X.Y.Z-src.tar.gz.asc
+sha512sum -c apache-opendal-reqsign-X.Y.Z-src.tar.gz.sha512
+```
+
+See the [ASF release verification guide](https://www.apache.org/dyn/closer.cgi#verify)
+for details on why and how to verify.
+
+## Rust convenience packages
+
+For day-to-day Rust development, releases are also published to crates.io.
+These packages are a convenience distribution built from the official source
+release — they do not replace it:
+
+```bash
+cargo add reqsign --features aws
+```
+
+- [`reqsign` on crates.io](https://crates.io/crates/reqsign) — the facade
+  crate; see [Installation](/docs/getting-started/) for
+  features.
+- Individual service crates (`reqsign-core`, `reqsign-aws-v4`, ...) are
+  linked from the [API reference](/docs/reference/api/).
+
+## Release notes
+
+Release notes for every version are published with the
+[GitHub releases](https://github.com/apache/opendal-reqsign/releases).
+
+## Historical releases
+
+Older releases move out of the mirror system and remain permanently available
+in the [Apache archive](https://archive.apache.org/dist/opendal/). Use the
+latest release unless you have a specific reason not to.

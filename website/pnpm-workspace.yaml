@@ -15,9 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-headerPath = "Apache-2.0-ASF.txt"
-
-includes = ['**/*.rs', '**/*.yml', '**/*.yaml', '**/*.toml']
-
-# Generated files cannot carry license headers.
-excludes = ['website/pnpm-lock.yaml']
+# Dependency build scripts approved to run during install (pnpm 11 blocks
+# them by default). @swc/core fetches its platform binary; core-js runs a
+# harmless postinstall. Mirrors the apache/opendal website configuration.
+allowBuilds:
+  '@swc/core': true
+  core-js: true

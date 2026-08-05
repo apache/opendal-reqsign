@@ -1,0 +1,470 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+/* ==========================================================================
+   Reqsign Design System
+   --------------------------------------------------------------------------
+   "Build. Sign. Send." An engineering-grade visual system that shares its
+   skeleton — ink scale, type, spacing, hairline structure — with the Apache
+   OpenDAL™ website, while carrying Reqsign's own brand identity: a seal-green
+   accent and the slanted "signature stroke" motif. See UPSTREAM_DESIGN.md for
+   the upstream provenance and the intentional brand-level overrides.
+
+   Token layers:
+     1. Primitives  — raw, theme-agnostic values (--rs-ink-*, --rs-green-*)
+     2. Semantic    — meaning-bound, theme-aware roles (--rs-bg, --rs-fg ...)
+     3. Infima map  — semantic tokens projected onto Docusaurus/Infima vars so
+                      docs and providers pages inherit the same system.
+
+   Typography uses native system stacks on purpose: zero third-party requests
+   (ASF privacy-friendly), zero layout shift, instant global rendering. The
+   monospace stack is promoted to a brand motif (labels, indices, figures).
+   ========================================================================== */
+
+/* ---- 1. Primitive tokens ------------------------------------------------- */
+:root {
+  /* Ink — a cool, neutral near-black→white ramp (shared skeleton) */
+  --rs-ink-0: #ffffff;
+  --rs-ink-50: #f6f8fa;
+  --rs-ink-100: #edf1f5;
+  --rs-ink-150: #e4e9ef;
+  --rs-ink-200: #d8dee6;
+  --rs-ink-300: #c2cad4;
+  --rs-ink-400: #98a2b0;
+  --rs-ink-500: #6e7886;
+  --rs-ink-600: #4f5864;
+  --rs-ink-700: #39414b;
+  --rs-ink-800: #262c34;
+  --rs-ink-850: #1b2027;
+  --rs-ink-900: #12161b;
+  --rs-ink-950: #0a0d11;
+
+  /* Seal green — Reqsign's single brand accent (intentional divergence from
+     OpenDAL's precise blue). The scale is tuned so 700 clears WCAG AA on
+     white and 300 clears AA on the dark background. */
+  --rs-green-50: #eafaf3;
+  --rs-green-100: #d2f4e3;
+  --rs-green-200: #a6e8c9;
+  --rs-green-300: #6fd6a8;
+  --rs-green-400: #3cbe87;
+  --rs-green-500: #16a56c;
+  --rs-green-600: #0c8a58;
+  --rs-green-700: #0a7048;
+  --rs-green-800: #0b5a3c;
+  --rs-green-900: #0b4a33;
+
+  /* Functional signals (kept restrained, mostly for inherited docs UI) */
+  --rs-blue-500: #1e54e0;
+  --rs-blue-400: #5384ff;
+  --rs-amber-500: #b7791f;
+  --rs-amber-400: #e0a93b;
+  --rs-red-500: #d23b3b;
+  --rs-red-400: #f06363;
+
+  /* Type families — system stacks with a clear engineering character */
+  --rs-font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --rs-font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code",
+    "JetBrains Mono", "Roboto Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+
+  /* Type scale */
+  --rs-text-2xs: 0.6875rem; /* 11px — mono micro-labels */
+  --rs-text-xs: 0.75rem; /* 12px */
+  --rs-text-sm: 0.875rem; /* 14px */
+  --rs-text-base: 1rem; /* 16px */
+  --rs-text-md: 1.125rem; /* 18px */
+  --rs-text-lg: 1.375rem; /* 22px */
+  --rs-text-xl: 1.75rem; /* 28px */
+  --rs-text-2xl: 2.25rem; /* 36px */
+  --rs-text-3xl: 3rem; /* 48px */
+  --rs-text-display: clamp(2.75rem, 1.6rem + 5.2vw, 5rem);
+  --rs-leading-tight: 1.08;
+  --rs-leading-snug: 1.28;
+  --rs-leading-normal: 1.6;
+  --rs-tracking-tight: -0.022em;
+  --rs-tracking-label: 0.12em;
+
+  /* Spacing — 4px rhythm */
+  --rs-space-1: 0.25rem;
+  --rs-space-2: 0.5rem;
+  --rs-space-3: 0.75rem;
+  --rs-space-4: 1rem;
+  --rs-space-5: 1.5rem;
+  --rs-space-6: 2rem;
+  --rs-space-7: 3rem;
+  --rs-space-8: 4rem;
+  --rs-space-9: 6rem;
+  --rs-space-10: 8rem;
+
+  /* Radius — restrained; the stroke motif stays sharp (0) */
+  --rs-radius-xs: 3px;
+  --rs-radius-sm: 5px;
+  --rs-radius-md: 8px;
+  --rs-radius-lg: 12px;
+  --rs-radius-pill: 999px;
+
+  /* Layout */
+  --rs-container: 1200px;
+  --rs-container-narrow: 880px;
+  --rs-gutter: clamp(1.25rem, 1rem + 2vw, 2.5rem);
+
+  /* Motion */
+  --rs-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --rs-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --rs-dur-fast: 120ms;
+  --rs-dur: 200ms;
+  --rs-dur-slow: 320ms;
+
+  /* Brand motif — the slant of the signature stroke */
+  --rs-stroke-skew: -14deg;
+}
+
+/* ---- 2. Semantic tokens — light (default) -------------------------------- */
+:root {
+  --rs-bg: var(--rs-ink-0);
+  --rs-bg-subtle: var(--rs-ink-50);
+  --rs-bg-inset: var(--rs-ink-100);
+  --rs-surface: var(--rs-ink-0);
+  --rs-surface-2: var(--rs-ink-50);
+  --rs-fg: var(--rs-ink-900);
+  --rs-fg-strong: var(--rs-ink-950);
+  --rs-fg-muted: var(--rs-ink-600);
+  --rs-fg-subtle: var(--rs-ink-500);
+  --rs-border: var(--rs-ink-200);
+  --rs-border-strong: var(--rs-ink-300);
+  --rs-stroke: var(--rs-ink-950);
+
+  --rs-accent: var(--rs-green-700);
+  --rs-accent-hover: var(--rs-green-800);
+  --rs-accent-subtle: var(--rs-green-50);
+  --rs-accent-border: var(--rs-green-200);
+  --rs-link: var(--rs-green-700);
+
+  /* Solid action surface — deep seal green with white text in light mode */
+  --rs-action-bg: var(--rs-green-700);
+  --rs-action-bg-hover: var(--rs-green-800);
+  --rs-action-fg: #ffffff;
+
+  --rs-code-bg: var(--rs-ink-50);
+  --rs-code-border: var(--rs-ink-150);
+  --rs-selection: var(--rs-green-100);
+
+  --rs-grid-line: rgba(18, 22, 27, 0.05);
+  --rs-shadow-sm: 0 1px 2px rgba(10, 13, 17, 0.06),
+    0 1px 1px rgba(10, 13, 17, 0.04);
+  --rs-shadow-md: 0 4px 12px rgba(10, 13, 17, 0.07),
+    0 1px 3px rgba(10, 13, 17, 0.05);
+  --rs-shadow-lg: 0 18px 40px rgba(10, 13, 17, 0.1),
+    0 4px 12px rgba(10, 13, 17, 0.06);
+}
+
+/* ---- 2b. Semantic tokens — dark ------------------------------------------ */
+[data-theme="dark"] {
+  --rs-bg: #0a0d11;
+  --rs-bg-subtle: #0e1218;
+  --rs-bg-inset: #12161d;
+  --rs-surface: #11161c;
+  --rs-surface-2: #161c24;
+  --rs-fg: #e7ebf0;
+  --rs-fg-strong: #f6f8fa;
+  --rs-fg-muted: #9aa6b3;
+  --rs-fg-subtle: #76828f;
+  --rs-border: #242c35;
+  --rs-border-strong: #313b46;
+  --rs-stroke: #f6f8fa;
+
+  --rs-accent: var(--rs-green-300);
+  --rs-accent-hover: var(--rs-green-200);
+  --rs-accent-subtle: rgba(22, 165, 108, 0.14);
+  --rs-accent-border: rgba(111, 214, 168, 0.32);
+  --rs-link: var(--rs-green-300);
+
+  /* Solid action surface — bright seal green with ink text in dark mode; the
+     inverted pairing keeps AA contrast where white-on-green cannot. */
+  --rs-action-bg: var(--rs-green-400);
+  --rs-action-bg-hover: var(--rs-green-300);
+  --rs-action-fg: var(--rs-ink-950);
+
+  --rs-code-bg: #0e131a;
+  --rs-code-border: #232b35;
+  --rs-selection: rgba(22, 165, 108, 0.36);
+
+  --rs-grid-line: rgba(255, 255, 255, 0.045);
+  --rs-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --rs-shadow-md: 0 6px 18px rgba(0, 0, 0, 0.5);
+  --rs-shadow-lg: 0 22px 48px rgba(0, 0, 0, 0.6);
+}
+
+/* ---- 3. Project onto Infima so docs pages inherit the system ------------- */
+:root {
+  --ifm-color-primary: #0a7048;
+  --ifm-color-primary-dark: #096440;
+  --ifm-color-primary-darker: #0b5a3c;
+  --ifm-color-primary-darkest: #0b4a33;
+  --ifm-color-primary-light: #0c8a58;
+  --ifm-color-primary-lighter: #16a56c;
+  --ifm-color-primary-lightest: #3cbe87;
+
+  --ifm-background-color: var(--rs-bg);
+  --ifm-background-surface-color: var(--rs-surface);
+  --ifm-font-color-base: var(--rs-fg);
+  --ifm-heading-color: var(--rs-fg-strong);
+  --ifm-font-family-base: var(--rs-font-sans);
+  --ifm-heading-font-family: var(--rs-font-sans);
+  --ifm-font-family-monospace: var(--rs-font-mono);
+  --ifm-font-size-base: 16px;
+  --ifm-line-height-base: 1.6;
+  --ifm-link-color: var(--rs-link);
+  --ifm-link-hover-color: var(--rs-accent-hover);
+
+  --ifm-heading-font-weight: 650;
+  --ifm-font-weight-semibold: 600;
+
+  --ifm-navbar-background-color: rgba(255, 255, 255, 0.82);
+  --ifm-navbar-shadow: inset 0 -1px 0 var(--rs-border);
+  --ifm-navbar-link-color: var(--rs-fg-muted);
+  --ifm-navbar-link-hover-color: var(--rs-fg-strong);
+
+  --ifm-toc-border-color: var(--rs-border);
+  --ifm-color-emphasis-200: var(--rs-border);
+  --ifm-color-emphasis-300: var(--rs-border-strong);
+
+  --ifm-code-font-size: 0.9em;
+  --ifm-code-background: var(--rs-code-bg);
+  --ifm-code-border-radius: var(--rs-radius-sm);
+  --ifm-pre-background: var(--rs-code-bg);
+
+  --ifm-button-border-radius: var(--rs-radius-md);
+  --ifm-global-radius: var(--rs-radius-md);
+
+  --docusaurus-highlighted-code-line-bg: rgba(10, 112, 72, 0.1);
+
+  --footer-font-color: var(--rs-fg-muted);
+  --footer-column-width: unset;
+  --footer-row-max-width: 1100px;
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #6fd6a8;
+  --ifm-color-primary-dark: #3cbe87;
+  --ifm-color-primary-darker: #16a56c;
+  --ifm-color-primary-darkest: #0c8a58;
+  --ifm-color-primary-light: #8fe0bc;
+  --ifm-color-primary-lighter: #a6e8c9;
+  --ifm-color-primary-lightest: #d2f4e3;
+
+  --ifm-navbar-background-color: rgba(10, 13, 17, 0.78);
+  --ifm-navbar-shadow: inset 0 -1px 0 var(--rs-border);
+  --docusaurus-highlighted-code-line-bg: rgba(111, 214, 168, 0.16);
+}
+
+/* ---- 4. Base element styling --------------------------------------------- */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background-color: var(--rs-bg);
+  color: var(--rs-fg);
+  font-feature-settings: "cv05" 1, "ss01" 1;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  letter-spacing: var(--rs-tracking-tight);
+}
+
+::selection {
+  background: var(--rs-selection);
+}
+
+:focus-visible {
+  outline: 2px solid var(--rs-accent);
+  outline-offset: 2px;
+  border-radius: var(--rs-radius-xs);
+}
+
+/* Translucent, blurred navbar for a precise, layered feel */
+.navbar {
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+}
+
+/* Avoid making the mobile drawer's fixed panel position against the navbar. */
+.navbar.navbar-sidebar--show {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.navbar__logo {
+  height: 1.85rem;
+}
+.navbar__logo img {
+  height: 100%;
+}
+.navbar__title {
+  font-weight: 650;
+  letter-spacing: var(--rs-tracking-tight);
+}
+
+/* Tabs/Prism code surfaces align to the system */
+.theme-code-block,
+pre[class*="language-"] {
+  border: 1px solid var(--rs-code-border);
+  border-radius: var(--rs-radius-md);
+}
+
+/* ---- 5. Brand motif: the signature stroke --------------------------------- */
+/* Reqsign's signature stroke — a solid, slanted quadrilateral. Where the
+   OpenDAL bar sits level like a storage layer, the Reqsign stroke leans
+   forward like a pen stroke closing a signature. Used as a structural marker,
+   divider and emphasis throughout the system. */
+.rs-stroke {
+  display: inline-block;
+  width: 2.25rem;
+  height: 0.5rem;
+  background: var(--rs-stroke);
+  border-radius: 0;
+  transform: skewX(var(--rs-stroke-skew));
+}
+
+/* Eyebrow / kicker label: monospace, uppercase, led by a small accent stroke */
+.rs-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rs-space-3);
+  font-family: var(--rs-font-mono);
+  font-size: var(--rs-text-xs);
+  font-weight: 500;
+  letter-spacing: var(--rs-tracking-label);
+  text-transform: uppercase;
+  color: var(--rs-fg-muted);
+}
+.rs-eyebrow::before {
+  content: "";
+  width: 1.5rem;
+  height: 0.5rem;
+  background: var(--rs-accent);
+  transform: skewX(var(--rs-stroke-skew));
+  flex: none;
+}
+
+/* Shared layout helpers used by landing sections */
+.rs-container {
+  width: 100%;
+  max-width: var(--rs-container);
+  margin-inline: auto;
+  padding-inline: var(--rs-gutter);
+}
+
+/* Faint blueprint grid — engineering texture for select surfaces */
+.rs-grid-bg {
+  background-image: linear-gradient(
+      var(--rs-grid-line) 1px,
+      transparent 1px
+    ),
+    linear-gradient(90deg, var(--rs-grid-line) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* Tabular figures for any numeric/metric display */
+.rs-tabular {
+  font-family: var(--rs-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 6. Header icons (GitHub / Discord) ---------------------------------- */
+.header-github-link:hover,
+.header-discord-link:hover {
+  opacity: 0.6;
+}
+
+.header-github-link::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  display: flex;
+  background-color: var(--rs-fg-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'/%3E%3C/svg%3E")
+    no-repeat center / contain;
+  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12'/%3E%3C/svg%3E")
+    no-repeat center / contain;
+}
+
+.header-discord-link::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  display: flex;
+  background-color: var(--rs-fg-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='currentColor' viewBox='0 0 16 16'%3E%3Cpath d='M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248.195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249.594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z'/%3E%3C/svg%3E")
+    no-repeat center / contain;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='currentColor' viewBox='0 0 16 16'%3E%3Cpath d='M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248.195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249.594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z'/%3E%3C/svg%3E")
+    no-repeat center / contain;
+}
+
+/* ---- 7. Footer ----------------------------------------------------------- */
+.footer {
+  background-color: var(--rs-bg-subtle);
+  border-top: 1px solid var(--rs-border);
+}
+.footer__copyright {
+  font-size: 0.75em;
+  color: var(--rs-fg-subtle);
+  margin-top: var(--rs-space-4);
+}
+.footer__logo {
+  margin-top: unset;
+  max-width: 280px;
+}
+[data-theme="dark"] .footer__logo {
+  filter: brightness(0) invert(1) opacity(0.7);
+}
+
+/* ---- 7b. Docs sidebar section label -------------------------------------- */
+/* A divider + eyebrow label that separates doc groups in the sidebar. */
+.sidebar-section-label {
+  margin: var(--rs-space-4, 1rem) 0 var(--rs-space-1, 0.25rem);
+  padding: var(--rs-space-3, 0.75rem) 0.75rem 0;
+  border-top: 1px solid var(--ifm-toc-border-color);
+  font-family: var(--rs-font-mono);
+  font-size: var(--rs-text-xs);
+  font-weight: 600;
+  letter-spacing: var(--rs-tracking-label);
+  text-transform: uppercase;
+  color: var(--rs-fg-muted);
+}
+
+/* ---- 8. Reduced motion --------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
