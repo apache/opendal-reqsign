@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-volcengine-tos"
-version = "3.0.1"
+version = "3.1.0"
 
 description = "Volcengine TOS signing implementation for reqsign."
 
@@ -38,4 +38,5 @@ anyhow = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
+reqwest = { workspace = true, features = ["default-tls"] }
 tokio = { workspace = true, features = ["full"] }

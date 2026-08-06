@@ -45,11 +45,11 @@ const ECS_CONTAINER_METADATA_URI: &str = "ECS_CONTAINER_METADATA_URI";
 /// variables. Direct configuration takes precedence over environment variables.
 ///
 /// ## Builder Methods
-/// - [`with_relative_uri()`]: Set the relative URI for ECS environments
-/// - [`with_endpoint()`]: Set a complete custom endpoint URL (for Fargate or custom setups)
-/// - [`with_auth_token()`]: Set the authorization token directly
-/// - [`with_auth_token_file()`]: Set the path to the authorization token file
-/// - [`with_metadata_uri_override()`]: Override the base metadata endpoint for relative URIs
+/// - [`ECSCredentialProvider::with_relative_uri`]: Set the relative URI for ECS environments
+/// - [`ECSCredentialProvider::with_endpoint`]: Set a complete custom endpoint URL (for Fargate or custom setups)
+/// - [`ECSCredentialProvider::with_auth_token`]: Set the authorization token directly
+/// - [`ECSCredentialProvider::with_auth_token_file`]: Set the path to the authorization token file
+/// - [`ECSCredentialProvider::with_metadata_uri_override`]: Override the base metadata endpoint for relative URIs
 ///
 /// ## Environment Variables (Fallback)
 /// - `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`: Relative URI to fetch credentials (ECS)
@@ -61,7 +61,7 @@ const ECS_CONTAINER_METADATA_URI: &str = "ECS_CONTAINER_METADATA_URI";
 /// # Examples
 ///
 /// ```rust,no_run
-/// use reqsign_aws_v4::ECSCredentialProvider;
+/// use reqsign_aws_core::ECSCredentialProvider;
 ///
 /// // Configure for ECS with relative URI
 /// let provider = ECSCredentialProvider::new()

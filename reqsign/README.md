@@ -14,6 +14,25 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Tencent Cloud**: Cloud Object Storage (COS)
 - **Oracle**: Oracle Cloud services
 
+## Request URI Contract
+
+Requests passed to the built-in signers must already contain a valid, wire-ready URI
+with an authority. Construct the intended path and query structure before signing and
+percent-encode data components exactly once. Structural delimiters such as path `/`
+and query `&` remain literal; delimiter bytes that belong to data must be encoded, such
+as `%2F` for a slash inside one path segment.
+
+Reqsign does not perform general-purpose URI encoding for callers. Existing percent
+escapes, query order, duplicate keys, empty values, and literal `+` characters are part
+of the caller-owned wire representation. Header authentication preserves that URI.
+Query authentication preserves it as a prefix and appends only protocol-encoded
+authentication fields.
+
+`Signer::sign` is atomic with respect to the caller's request head. On error, the
+method, URI, version, headers, and extensions remain unchanged. On success, only the
+URI and headers may change. The `expires_in` argument is a service-specific validity
+input, not a universal switch between header and query authentication.
+
 ## Quick Start
 
 Add `reqsign` to your `Cargo.toml`:
@@ -163,6 +182,7 @@ let signer = oracle::default_signer();
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `google`: Enable Google Cloud support
+- `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `huaweicloud`: Enable Huawei Cloud OBS support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support

@@ -33,12 +33,12 @@ use reqsign_core::{Context, ProvideCredential, Result};
 /// - `~/.aws/config` (or the path specified by `AWS_CONFIG_FILE`)
 ///
 /// The profile to use is determined by:
-/// 1. The `AWS_PROFILE` environment variable
-/// 2. The profile specified via `with_profile()`
+/// 1. The profile specified via `with_profile()`
+/// 2. The `AWS_PROFILE` environment variable
 /// 3. Default to "default"
 #[derive(Debug, Clone)]
 pub struct ProfileCredentialProvider {
-    profile: String,
+    profile: Option<String>,
     config_file: Option<String>,
     credentials_file: Option<String>,
 }
@@ -53,7 +53,7 @@ impl ProfileCredentialProvider {
     /// Create a new ProfileCredentialProvider with default settings.
     pub fn new() -> Self {
         Self {
-            profile: "default".to_string(),
+            profile: None,
             config_file: None,
             credentials_file: None,
         }
@@ -61,7 +61,7 @@ impl ProfileCredentialProvider {
 
     /// Set the profile name to use.
     pub fn with_profile(mut self, profile: impl Into<String>) -> Self {
-        self.profile = profile.into();
+        self.profile = Some(profile.into());
         self
     }
 
@@ -213,10 +213,11 @@ impl ProvideCredential for ProfileCredentialProvider {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // Determine the actual profile to use
-            let profile = ctx
-                .env_var(AWS_PROFILE)
-                .unwrap_or_else(|| self.profile.clone());
+            let profile = self
+                .profile
+                .clone()
+                .or_else(|| ctx.env_var(AWS_PROFILE))
+                .unwrap_or_else(|| "default".to_string());
 
             // Try credentials file first
             if let Some(cred) = self.load_from_credentials_file(ctx, &profile).await? {
@@ -267,7 +268,7 @@ mod tests {
                 envs: HashMap::new(),
             });
 
-        // Test default profile
+        // Test the final default fallback without an explicit profile or AWS_PROFILE
         let provider =
             ProfileCredentialProvider::new().with_credentials_file(file_path.to_str().unwrap());
         let cred = provider.provide_credential(&context).await?;
@@ -339,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_profile_env_override() -> anyhow::Result<()> {
+    async fn test_profile_env_fallback() -> anyhow::Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let tmp_dir = tempdir()?;
@@ -361,15 +362,48 @@ mod tests {
                 envs: HashMap::from([(AWS_PROFILE.to_string(), "profile1".to_string())]),
             });
 
-        // Even though we set default, AWS_PROFILE should override
+        let provider =
+            ProfileCredentialProvider::new().with_credentials_file(file_path.to_str().unwrap());
+        let cred = provider.provide_credential(&context).await?;
+        assert!(cred.is_some());
+        let cred = cred.unwrap();
+        assert_eq!(cred.access_key_id, "PROFILE1ACCESSKEYID");
+        assert_eq!(cred.secret_access_key, "PROFILE1SECRETACCESSKEY");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_explicit_profile_overrides_env() -> anyhow::Result<()> {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        let tmp_dir = tempdir()?;
+        let file_path = tmp_dir.path().join("credentials");
+        let mut tmp_file = File::create(&file_path)?;
+        writeln!(tmp_file, "[default]")?;
+        writeln!(tmp_file, "aws_access_key_id = DEFAULTACCESSKEYID")?;
+        writeln!(tmp_file, "aws_secret_access_key = DEFAULTSECRETACCESSKEY")?;
+        writeln!(tmp_file)?;
+        writeln!(tmp_file, "[profile1]")?;
+        writeln!(tmp_file, "aws_access_key_id = PROFILE1ACCESSKEYID")?;
+        writeln!(tmp_file, "aws_secret_access_key = PROFILE1SECRETACCESSKEY")?;
+
+        let context = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([(AWS_PROFILE.to_string(), "profile1".to_string())]),
+            });
+
         let provider = ProfileCredentialProvider::new()
             .with_profile("default")
             .with_credentials_file(file_path.to_str().unwrap());
         let cred = provider.provide_credential(&context).await?;
         assert!(cred.is_some());
         let cred = cred.unwrap();
-        assert_eq!(cred.access_key_id, "PROFILE1ACCESSKEYID");
-        assert_eq!(cred.secret_access_key, "PROFILE1SECRETACCESSKEY");
+        assert_eq!(cred.access_key_id, "DEFAULTACCESSKEYID");
+        assert_eq!(cred.secret_access_key, "DEFAULTSECRETACCESSKEY");
 
         Ok(())
     }

@@ -32,7 +32,7 @@ pub struct Credential {
     pub key_file: String,
     /// Fingerprint of the API Key.
     pub fingerprint: String,
-    /// Expiration time for this credential.
+    /// Deadline after which the credential source should be reloaded.
     pub expires_in: Option<Timestamp>,
 }
 
@@ -48,23 +48,44 @@ impl Debug for Credential {
     }
 }
 
+impl Credential {
+    fn has_required_fields(&self) -> bool {
+        !self.tenancy.is_empty()
+            && !self.user.is_empty()
+            && !self.key_file.is_empty()
+            && !self.fingerprint.is_empty()
+    }
+}
+
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
-        if self.tenancy.is_empty()
-            || self.user.is_empty()
-            || self.key_file.is_empty()
-            || self.fingerprint.is_empty()
-        {
-            return false;
-        }
-        // Take 120s as buffer to avoid edge cases.
-        if let Some(valid) = self
-            .expires_in
-            .map(|v| v > Timestamp::now() + Duration::from_secs(120))
-        {
-            return valid;
-        }
+        self.has_required_fields()
+            && self
+                .expires_in
+                .is_none_or(|refresh_at| refresh_at > Timestamp::now() + Duration::from_secs(120))
+    }
 
-        true
+    fn is_valid_at(&self, _timestamp: Timestamp) -> bool {
+        self.has_required_fields()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_deadline_only_controls_cache_freshness() {
+        let now = Timestamp::now();
+        let credential = Credential {
+            tenancy: "tenancy".to_string(),
+            user: "user".to_string(),
+            key_file: "key.pem".to_string(),
+            fingerprint: "fingerprint".to_string(),
+            expires_in: Some(now + Duration::from_secs(30)),
+        };
+
+        assert!(!credential.is_valid());
+        assert!(credential.is_valid_at(now + Duration::from_secs(3600)));
     }
 }

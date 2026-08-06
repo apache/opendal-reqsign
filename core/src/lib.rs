@@ -28,6 +28,34 @@
 //! - **Traits**: Abstract interfaces for credential loading (`ProvideCredential`) and request signing (`SignRequest`)
 //! - **Signer**: The main orchestrator that coordinates credential loading and request signing
 //!
+//! ## Request URI contract
+//!
+//! Built-in request signers expect the request URI to be a valid, wire-ready URI
+//! with an authority. Callers must construct the intended path and query structure
+//! and percent-encode data components exactly once before signing. Structural URI
+//! delimiters remain literal, while delimiter bytes that belong to data must already
+//! be encoded, such as `%2F` for a slash inside one path segment.
+//!
+//! Existing path and query representations are authoritative. Canonicalization is a
+//! service-specific, read-only view: header authentication preserves the URI, while
+//! query authentication appends protocol-encoded authentication fields without
+//! decoding, sorting, or rebuilding the existing URI.
+//!
+//! [`Signer::sign`] runs the service signer against a private candidate request head.
+//! On error, the caller's method, URI, version, headers, and extensions remain
+//! unchanged. On success, only the URI and headers are committed; the caller retains
+//! ownership of the method, version, and extensions.
+//!
+//! `expires_in` is a service-specific validity input, not a universal selector between
+//! header and query authentication. The service and credential type determine the
+//! authentication mode.
+//!
+//! [`SigningCredential::is_valid`] controls whether a cached credential can be reused
+//! without refresh. [`SigningCredential::is_valid_at`] checks exact usability at the
+//! timestamp returned by [`SignRequest::required_valid_until`]. A refreshed credential
+//! only needs to satisfy the exact operation requirement; provider errors are returned
+//! without retrying internally or falling back to the old cached credential.
+//!
 //! ## Example
 //!
 //! ```no_run
@@ -153,7 +181,7 @@
 pub mod error;
 mod futures_util;
 pub mod hash;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "jwt"))]
 pub mod jwt;
 pub mod time;
 pub mod utils;
@@ -180,6 +208,8 @@ pub use context::OsEnv;
 pub use context::StaticEnv;
 
 mod api;
+pub use api::GrantCredential;
+pub use api::GrantCredentialDyn;
 pub use api::ProvideCredential;
 pub use api::ProvideCredentialChain;
 pub use api::ProvideCredentialDyn;
@@ -190,3 +220,5 @@ mod request;
 pub use request::{SigningMethod, SigningRequest};
 mod signer;
 pub use signer::Signer;
+mod granter;
+pub use granter::Granter;

@@ -75,6 +75,21 @@ The same pattern applies to all other slots:
 - Slot names must match the actual provider concept, not an overloaded alias.
 - Builders expose only the slots that a service actually supports.
 
+### Cross-Slot Convenience Methods
+
+A service may expose a narrowly scoped convenience method when one logical
+input applies to multiple provider slots. Such a method must:
+
+- Update only slots that are currently present; it must not re-enable a slot
+  removed with `no_slot()`.
+- Preserve every unrelated setting on each provider.
+- Respect builder call order so that later slot-level replacement or removal
+  still wins.
+
+For AWS V4, `with_profile(profile)` applies the explicit profile to the
+`profile`, `sso`, and `process` slots. On `wasm32`, it applies only to the
+available `profile` slot.
+
 ## Internal State Model
 
 Each builder slot should be represented as:

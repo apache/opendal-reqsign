@@ -17,7 +17,7 @@
 
 use std::fmt::{Debug, Formatter};
 
-use reqsign_core::{SigningCredential, utils::Redact};
+use reqsign_core::{SigningCredential, time::Timestamp, utils::Redact};
 
 /// Credential for obs.
 #[derive(Clone)]
@@ -60,6 +60,23 @@ impl Debug for Credential {
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
-        true
+        !self.access_key_id.is_empty() && !self.secret_access_key.is_empty()
+    }
+
+    fn is_valid_at(&self, _timestamp: Timestamp) -> bool {
+        self.is_valid()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_incomplete_signing_keys() {
+        let credential = Credential::new(String::new(), String::new(), Some("token".to_string()));
+
+        assert!(!credential.is_valid());
+        assert!(!credential.is_valid_at(Timestamp::now()));
     }
 }

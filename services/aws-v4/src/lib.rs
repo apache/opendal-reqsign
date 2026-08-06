@@ -112,6 +112,19 @@
 //!     .build();
 //! ```
 //!
+//! ### Selecting a Profile
+//!
+//! Use one explicit profile for the shared profile, SSO, and process credential
+//! sources:
+//!
+//! ```no_run
+//! use reqsign_aws_v4::DefaultCredentialProvider;
+//!
+//! let provider = DefaultCredentialProvider::builder()
+//!     .with_profile("production")
+//!     .build();
+//! ```
+//!
 //! ### Custom Credential Provider
 //!
 //! You can create custom credential providers by implementing the `ProvideCredential` trait:
@@ -138,14 +151,28 @@
 //! - [S3 signing example](examples/s3_sign.rs)
 //! - [DynamoDB signing example](examples/dynamodb_sign.rs)
 
-mod constants;
-
-mod credential;
-pub use credential::Credential;
+mod assume_role;
+pub use assume_role::AssumeRoleGranter;
 mod sign_request;
 pub use sign_request::RequestSigner;
+mod s3_access_grants;
+pub use s3_access_grants::{
+    S3AccessGrantsConfig, S3AccessGrantsGrant, S3AccessGrantsGranter, S3AccessGrantsPermission,
+    S3AccessGrantsPrivilege, S3AccessGrantsTarget,
+};
 mod provide_credential;
-pub use provide_credential::*;
+pub use provide_credential::{
+    S3ExpressSessionConfig, S3ExpressSessionGrant, S3ExpressSessionGranter, S3ExpressSessionMode,
+    S3ExpressSessionPartition, S3ExpressSessionProvider,
+};
+pub use reqsign_aws_core::constants;
+pub use reqsign_aws_core::{
+    AssumeRoleCredentialProvider, AssumeRoleGrant, AssumeRoleWithWebIdentityCredentialProvider,
+    CognitoIdentityCredentialProvider, Credential, DefaultCredentialProvider,
+    DefaultCredentialProviderBuilder, ECSCredentialProvider, EnvCredentialProvider,
+    IMDSv2CredentialProvider, ProfileCredentialProvider, StaticCredentialProvider,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 
-pub const EMPTY_STRING_SHA256: &str =
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+pub const EMPTY_STRING_SHA256: &str = reqsign_aws_core::EMPTY_STRING_SHA256;

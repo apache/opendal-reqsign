@@ -17,9 +17,10 @@
 
 use reqsign_core::SigningCredential;
 use reqsign_core::time::Timestamp;
-use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
 use std::time::Duration;
+
+const REDACTED: &str = "REDACTED";
 
 /// Credential enum for different Azure Storage authentication methods.
 #[derive(Clone)]
@@ -35,6 +36,8 @@ pub enum Credential {
     SasToken {
         /// SAS token.
         token: String,
+        /// Optional absolute expiration time for this SAS token.
+        expires_at: Option<Timestamp>,
     },
     /// Bearer token for OAuth authentication
     BearerToken {
@@ -48,21 +51,19 @@ pub enum Credential {
 impl Debug for Credential {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Credential::SharedKey {
-                account_name,
-                account_key,
-            } => f
+            Credential::SharedKey { .. } => f
                 .debug_struct("Credential::SharedKey")
-                .field("account_name", &Redact::from(account_name))
-                .field("account_key", &Redact::from(account_key))
+                .field("account_name", &REDACTED)
+                .field("account_key", &REDACTED)
                 .finish(),
-            Credential::SasToken { token } => f
+            Credential::SasToken { expires_at, .. } => f
                 .debug_struct("Credential::SasToken")
-                .field("token", &Redact::from(token))
+                .field("token", &REDACTED)
+                .field("expires_at", expires_at)
                 .finish(),
-            Credential::BearerToken { token, expires_in } => f
+            Credential::BearerToken { expires_in, .. } => f
                 .debug_struct("Credential::BearerToken")
-                .field("token", &Redact::from(token))
+                .field("token", &REDACTED)
                 .field("expires_in", expires_in)
                 .finish(),
         }
@@ -71,22 +72,23 @@ impl Debug for Credential {
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + Duration::from_secs(20))
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
         match self {
             Credential::SharedKey {
                 account_name,
                 account_key,
             } => !account_name.is_empty() && !account_key.is_empty(),
-            Credential::SasToken { token } => !token.is_empty(),
+            Credential::SasToken { token, expires_at } => {
+                !token.is_empty() && expires_at.is_none_or(|expires| expires > timestamp)
+            }
             Credential::BearerToken { token, expires_in } => {
                 if token.is_empty() {
                     return false;
                 }
-                // Check expiration for bearer tokens (take 20s as buffer to avoid edge cases)
-                if let Some(expires) = expires_in {
-                    *expires > Timestamp::now() + Duration::from_secs(20)
-                } else {
-                    true
-                }
+                expires_in.is_none_or(|expires| expires > timestamp)
             }
         }
     }
@@ -105,6 +107,15 @@ impl Credential {
     pub fn with_sas_token(sas_token: &str) -> Self {
         Self::SasToken {
             token: sas_token.to_string(),
+            expires_at: None,
+        }
+    }
+
+    /// Create a new credential with an expiring SAS token.
+    pub fn with_sas_token_expires_at(sas_token: &str, expires_at: Timestamp) -> Self {
+        Self::SasToken {
+            token: sas_token.to_string(),
+            expires_at: Some(expires_at),
         }
     }
 
@@ -113,6 +124,74 @@ impl Credential {
         Self::BearerToken {
             token: bearer_token.to_string(),
             expires_in,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn separates_bearer_cache_freshness_from_exact_validity() {
+        let now = Timestamp::now();
+        let credential =
+            Credential::with_bearer_token("token", Some(now + Duration::from_secs(10)));
+
+        assert!(!credential.is_valid());
+        assert!(credential.is_valid_at(now + Duration::from_secs(5)));
+        assert!(!credential.is_valid_at(now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn separates_sas_cache_freshness_from_exact_validity() {
+        let now = Timestamp::now();
+        let credential = Credential::with_sas_token_expires_at(
+            "sv=2020-12-06&sig=secret",
+            now + Duration::from_secs(10),
+        );
+
+        assert!(!credential.is_valid());
+        assert!(credential.is_valid_at(now + Duration::from_secs(5)));
+        assert!(!credential.is_valid_at(now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn debug_fully_redacts_credential_material() {
+        let debug = [
+            format!(
+                "{:?}",
+                Credential::with_shared_key(
+                    "accountprefixmiddlesuffixaccount",
+                    "keyprefix-middle-keysuffix",
+                )
+            ),
+            format!(
+                "{:?}",
+                Credential::with_sas_token("sv=2020-12-06&sig=sasprefix-middle-sassignaturesuffix",)
+            ),
+            format!(
+                "{:?}",
+                Credential::with_bearer_token("bearerprefix-middle-bearersuffix", None,)
+            ),
+        ]
+        .join("\n");
+
+        assert!(debug.contains("Credential::SharedKey"));
+        assert!(debug.contains("Credential::SasToken"));
+        assert!(debug.contains("Credential::BearerToken"));
+        assert!(debug.contains(REDACTED));
+        for fragment in [
+            "accountprefix",
+            "suffixaccount",
+            "keyprefix",
+            "keysuffix",
+            "sasprefix",
+            "sassignaturesuffix",
+            "bearerprefix",
+            "bearersuffix",
+        ] {
+            assert!(!debug.contains(fragment));
         }
     }
 }

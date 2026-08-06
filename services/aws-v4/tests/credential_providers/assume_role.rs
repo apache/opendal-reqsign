@@ -17,9 +17,13 @@
 
 use super::create_test_context;
 use log::info;
-use reqsign_aws_v4::{AssumeRoleCredentialProvider, DefaultCredentialProvider, RequestSigner};
-use reqsign_core::{ProvideCredential, Signer};
+use reqsign_aws_v4::{
+    AssumeRoleCredentialProvider, AssumeRoleGrant, AssumeRoleGranter, DefaultCredentialProvider,
+    RequestSigner,
+};
+use reqsign_core::{Granter, ProvideCredential, Signer};
 use std::env;
+use std::time::Duration;
 
 #[tokio::test]
 async fn test_assume_role_credential_provider() {
@@ -58,5 +62,39 @@ async fn test_assume_role_credential_provider() {
     assert!(
         cred.session_token.is_some(),
         "AssumeRole should return session token"
+    );
+}
+
+#[tokio::test]
+async fn test_assume_role_granter() {
+    if env::var("REQSIGN_AWS_V4_TEST_ASSUME_ROLE").unwrap_or_default() != "on" {
+        info!("REQSIGN_AWS_V4_TEST_ASSUME_ROLE not set, skipping");
+        return;
+    }
+
+    let role_arn = env::var("REQSIGN_AWS_V4_ASSUME_ROLE_ARN")
+        .expect("REQSIGN_AWS_V4_ASSUME_ROLE_ARN must be set for assume_role test");
+    let region = env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+    let context = create_test_context();
+    let grant = AssumeRoleGrant::new(role_arn, "reqsign-granter");
+    let granter = Granter::new(
+        context,
+        DefaultCredentialProvider::new(),
+        AssumeRoleGranter::new(region, grant),
+    );
+
+    let credential = granter
+        .grant(Some(Duration::from_secs(3_600)))
+        .await
+        .expect("AssumeRole grant should succeed");
+    assert!(!credential.access_key_id.is_empty());
+    assert!(!credential.secret_access_key.is_empty());
+    assert!(
+        credential.session_token.is_some(),
+        "AssumeRole grant should return a session token"
+    );
+    assert!(
+        credential.expires_in.is_some(),
+        "AssumeRole grant should preserve expiration"
     );
 }

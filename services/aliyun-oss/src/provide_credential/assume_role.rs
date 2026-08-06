@@ -615,6 +615,7 @@ mod tests {
                 envs: HashMap::new(),
             });
 
+        let signing_time: Timestamp = "2024-03-05T06:07:08Z".parse().unwrap();
         let provider = AssumeRoleCredentialProvider::new()
             .with_base_provider(TestBaseCredentialProvider::new(Some(Credential {
                 access_key_id: "base-ak".to_string(),
@@ -625,9 +626,13 @@ mod tests {
             .with_role_arn("acs:ram::123456789012:role/test-role")
             .with_role_session_name("test-session")
             .with_sts_endpoint("https://sts.example.com")
-            .with_time("2024-03-05T06:07:08Z".parse().unwrap())
+            .with_time(signing_time)
             .with_signature_nonce("test-nonce");
-        let signer = Signer::new(ctx, provider, RequestSigner::new("test-bucket"));
+        let signer = Signer::new(
+            ctx,
+            provider,
+            RequestSigner::new("test-bucket").with_time(signing_time),
+        );
 
         let mut first_req =
             http::Request::get("https://test-bucket.oss-cn-beijing.aliyuncs.com/object")

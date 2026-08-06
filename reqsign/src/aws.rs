@@ -15,70 +15,61 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! AWS service support with convenience APIs
+//! AWS signing support.
 //!
-//! This module provides AWS signing functionality along with convenience functions
-//! for common use cases.
+//! SigV4 remains available directly under `reqsign::aws` for compatibility.
+//! The explicit algorithm modules are `v4` and `v4a`.
 
-// Re-export all AWS signing types
-pub use reqsign_aws_v4::*;
+/// AWS Signature Version 4 support.
+#[cfg(feature = "aws-v4")]
+pub mod v4 {
+    pub use reqsign_aws_v4::*;
 
-#[cfg(feature = "default-context")]
-use crate::{Signer, default_context};
+    #[cfg(feature = "default-context")]
+    use crate::{Signer, default_context};
 
-/// Default AWS Signer type with commonly used components
-#[cfg(feature = "default-context")]
-pub type DefaultSigner = Signer<Credential>;
+    /// Default SigV4 signer type.
+    #[cfg(feature = "default-context")]
+    pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default AWS signer with standard configuration
-///
-/// This function creates a signer with:
-/// - Default context (with Tokio file reader, reqwest HTTP client, OS environment)
-/// - Default credential provider (reads from env vars, config files, IMDS, etc.)
-/// - Request signer for the specified service and region
-///
-/// # Example
-///
-/// ```no_run
-/// # #[tokio::main]
-/// # async fn main() -> reqsign_core::Result<()> {
-/// // Create a signer for S3 in us-east-1
-/// let signer = reqsign::aws::default_signer("s3", "us-east-1");
-///
-/// // Sign a request
-/// let mut req = http::Request::builder()
-///     .method("GET")
-///     .uri("https://s3.amazonaws.com/my-bucket/my-object")
-///     .body(())
-///     .unwrap()
-///     .into_parts()
-///     .0;
-///     
-/// signer.sign(&mut req, None).await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// # Customization
-///
-/// You can customize the signer using the `with_*` methods:
-///
-/// ```no_run
-/// # async fn example() -> reqsign_core::Result<()> {
-/// use reqsign::aws::{default_signer, StaticCredentialProvider};
-///
-/// let signer = default_signer("s3", "us-east-1")
-///     .with_credential_provider(StaticCredentialProvider::new(
-///         "my-access-key",
-///         "my-secret-key",
-///     ));
-/// # Ok(())
-/// # }
-/// ```
-#[cfg(feature = "default-context")]
-pub fn default_signer(service: &str, region: &str) -> DefaultSigner {
-    let ctx = default_context();
-    let provider = DefaultCredentialProvider::new();
-    let signer = RequestSigner::new(service, region);
-    Signer::new(ctx, provider, signer)
+    /// Create a default SigV4 signer for an AWS service and region.
+    ///
+    /// The signer uses the default context and AWS credential provider chain.
+    #[cfg(feature = "default-context")]
+    pub fn default_signer(service: &str, region: &str) -> DefaultSigner {
+        Signer::new(
+            default_context(),
+            DefaultCredentialProvider::new(),
+            RequestSigner::new(service, region),
+        )
+    }
+}
+
+// Preserve the existing reqsign::aws::* API and make reqsign::aws::v4 explicit.
+#[cfg(feature = "aws-v4")]
+pub use v4::*;
+
+/// AWS Signature Version 4A support.
+#[cfg(feature = "aws-v4a")]
+pub mod v4a {
+    pub use reqsign_aws_v4a::*;
+
+    #[cfg(feature = "default-context")]
+    use crate::{Signer, default_context};
+
+    /// Default SigV4a signer type.
+    #[cfg(feature = "default-context")]
+    pub type DefaultSigner = Signer<Credential>;
+
+    /// Create a default SigV4a signer for an AWS service and signing region set.
+    ///
+    /// The signer uses the default context and AWS credential provider chain.
+    #[cfg(feature = "default-context")]
+    pub fn default_signer(service: &str, region_set: SigningRegionSet) -> DefaultSigner {
+        Signer::new(
+            default_context(),
+            DefaultCredentialProvider::new(),
+            RequestSigner::new(service, region_set),
+        )
+    }
 }

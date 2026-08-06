@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign"
-version = "0.20.1"
+version = "0.20.4"
 
 categories = ["authentication", "web-programming::http-client"]
 description = "Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services"
@@ -39,6 +39,7 @@ reqsign-core = { workspace = true }
 # Service implementations (optional)
 reqsign-aliyun-oss = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
+reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
@@ -61,16 +62,33 @@ default-context = [
 
 # Service features
 aliyun = ["dep:reqsign-aliyun-oss"]
-aws = ["dep:reqsign-aws-v4"]
+aws = ["aws-v4"]
+aws-v4 = ["dep:reqsign-aws-v4"]
+aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
 google = ["dep:reqsign-google"]
+google-credential-access-boundary-client-side = [
+  "google",
+  "reqsign-google/credential-access-boundary-client-side",
+]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
 volcengine = ["dep:reqsign-volcengine-tos"]
 
 # Full feature set
-full = ["aliyun", "aws", "azure", "google", "huaweicloud", "oracle", "tencent", "volcengine"]
+full = [
+  "aliyun",
+  "aws",
+  "aws-v4a",
+  "azure",
+  "google",
+  "google-credential-access-boundary-client-side",
+  "huaweicloud",
+  "oracle",
+  "tencent",
+  "volcengine",
+]
 
 [dev-dependencies]
 anyhow = "1"
