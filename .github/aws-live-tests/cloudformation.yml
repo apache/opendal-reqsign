@@ -381,7 +381,7 @@ Resources:
               - Sid: CleanUpTaskDefinition
                 Effect: Allow
                 Action: ecs:DeregisterTaskDefinition
-                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/reqsign-live-test:*
+                Resource: "*"
               - Sid: ObserveAndStopTask
                 Effect: Allow
                 Action:
@@ -411,16 +411,22 @@ Resources:
                 Effect: Allow
                 Action: ssm:GetParameter
                 Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
-              - Sid: LaunchEphemeralImdsInstance
+              - Sid: UseEphemeralImdsLaunchDependencies
                 Effect: Allow
                 Action: ec2:RunInstances
                 Resource:
                   - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}::image/*
-                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
                   - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
                   - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${LiveTestSecurityGroup.GroupId}
                   - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnetId}
                   - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+              - Sid: LaunchEphemeralImdsInstance
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
                 Condition:
                   StringEquals:
                     aws:RequestedRegion: !Ref AWS::Region
