@@ -381,7 +381,7 @@ jobs:
           RUST_LOG: DEBUG
           REQSIGN_AWS_V4_TEST_ECS: on
           AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: /creds
-          ECS_CONTAINER_METADATA_URI: http://localhost:51679
+          REQSIGN_AWS_V4_ECS_METADATA_URI_OVERRIDE: http://localhost:51679
           AWS_DEFAULT_REGION: us-east-1
       - name: Test ECSCredentialProvider with full URI
         working-directory: ./services/aws-v4

@@ -50,7 +50,10 @@ async fn test_ecs_credential_provider() {
     }
 
     let ctx = create_test_context_with_env(envs);
-    let provider = ECSCredentialProvider::new();
+    let mut provider = ECSCredentialProvider::new();
+    if let Ok(metadata_uri) = env::var("REQSIGN_AWS_V4_ECS_METADATA_URI_OVERRIDE") {
+        provider = provider.with_metadata_uri_override(metadata_uri);
+    }
 
     let cred = provider
         .provide_credential(&ctx)
