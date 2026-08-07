@@ -127,38 +127,22 @@ pub fn parse_sts_error(operation: &str, status: http::StatusCode, body: &str) ->
     // Try to parse the XML error response
     if let Ok(error_resp) = quick_xml::de::from_str::<AwsErrorResponse>(body) {
         let code = &error_resp.error.code;
-        let recognized_code = matches!(
-            code.as_str(),
-            "AccessDenied"
-                | "UnauthorizedAccess"
-                | "Forbidden"
-                | "ExpiredToken"
-                | "TokenRefreshRequired"
-                | "InvalidToken"
-                | "InvalidParameterValue"
-                | "MissingParameter"
-                | "InvalidParameterCombination"
-                | "RegionDisabled"
-                | "Throttling"
-                | "RequestLimitExceeded"
-                | "TooManyRequestsException"
-                | "ServiceUnavailable"
-                | "InternalError"
-                | "InternalFailure"
-                | "InvalidRequest"
-                | "MalformedQueryString"
-                | "MalformedPolicyDocument"
-                | "PackedPolicyTooLarge"
-        );
-        // Map AWS error codes to appropriate ErrorKind
-        let mut error = match code.as_str() {
+
+        // Map AWS error codes to appropriate ErrorKind.
+        // Keep messages opaque (no STS Message body); always attach error_code for diagnosis.
+        let error = match code.as_str() {
             // Permission/Authorization errors
             "AccessDenied" | "UnauthorizedAccess" | "Forbidden" => {
                 Error::permission_denied("AWS STS request was denied")
             }
 
-            // Credential errors
-            "ExpiredToken" | "TokenRefreshRequired" | "InvalidToken" => {
+            // Credential / identity-token errors
+            "ExpiredToken"
+            | "TokenRefreshRequired"
+            | "InvalidToken"
+            | "InvalidIdentityToken"
+            | "IDPRejectedClaim"
+            | "IDPCommunicationError" => {
                 Error::credential_invalid("AWS STS rejected the source credential")
             }
 
@@ -186,13 +170,9 @@ pub fn parse_sts_error(operation: &str, status: http::StatusCode, body: &str) ->
             _ => Error::unexpected("AWS STS request failed"),
         };
 
-        // Add context
-        error = error.with_context(format!("operation: {operation}"));
-        if recognized_code {
-            error = error.with_context(format!("error_code: {code}"));
-        }
-
         error
+            .with_context(format!("operation: {operation}"))
+            .with_context(format!("error_code: {code}"))
     } else {
         // Failed to parse error response, return generic error based on status code
         let mut error = match status.as_u16() {
@@ -339,5 +319,20 @@ mod tests {
         let debug = format!("{error:?}");
         assert_eq!(error.kind(), ErrorKind::PermissionDenied);
         assert!(!debug.contains("raw-response-secret"));
+    }
+
+    #[test]
+    fn surfaces_invalid_identity_token_code_without_message_body() {
+        let body = "<ErrorResponse><Error><Code>InvalidIdentityToken</Code>\
+             <Message>response-secret</Message></Error></ErrorResponse>";
+        let error = parse_sts_error(
+            "AssumeRoleWithWebIdentity",
+            http::StatusCode::BAD_REQUEST,
+            body,
+        );
+        assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+        let debug = format!("{error:?}");
+        assert!(debug.contains("error_code: InvalidIdentityToken"));
+        assert!(!debug.contains("response-secret"));
     }
 }
