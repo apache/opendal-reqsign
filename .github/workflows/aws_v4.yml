@@ -808,7 +808,7 @@ jobs:
 
   # Summary report
   summary:
-    if: always()
+    if: ${{ always() && !cancelled() }}
     needs:
       - unit_test
       - check_secrets
