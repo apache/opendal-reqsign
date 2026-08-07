@@ -34,10 +34,14 @@ async fn test_sas_token_signing() {
     let url = std::env::var("REQSIGN_AZURE_STORAGE_URL")
         .unwrap_or_else(|_| "https://testaccount.blob.core.windows.net".to_string());
 
-    // SAS token can be provided or we use a dummy one for testing
-    let sas_token = std::env::var("REQSIGN_AZURE_STORAGE_SAS_TOKEN").unwrap_or_else(|_| {
-        "sv=2021-06-08&ss=b&srt=sco&sp=rwx&se=2025-01-01T00:00:00Z&sig=test".to_string()
-    });
+    // SAS token can be provided or we use a dummy one for testing.
+    // Azure portal copies often include a leading '?'; normalize before use.
+    let sas_token = std::env::var("REQSIGN_AZURE_STORAGE_SAS_TOKEN")
+        .unwrap_or_else(|_| {
+            "sv=2021-06-08&ss=b&srt=sco&sp=rwx&se=2025-01-01T00:00:00Z&sig=test".to_string()
+        })
+        .trim_start_matches('?')
+        .to_string();
 
     let ctx = Context::new()
         .with_file_read(TokioFileRead)
@@ -61,14 +65,13 @@ async fn test_sas_token_signing() {
     // With SAS token, no Authorization header should be added
     assert!(!parts.headers.contains_key("authorization"));
 
-    // The SAS token should be appended to the URI as query parameter
+    // Decide separator from the original URL. Checking the signed URI always
+    // sees '?', which incorrectly forces the '&' branch.
     let uri = parts.uri.to_string();
-    if !uri.contains('?') {
-        // If original URL had no query params, SAS should be added with ?
-        assert!(uri.contains(&format!("?{}", sas_token)) || sas_token.is_empty());
+    if url.contains('?') {
+        assert!(uri.contains(&format!("&{sas_token}")) || sas_token.is_empty());
     } else {
-        // If original URL had query params, SAS should be added with &
-        assert!(uri.contains(&format!("&{}", sas_token)) || sas_token.is_empty());
+        assert!(uri.contains(&format!("?{sas_token}")) || sas_token.is_empty());
     }
 }
 

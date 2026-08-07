@@ -33,12 +33,16 @@ async fn test_external_account_credential_provider() -> Result<()> {
     let cred_path = env::var("REQSIGN_GOOGLE_EXTERNAL_ACCOUNT_CREDENTIALS")
         .expect("REQSIGN_GOOGLE_EXTERNAL_ACCOUNT_CREDENTIALS must be set for this test");
 
-    // Verify the file exists and is an external_account type
+    // Verify the file exists and is an external_account type.
+    // google-github-actions/auth writes compact JSON (`"type":"external_account"`).
     let content = std::fs::read_to_string(&cred_path)
         .expect("Failed to read external account credential file");
-    assert!(
-        content.contains(r#""type": "external_account""#),
-        "Credential file must be external_account type"
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("credential file must be valid JSON");
+    assert_eq!(
+        parsed.get("type").and_then(|v| v.as_str()),
+        Some("external_account"),
+        "Credential file must be external_account type, got: {content}"
     );
 
     let ctx = create_test_context_with_env(HashMap::from_iter([
@@ -78,11 +82,15 @@ async fn test_external_account_with_workload_identity() -> Result<()> {
     let cred_path = env::var("GOOGLE_APPLICATION_CREDENTIALS")
         .expect("GOOGLE_APPLICATION_CREDENTIALS must be set for workload identity test");
 
-    // Verify the file is an external account type
+    // Verify the file is an external account type.
+    // google-github-actions/auth writes compact JSON (`"type":"external_account"`).
     let content = std::fs::read_to_string(&cred_path).expect("Failed to read credential file");
-    assert!(
-        content.contains(r#""type": "external_account""#),
-        "Credential file must be external_account type for workload identity"
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).expect("credential file must be valid JSON");
+    assert_eq!(
+        parsed.get("type").and_then(|v| v.as_str()),
+        Some("external_account"),
+        "Credential file must be external_account type for workload identity, got: {content}"
     );
 
     let ctx = create_test_context_with_env(HashMap::from_iter([

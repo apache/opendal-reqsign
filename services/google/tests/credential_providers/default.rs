@@ -58,9 +58,9 @@ async fn test_default_credential_provider_with_json_file() -> Result<()> {
         return Ok(());
     }
 
-    // Test with test data file
+    // CI runs cargo test with working-directory = services/google.
     let test_file_path = format!(
-        "{}/services/google/testdata/test_credential.json",
+        "{}/testdata/test_credential.json",
         env::current_dir()?.to_string_lossy()
     );
 
