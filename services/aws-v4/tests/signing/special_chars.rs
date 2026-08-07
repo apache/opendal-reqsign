@@ -19,7 +19,7 @@ use super::{init_signing_test, load_static_credential, send_signed_request};
 use anyhow::Result;
 use http::{Method, Request, StatusCode};
 use log::warn;
-use percent_encoding::{utf8_percent_encode, AsciiSet};
+use percent_encoding::{AsciiSet, utf8_percent_encode};
 use reqsign_aws_core::constants::AWS_URI_ENCODE_SET;
 use std::str::FromStr;
 
@@ -94,8 +94,7 @@ async fn test_object_with_unicode_characters() -> Result<()> {
 
     let mut req = Request::new(String::new());
     *req.method_mut() = Method::HEAD;
-    *req.uri_mut() =
-        http::Uri::from_str(&format!("{}/{}", url, encode_object_key("文件名.txt")))?;
+    *req.uri_mut() = http::Uri::from_str(&format!("{}/{}", url, encode_object_key("文件名.txt")))?;
 
     let (status, _body) = send_signed_request(&ctx, &signer, req, &cred).await?;
     assert_eq!(StatusCode::NOT_FOUND, status);
