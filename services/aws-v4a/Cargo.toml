@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-aws-v4a"
-version = "3.0.3"
+version = "3.0.4"
 
 description = "AWS SigV4a signing implementation for reqsign."
 

@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-google"
-version = "3.0.4"
+version = "3.1.0"
 
 description = "Google Cloud Platform signing implementation for reqsign."
 
