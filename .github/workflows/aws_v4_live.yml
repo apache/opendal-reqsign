@@ -33,6 +33,8 @@ concurrency:
 env:
   RUST_LOG: DEBUG
   RUST_BACKTRACE: full
+  AWS_REGION: ${{ vars.REQSIGN_AWS_LIVE_REGION }}
+  AWS_DEFAULT_REGION: ${{ vars.REQSIGN_AWS_LIVE_REGION }}
 
 permissions: {}
 
@@ -63,12 +65,35 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Assume the reqsign live-test role
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+      - name: Get a GitHub OIDC token
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          aws-region: ${{ vars.REQSIGN_AWS_LIVE_REGION }}
-          role-to-assume: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
-          role-session-name: reqsign-hosted-${{ github.run_id }}
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            core.setSecret(token);
+            require('fs').writeFileSync('/tmp/reqsign-aws-role-token', token, { mode: 0o600 });
+      - name: Assume the reqsign live-test role
+        env:
+          ROLE_ARN: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
+          ROLE_SESSION_NAME: reqsign-hosted-${{ github.run_id }}
+        shell: bash
+        run: |
+          credentials="$(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "$ROLE_SESSION_NAME" \
+            --web-identity-token "$(tr -d '\n' < /tmp/reqsign-aws-role-token)" \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)"
+          read -r access_key secret_key session_token <<< "$credentials"
+          test -n "$access_key" && test -n "$secret_key" && test -n "$session_token"
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "::add-mask::$session_token"
+          {
+            echo "AWS_ACCESS_KEY_ID=$access_key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret_key"
+            echo "AWS_SESSION_TOKEN=$session_token"
+          } >> "$GITHUB_ENV"
       - name: Test StaticCredentialProvider
         working-directory: services/aws-v4
         env:
@@ -220,7 +245,7 @@ jobs:
           if [[ -n "${REQSIGN_PROCESS_TEST_HOME:-}" ]]; then
             rm -rf -- "$REQSIGN_PROCESS_TEST_HOME"
           fi
-          rm -f -- /tmp/reqsign-web-identity-token
+          rm -f -- /tmp/reqsign-aws-role-token /tmp/reqsign-web-identity-token
 
   build_live_image:
     needs: check_live_test
@@ -235,12 +260,35 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Assume the reqsign live-test role
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+      - name: Get a GitHub OIDC token
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          aws-region: ${{ vars.REQSIGN_AWS_LIVE_REGION }}
-          role-to-assume: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
-          role-session-name: reqsign-image-${{ github.run_id }}
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            core.setSecret(token);
+            require('fs').writeFileSync('/tmp/reqsign-aws-role-token', token, { mode: 0o600 });
+      - name: Assume the reqsign live-test role
+        env:
+          ROLE_ARN: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
+          ROLE_SESSION_NAME: reqsign-image-${{ github.run_id }}
+        shell: bash
+        run: |
+          credentials="$(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "$ROLE_SESSION_NAME" \
+            --web-identity-token "$(tr -d '\n' < /tmp/reqsign-aws-role-token)" \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)"
+          read -r access_key secret_key session_token <<< "$credentials"
+          test -n "$access_key" && test -n "$secret_key" && test -n "$session_token"
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "::add-mask::$session_token"
+          {
+            echo "AWS_ACCESS_KEY_ID=$access_key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret_key"
+            echo "AWS_SESSION_TOKEN=$session_token"
+          } >> "$GITHUB_ENV"
       - name: Build and push the live-test image
         id: image
         env:
@@ -266,12 +314,35 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Assume the reqsign live-test role
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+      - name: Get a GitHub OIDC token
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          aws-region: ${{ vars.REQSIGN_AWS_LIVE_REGION }}
-          role-to-assume: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
-          role-session-name: reqsign-ecs-${{ github.run_id }}
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            core.setSecret(token);
+            require('fs').writeFileSync('/tmp/reqsign-aws-role-token', token, { mode: 0o600 });
+      - name: Assume the reqsign live-test role
+        env:
+          ROLE_ARN: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
+          ROLE_SESSION_NAME: reqsign-ecs-${{ github.run_id }}
+        shell: bash
+        run: |
+          credentials="$(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "$ROLE_SESSION_NAME" \
+            --web-identity-token "$(tr -d '\n' < /tmp/reqsign-aws-role-token)" \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)"
+          read -r access_key secret_key session_token <<< "$credentials"
+          test -n "$access_key" && test -n "$secret_key" && test -n "$session_token"
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "::add-mask::$session_token"
+          {
+            echo "AWS_ACCESS_KEY_ID=$access_key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret_key"
+            echo "AWS_SESSION_TOKEN=$session_token"
+          } >> "$GITHUB_ENV"
       - name: Register and run the Fargate task
         env:
           IMAGE_URI: ${{ needs.build_live_image.outputs.image }}
@@ -370,12 +441,35 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Assume the reqsign live-test role
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+      - name: Get a GitHub OIDC token
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          aws-region: ${{ vars.REQSIGN_AWS_LIVE_REGION }}
-          role-to-assume: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
-          role-session-name: reqsign-imds-${{ github.run_id }}
+          script: |
+            const token = await core.getIDToken('sts.amazonaws.com');
+            core.setSecret(token);
+            require('fs').writeFileSync('/tmp/reqsign-aws-role-token', token, { mode: 0o600 });
+      - name: Assume the reqsign live-test role
+        env:
+          ROLE_ARN: ${{ vars.REQSIGN_AWS_LIVE_ROLE_ARN }}
+          ROLE_SESSION_NAME: reqsign-imds-${{ github.run_id }}
+        shell: bash
+        run: |
+          credentials="$(aws sts assume-role-with-web-identity \
+            --role-arn "$ROLE_ARN" \
+            --role-session-name "$ROLE_SESSION_NAME" \
+            --web-identity-token "$(tr -d '\n' < /tmp/reqsign-aws-role-token)" \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)"
+          read -r access_key secret_key session_token <<< "$credentials"
+          test -n "$access_key" && test -n "$secret_key" && test -n "$session_token"
+          echo "::add-mask::$access_key"
+          echo "::add-mask::$secret_key"
+          echo "::add-mask::$session_token"
+          {
+            echo "AWS_ACCESS_KEY_ID=$access_key"
+            echo "AWS_SECRET_ACCESS_KEY=$secret_key"
+            echo "AWS_SESSION_TOKEN=$session_token"
+          } >> "$GITHUB_ENV"
       - name: Launch the ephemeral IMDSv2 test instance
         env:
           IMAGE_URI: ${{ needs.build_live_image.outputs.image }}
