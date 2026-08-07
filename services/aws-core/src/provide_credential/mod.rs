@@ -52,4 +52,4 @@ pub use sso::SSOCredentialProvider;
 mod r#static;
 pub use r#static::StaticCredentialProvider;
 
-mod utils;
+pub(crate) mod utils;
