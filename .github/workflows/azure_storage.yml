@@ -87,14 +87,18 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AZURE_STORAGE_TEST: on
           REQSIGN_AZURE_STORAGE_URL: op://reqsign/azure-storage/url
           REQSIGN_AZURE_STORAGE_ACCOUNT_NAME: op://reqsign/azure-storage/account_name
           REQSIGN_AZURE_STORAGE_ACCOUNT_KEY: op://reqsign/azure-storage/account_key
           REQSIGN_AZURE_STORAGE_SAS_TOKEN: op://reqsign/azure-storage/sas_token
       - name: Test signing
         working-directory: ./services/azure-storage
+        env:
+          # Gate flags must live on the test step. 1Password export-env only
+          # forwards op:// secrets, so literals set on Load secrets are dropped.
+          REQSIGN_AZURE_STORAGE_TEST: on
         run: |
+          test "${REQSIGN_AZURE_STORAGE_TEST}" = "on"
           echo "::group::Running signing tests"
           cargo test signing:: --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -118,13 +122,15 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AZURE_STORAGE_TEST_ENV: on
           AZURE_STORAGE_ACCOUNT_NAME: op://reqsign/azure-storage/account_name
           AZURE_STORAGE_ACCOUNT_KEY: op://reqsign/azure-storage/account_key
           AZURE_STORAGE_SAS_TOKEN: op://reqsign/azure-storage/sas_token
       - name: Test EnvCredentialProvider
         working-directory: ./services/azure-storage
+        env:
+          REQSIGN_AZURE_STORAGE_TEST_ENV: on
         run: |
+          test "${REQSIGN_AZURE_STORAGE_TEST_ENV}" = "on"
           echo "::group::Testing EnvCredentialProvider"
           cargo test credential_providers::env:: --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -148,14 +154,16 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AZURE_STORAGE_TEST: on
           REQSIGN_AZURE_STORAGE_URL: op://reqsign/azure-storage/url
           REQSIGN_AZURE_STORAGE_ACCOUNT_NAME: op://reqsign/azure-storage/account_name
           REQSIGN_AZURE_STORAGE_ACCOUNT_KEY: op://reqsign/azure-storage/account_key
           REQSIGN_AZURE_STORAGE_SAS_TOKEN: op://reqsign/azure-storage/sas_token
       - name: Test StaticCredentialProvider
         working-directory: ./services/azure-storage
+        env:
+          REQSIGN_AZURE_STORAGE_TEST: on
         run: |
+          test "${REQSIGN_AZURE_STORAGE_TEST}" = "on"
           echo "::group::Testing StaticCredentialProvider"
           cargo test credential_providers::static_provider:: --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -179,13 +187,15 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AZURE_STORAGE_TEST_CLIENT_SECRET: on
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
           AZURE_CLIENT_SECRET: op://reqsign/azure-storage/client_secret
       - name: Test ClientSecretCredentialProvider
         working-directory: ./services/azure-storage
+        env:
+          REQSIGN_AZURE_STORAGE_TEST_CLIENT_SECRET: on
         run: |
+          test "${REQSIGN_AZURE_STORAGE_TEST_CLIENT_SECRET}" = "on"
           echo "::group::Testing ClientSecretCredentialProvider"
           cargo test credential_providers::client_secret:: --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -209,7 +219,6 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AZURE_STORAGE_TEST_CLIENT_CERTIFICATE: on
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
           AZURE_CLIENT_CERTIFICATE_BASE64: op://reqsign/azure-storage/certificate_pem_base64
@@ -229,6 +238,7 @@ jobs:
         env:
           REQSIGN_AZURE_STORAGE_TEST_CLIENT_CERTIFICATE: on
         run: |
+          test "${REQSIGN_AZURE_STORAGE_TEST_CLIENT_CERTIFICATE}" = "on"
           echo "::group::Testing ClientCertificateCredentialProvider"
           cargo test credential_providers::client_certificate:: --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -255,7 +265,6 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AZURE_STORAGE_TEST_CLI: on
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Azure Login with OIDC
@@ -269,6 +278,7 @@ jobs:
         env:
           REQSIGN_AZURE_STORAGE_TEST_CLI: on
         run: |
+          test "${REQSIGN_AZURE_STORAGE_TEST_CLI}" = "on"
           echo "::group::Testing AzureCliCredentialProvider"
           cargo test credential_providers::azure_cli:: --no-fail-fast -- --no-capture
           echo "::endgroup::"

@@ -87,13 +87,17 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_GOOGLE_TEST: on
           REQSIGN_GOOGLE_CREDENTIAL: op://reqsign/google/credential_base64
           REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE: op://reqsign/google/storage_scope
           REQSIGN_GOOGLE_CLOUD_STORAGE_URL: op://reqsign/google/storage_url
       - name: Test signing
         working-directory: ./services/google
+        env:
+          # Gate flags must live on the test step. 1Password export-env only
+          # forwards op:// secrets, so literals set on Load secrets are dropped.
+          REQSIGN_GOOGLE_TEST: on
         run: |
+          test "${REQSIGN_GOOGLE_TEST}" = "on"
           echo "::group::Running signing tests"
           cargo test signing:: --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -116,7 +120,6 @@ jobs:
         id: load_secrets
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         env:
-          REQSIGN_GOOGLE_TEST_DEFAULT: on
           GOOGLE_APPLICATION_CREDENTIALS_BASE64: op://reqsign/google/credential_base64
       - name: Setup test credentials file
         run: |
@@ -126,7 +129,10 @@ jobs:
           STEPS_LOAD_SECRETS_OUTPUTS_GOOGLE_APPLICATION_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_APPLICATION_CREDENTIALS_BASE64 }}
       - name: Test DefaultCredentialProvider
         working-directory: ./services/google
+        env:
+          REQSIGN_GOOGLE_TEST_DEFAULT: on
         run: |
+          test "${REQSIGN_GOOGLE_TEST_DEFAULT}" = "on"
           echo "::group::Testing DefaultCredentialProvider"
           cargo test test_default_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -150,12 +156,14 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_GOOGLE_TEST_STATIC: on
           REQSIGN_GOOGLE_CREDENTIAL: op://reqsign/google/credential_base64
           REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE: op://reqsign/google/storage_scope
       - name: Test StaticCredentialProvider
         working-directory: ./services/google
+        env:
+          REQSIGN_GOOGLE_TEST_STATIC: on
         run: |
+          test "${REQSIGN_GOOGLE_TEST_STATIC}" = "on"
           echo "::group::Testing StaticCredentialProvider"
           cargo test test_static_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -178,7 +186,6 @@ jobs:
         id: load_secrets
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         env:
-          REQSIGN_GOOGLE_TEST_AUTHORIZED_USER: on
           AUTHORIZED_USER_CREDENTIALS_BASE64: op://reqsign/google/authorized_user_base64
       - name: Setup test credentials file
         run: |
@@ -188,7 +195,10 @@ jobs:
           STEPS_LOAD_SECRETS_OUTPUTS_AUTHORIZED_USER_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.AUTHORIZED_USER_CREDENTIALS_BASE64 }}
       - name: Test AuthorizedUserCredentialProvider
         working-directory: ./services/google
+        env:
+          REQSIGN_GOOGLE_TEST_AUTHORIZED_USER: on
         run: |
+          test "${REQSIGN_GOOGLE_TEST_AUTHORIZED_USER}" = "on"
           echo "::group::Testing AuthorizedUserCredentialProvider"
           cargo test test_authorized_user_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -215,7 +225,6 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY: on
           GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
           GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
       - name: Setup Workload Identity with Google Auth
@@ -226,7 +235,10 @@ jobs:
           service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
       - name: Test ExternalAccountCredentialProvider
         working-directory: ./services/google
+        env:
+          REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY: on
         run: |
+          test "${REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY}" = "on"
           echo "::group::Testing ExternalAccountCredentialProvider"
           # The google-github-actions/auth action sets GOOGLE_APPLICATION_CREDENTIALS
           # reqsign should be able to use this external_account configuration
@@ -251,7 +263,6 @@ jobs:
         id: load_secrets
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         env:
-          REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT: on
           IMPERSONATED_SA_CREDENTIALS_BASE64: op://reqsign/google/impersonated_sa_base64
       - name: Setup test credentials file
         run: |
@@ -261,7 +272,10 @@ jobs:
           STEPS_LOAD_SECRETS_OUTPUTS_IMPERSONATED_SA_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.IMPERSONATED_SA_CREDENTIALS_BASE64 }}
       - name: Test ImpersonatedServiceAccountCredentialProvider
         working-directory: ./services/google
+        env:
+          REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT: on
         run: |
+          test "${REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT}" = "on"
           echo "::group::Testing ImpersonatedServiceAccountCredentialProvider"
           cargo test test_impersonated_service_account_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"

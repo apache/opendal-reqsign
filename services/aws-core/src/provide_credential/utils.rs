@@ -117,95 +117,75 @@ pub struct AwsErrorResponse {
 pub struct AwsError {
     #[serde(rename = "Code")]
     pub code: String,
+    #[serde(rename = "Message")]
+    pub message: String,
 }
 
 /// Parse AWS STS error response and return appropriate error
 ///
 /// This function analyzes AWS error codes and maps them to the correct ErrorKind
 /// with meaningful context for debugging.
+///
+/// STS error codes and messages are diagnostic text and are intentionally preserved.
+/// Credential material must still stay out of `Debug` via type-level redaction elsewhere.
 pub fn parse_sts_error(operation: &str, status: http::StatusCode, body: &str) -> Error {
     // Try to parse the XML error response
     if let Ok(error_resp) = quick_xml::de::from_str::<AwsErrorResponse>(body) {
         let code = &error_resp.error.code;
-        let recognized_code = matches!(
-            code.as_str(),
-            "AccessDenied"
-                | "UnauthorizedAccess"
-                | "Forbidden"
-                | "ExpiredToken"
-                | "TokenRefreshRequired"
-                | "InvalidToken"
-                | "InvalidParameterValue"
-                | "MissingParameter"
-                | "InvalidParameterCombination"
-                | "RegionDisabled"
-                | "Throttling"
-                | "RequestLimitExceeded"
-                | "TooManyRequestsException"
-                | "ServiceUnavailable"
-                | "InternalError"
-                | "InternalFailure"
-                | "InvalidRequest"
-                | "MalformedQueryString"
-                | "MalformedPolicyDocument"
-                | "PackedPolicyTooLarge"
-        );
-        // Map AWS error codes to appropriate ErrorKind
-        let mut error = match code.as_str() {
-            // Permission/Authorization errors
-            "AccessDenied" | "UnauthorizedAccess" | "Forbidden" => {
-                Error::permission_denied("AWS STS request was denied")
-            }
+        let message = &error_resp.error.message;
+        let detail = format!("{code}: {message}");
 
-            // Credential errors
-            "ExpiredToken" | "TokenRefreshRequired" | "InvalidToken" => {
-                Error::credential_invalid("AWS STS rejected the source credential")
-            }
+        // Map AWS error codes to appropriate ErrorKind.
+        let error = match code.as_str() {
+            // Permission/Authorization errors
+            "AccessDenied" | "UnauthorizedAccess" | "Forbidden" => Error::permission_denied(detail),
+
+            // Credential / identity-token errors
+            "ExpiredToken"
+            | "TokenRefreshRequired"
+            | "InvalidToken"
+            | "InvalidIdentityToken"
+            | "IDPRejectedClaim"
+            | "IDPCommunicationError" => Error::credential_invalid(detail),
 
             // Configuration errors
             "InvalidParameterValue" | "MissingParameter" | "InvalidParameterCombination" => {
-                Error::config_invalid("AWS STS configuration is invalid")
+                Error::config_invalid(detail)
             }
 
             // Rate limiting
             "Throttling" | "RequestLimitExceeded" | "TooManyRequestsException" => {
-                Error::rate_limited("AWS STS request was rate limited")
+                Error::rate_limited(detail)
             }
 
             // Service unavailable (retryable)
             "ServiceUnavailable" | "InternalError" | "InternalFailure" => {
-                Error::unexpected("AWS STS service failed").set_retryable(true)
+                Error::unexpected(detail).set_retryable(true)
             }
 
             // Request errors
-            "InvalidRequest" | "MalformedQueryString" => {
-                Error::request_invalid("AWS STS rejected the request")
-            }
+            "InvalidRequest" | "MalformedQueryString" => Error::request_invalid(detail),
 
             // Default to unexpected
-            _ => Error::unexpected("AWS STS request failed"),
+            _ => Error::unexpected(detail),
         };
 
-        // Add context
-        error = error.with_context(format!("operation: {operation}"));
-        if recognized_code {
-            error = error.with_context(format!("error_code: {code}"));
-        }
-
         error
+            .with_context(format!("operation: {operation}"))
+            .with_context(format!("error_code: {code}"))
     } else {
-        // Failed to parse error response, return generic error based on status code
+        // Failed to parse error response, return generic error based on status code.
+        // Preserve the response body: it is diagnostic text, not credential material.
+        let detail = format!("STS request failed with {status}: {body}");
         let mut error = match status.as_u16() {
-            400..=499 if status == http::StatusCode::FORBIDDEN => {
-                Error::permission_denied("AWS STS request was denied")
-            }
+            400..=499 if status == http::StatusCode::FORBIDDEN => Error::permission_denied(detail),
             400..=499 if status == http::StatusCode::UNAUTHORIZED => {
-                Error::credential_invalid("AWS STS rejected the source credential")
+                Error::credential_invalid(detail)
             }
-            429 => Error::rate_limited("AWS STS request was rate limited"),
-            400..=499 => Error::request_invalid("AWS STS rejected the request"),
-            500..=599 => Error::unexpected("AWS STS service failed").set_retryable(true),
-            _ => Error::unexpected("AWS STS request failed"),
+            429 => Error::rate_limited(detail),
+            400..=499 => Error::request_invalid(detail),
+            500..=599 => Error::unexpected(detail).set_retryable(true),
+            _ => Error::unexpected(detail),
         };
 
         error = error
@@ -308,18 +288,19 @@ mod tests {
     }
 
     #[test]
-    fn redacts_sts_error_material_and_preserves_legacy_kinds() {
+    fn preserves_sts_error_kinds_and_surfaces_message_text() {
         let cases = [
             ("RegionDisabled", ErrorKind::Unexpected),
             ("MalformedPolicyDocument", ErrorKind::Unexpected),
             ("PackedPolicyTooLarge", ErrorKind::Unexpected),
             ("InvalidRequest", ErrorKind::RequestInvalid),
+            ("InvalidIdentityToken", ErrorKind::CredentialInvalid),
         ];
 
         for (code, expected_kind) in cases {
             let body = format!(
                 "<ErrorResponse><Error><Code>{code}</Code>\
-                 <Message>response-secret</Message></Error></ErrorResponse>"
+                 <Message>diagnostic detail for {code}</Message></Error></ErrorResponse>"
             );
             let error = parse_sts_error(
                 "AssumeRoleWithWebIdentity",
@@ -328,16 +309,17 @@ mod tests {
             );
             assert_eq!(error.kind(), expected_kind);
             let debug = format!("{error:?}");
-            assert!(!debug.contains("response-secret"));
+            assert!(debug.contains(&format!("error_code: {code}")));
+            assert!(debug.contains(&format!("diagnostic detail for {code}")));
         }
 
         let error = parse_sts_error(
             "AssumeRole",
             http::StatusCode::FORBIDDEN,
-            "raw-response-secret",
+            "raw diagnostic body",
         );
         let debug = format!("{error:?}");
         assert_eq!(error.kind(), ErrorKind::PermissionDenied);
-        assert!(!debug.contains("raw-response-secret"));
+        assert!(debug.contains("raw diagnostic body"));
     }
 }

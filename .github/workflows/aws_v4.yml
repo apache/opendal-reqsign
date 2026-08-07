@@ -44,11 +44,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Run unit tests
-        working-directory: ./services/aws-v4
         run: |
-          echo "::group::Running unit tests"
-          cargo test --lib --no-fail-fast
-          cargo test --doc --no-fail-fast
+          echo "::group::Running aws-core unit tests"
+          cargo test -p reqsign-aws-core --lib --no-fail-fast
+          echo "::endgroup::"
+          echo "::group::Running aws-v4 unit tests"
+          cargo test -p reqsign-aws-v4 --lib --no-fail-fast
+          cargo test -p reqsign-aws-v4 --doc --no-fail-fast
           echo "::endgroup::"
 
   # Check if we can run integration tests
@@ -87,7 +89,6 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AWS_V4_TEST: on
           REQSIGN_AWS_V4_ACCESS_KEY: op://reqsign/aws-v4/access_key
           REQSIGN_AWS_V4_SECRET_KEY: op://reqsign/aws-v4/secret_key
           REQSIGN_AWS_V4_REGION: op://reqsign/aws-v4/region
@@ -95,7 +96,12 @@ jobs:
           REQSIGN_AWS_V4_URL: op://reqsign/aws-v4/url
       - name: Test signing
         working-directory: ./services/aws-v4
+        env:
+          # Gate flags must live on the test step. 1Password export-env only
+          # forwards op:// secrets, so literals set on Load secrets are dropped.
+          REQSIGN_AWS_V4_TEST: on
         run: |
+          test "${REQSIGN_AWS_V4_TEST}" = "on"
           echo "::group::Running signing tests"
           cargo test signing:: --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -119,12 +125,14 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AWS_V4_TEST_ENV: on
           AWS_ACCESS_KEY_ID: op://reqsign/aws-v4/access_key
           AWS_SECRET_ACCESS_KEY: op://reqsign/aws-v4/secret_key
       - name: Test EnvCredentialProvider
         working-directory: ./services/aws-v4
+        env:
+          REQSIGN_AWS_V4_TEST_ENV: on
         run: |
+          test "${REQSIGN_AWS_V4_TEST_ENV}" = "on"
           echo "::group::Testing EnvCredentialProvider"
           cargo test test_env_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -147,8 +155,6 @@ jobs:
         id: load_secret
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         env:
-          REQSIGN_AWS_V4_TEST_ENV: on
-          REQSIGN_AWS_V4_TEST_PROFILE: on
           AWS_ACCESS_KEY_ID: op://reqsign/aws-v4/access_key
           AWS_SECRET_ACCESS_KEY: op://reqsign/aws-v4/secret_key
       - name: Setup test AWS profile
@@ -177,7 +183,10 @@ jobs:
           STEPS_LOAD_SECRETS_OUTPUTS_AWS_SECRET_ACCESS_KEY: ${{ steps.load_secret.outputs.AWS_SECRET_ACCESS_KEY }}
       - name: Test ProfileCredentialProvider
         working-directory: ./services/aws-v4
+        env:
+          REQSIGN_AWS_V4_TEST_PROFILE: on
         run: |
+          test "${REQSIGN_AWS_V4_TEST_PROFILE}" = "on"
           echo "::group::Testing ProfileCredentialProvider"
           cargo test test_profile_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -201,14 +210,16 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AWS_V4_TEST_ASSUME_ROLE: on
           REQSIGN_AWS_V4_ASSUME_ROLE_ARN: op://reqsign/aws-v4/assume_role_arn
           AWS_ACCESS_KEY_ID: op://reqsign/aws-v4/access_key
           AWS_SECRET_ACCESS_KEY: op://reqsign/aws-v4/secret_key
           AWS_REGION: op://reqsign/aws-v4/region
       - name: Test AssumeRoleCredentialProvider
         working-directory: ./services/aws-v4
+        env:
+          REQSIGN_AWS_V4_TEST_ASSUME_ROLE: on
         run: |
+          test "${REQSIGN_AWS_V4_TEST_ASSUME_ROLE}" = "on"
           echo "::group::Testing AssumeRoleCredentialProvider"
           cargo test test_assume_role_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"
@@ -248,17 +259,18 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AWS_V4_TEST_WEB_IDENTITY: on
           AWS_ROLE_ARN: op://reqsign/aws-v4/web_identity_role_arn
           AWS_REGION: op://reqsign/aws-v4/region
       - name: Test AssumeRoleWithWebIdentityCredentialProvider
         working-directory: ./services/aws-v4
+        env:
+          REQSIGN_AWS_V4_TEST_WEB_IDENTITY: on
+          AWS_WEB_IDENTITY_TOKEN_FILE: /tmp/web_identity_token
         run: |
+          test "${REQSIGN_AWS_V4_TEST_WEB_IDENTITY}" = "on"
           echo "::group::Testing AssumeRoleWithWebIdentityCredentialProvider"
           cargo test test_assume_role_with_web_identity_credential_provider --no-fail-fast -- --no-capture
           echo "::endgroup::"
-        env:
-          AWS_WEB_IDENTITY_TOKEN_FILE: /tmp/web_identity_token
 
   # IMDSv2CredentialProvider test (using amazon-ec2-metadata-mock)
   test_imds_provider:
@@ -595,14 +607,16 @@ jobs:
         with:
           export-env: true
         env:
-          REQSIGN_AWS_V4_TEST_S3_EXPRESS: on
           REQSIGN_AWS_V4_S3_EXPRESS_BUCKET: op://reqsign/aws-v4-s3-express/bucket
           AWS_ACCESS_KEY_ID: op://reqsign/aws-v4/access_key
           AWS_SECRET_ACCESS_KEY: op://reqsign/aws-v4/secret_key
           AWS_REGION: op://reqsign/aws-v4-s3-express/region
       - name: Test S3ExpressSessionProvider
         working-directory: ./services/aws-v4
+        env:
+          REQSIGN_AWS_V4_TEST_S3_EXPRESS: on
         run: |
+          test "${REQSIGN_AWS_V4_TEST_S3_EXPRESS}" = "on"
           echo "::group::Testing S3ExpressSessionProvider"
           cargo test test_s3_express --no-fail-fast -- --no-capture
           echo "::endgroup::"

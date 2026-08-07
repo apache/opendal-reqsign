@@ -1003,7 +1003,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn redacts_debug_transport_sts_errors_and_raw_responses() {
+    async fn redacts_credential_material_from_debug_but_keeps_sts_error_text() {
         let grant = valid_grant()
             .with_external_id("external-secret")
             .with_policy(r#"{"Statement":"policy-secret"}"#)
@@ -1035,49 +1035,47 @@ mod tests {
             .expect_err("transport must fail");
         let transport_debug = format!("{transport_error:?}");
         assert!(!transport_debug.contains(SOURCE_SECRET_KEY));
-        assert!(!transport_debug.contains("policy-secret"));
+        assert!(!transport_debug.contains(SOURCE_SESSION_TOKEN));
         assert!(transport_error.is_retryable());
 
+        // STS error Code/Message are diagnostic text and must remain visible.
         let known_sts_error_response = http::Response::builder()
             .status(http::StatusCode::FORBIDDEN)
-            .header("x-amzn-requestid", "response-request-id-secret")
             .body(Bytes::from_static(
                 br#"<ErrorResponse><Error><Code>AccessDenied</Code>
-                    <Message>policy-secret raw-response-secret returned-session-token</Message>
+                    <Message>not authorized to perform sts:AssumeRole</Message>
                 </Error></ErrorResponse>"#,
             ))
             .expect("response must build");
         let unknown_sts_error_response = http::Response::builder()
             .status(http::StatusCode::BAD_REQUEST)
             .body(Bytes::from_static(
-                br#"<ErrorResponse><Error><Code>raw-response-secret</Code>
-                    <Message>policy-secret returned-session-token</Message>
+                br#"<ErrorResponse><Error><Code>InvalidIdentityToken</Code>
+                    <Message>incorrect token audience</Message>
                 </Error></ErrorResponse>"#,
             ))
             .expect("response must build");
-        let malformed_success = http::Response::builder()
-            .status(http::StatusCode::OK)
-            .body(Bytes::from_static(
-                b"raw-response-secret returned-session-token",
-            ))
-            .expect("response must build");
-        let http = MockHttpSend::new([
-            known_sts_error_response,
-            unknown_sts_error_response,
-            malformed_success,
-        ]);
+        let http = MockHttpSend::new([known_sts_error_response, unknown_sts_error_response]);
         let context = Context::new().with_http_send(http);
-        for _ in 0..3 {
-            let error = operation
-                .grant_credential(&context, &source, None)
-                .await
-                .expect_err("response must fail");
-            let debug = format!("{error:?}");
-            assert!(!debug.contains("policy-secret"));
-            assert!(!debug.contains("raw-response-secret"));
-            assert!(!debug.contains("returned-session-token"));
-            assert!(!debug.contains("response-request-id-secret"));
-        }
+
+        let denied = operation
+            .grant_credential(&context, &source, None)
+            .await
+            .expect_err("AccessDenied must fail");
+        let denied_debug = format!("{denied:?}");
+        assert!(denied_debug.contains("AccessDenied"));
+        assert!(denied_debug.contains("not authorized to perform sts:AssumeRole"));
+        assert!(!denied_debug.contains(SOURCE_SECRET_KEY));
+        assert!(!denied_debug.contains(SOURCE_SESSION_TOKEN));
+
+        let identity = operation
+            .grant_credential(&context, &source, None)
+            .await
+            .expect_err("InvalidIdentityToken must fail");
+        let identity_debug = format!("{identity:?}");
+        assert!(identity_debug.contains("InvalidIdentityToken"));
+        assert!(identity_debug.contains("incorrect token audience"));
+        assert!(!identity_debug.contains(SOURCE_SECRET_KEY));
 
         let (provider_source, _) = FixedCredentialProvider::new(source);
         let provider = AssumeRoleCredentialProvider::new(

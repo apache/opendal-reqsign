@@ -60,6 +60,12 @@ const AWS_EC2_METADATA_DISABLED: &str = "AWS_EC2_METADATA_DISABLED";
 const AWS_IMDSV2_TOKEN_HEADER: &str = "x-aws-ec2-metadata-token";
 const AWS_IMDSV2_TTL_HEADER: &str = "x-aws-ec2-metadata-token-ttl-seconds";
 const AWS_IMDSV2_TTL_SECONDS: &str = "300";
+/// Scope required on the STS token used to call IAM Credentials `generateAccessToken`.
+///
+/// Caller business scopes (for example Storage) must not be used here: that token only
+/// authorizes the impersonation API. Either `iam` or `cloud-platform` is accepted by Google;
+/// prefer the narrower `iam` scope for the intermediate credential.
+const STS_IMPERSONATION_SCOPE: &str = "https://www.googleapis.com/auth/iam";
 
 /// STS token response.
 #[derive(Deserialize)]
@@ -164,6 +170,24 @@ impl ExternalAccountCredentialProvider {
             .clone()
             .or_else(|| ctx.env_var(crate::constants::GOOGLE_SCOPE))
             .unwrap_or_else(|| crate::constants::DEFAULT_SCOPE.to_string())
+    }
+
+    /// Scope for the STS token exchange.
+    ///
+    /// When service account impersonation follows, the STS token is only used to call
+    /// IAM Credentials and must carry `iam` (or `cloud-platform`). The caller's business
+    /// scopes are requested later via `generateAccessToken`. Without impersonation, STS
+    /// returns the final token and therefore uses the caller scope directly.
+    fn resolve_sts_scope(&self, ctx: &Context) -> String {
+        if self
+            .external_account
+            .service_account_impersonation_url
+            .is_some()
+        {
+            STS_IMPERSONATION_SCOPE.to_string()
+        } else {
+            self.resolve_scope(ctx)
+        }
     }
 
     async fn load_oidc_token(&self, ctx: &Context) -> Result<String> {
@@ -772,7 +796,7 @@ impl ExternalAccountCredentialProvider {
     async fn exchange_sts_token(&self, ctx: &Context, oidc_token: &str) -> Result<Token> {
         debug!("exchanging OIDC token for STS access token");
 
-        let scope = self.resolve_scope(ctx);
+        let scope = self.resolve_sts_scope(ctx);
         let token_url = resolve_template(ctx, &self.external_account.token_url)?;
         let audience = resolve_template(ctx, &self.external_account.audience)?;
         let subject_token_type = resolve_template(ctx, &self.external_account.subject_token_type)?;
@@ -1311,6 +1335,67 @@ mod tests {
         }
     }
 
+    /// Captures STS and IAM Credentials scopes used during WIF + impersonation.
+    #[derive(Clone, Debug, Default)]
+    struct CaptureStsAndImpersonateHttpSend {
+        sts_scope: Arc<Mutex<Option<String>>>,
+        impersonation_scopes: Arc<Mutex<Option<Vec<String>>>>,
+    }
+
+    impl HttpSend for CaptureStsAndImpersonateHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            assert_eq!(req.method(), http::Method::POST);
+            let url = req.uri().to_string();
+
+            if url == "https://sts.googleapis.com/v1/token" {
+                let pairs: HashMap<String, String> = form_urlencoded::parse(req.body().as_ref())
+                    .into_owned()
+                    .collect();
+                *self.sts_scope.lock().expect("lock") = pairs.get("scope").cloned();
+                let body = serde_json::json!({
+                    "access_token": "sts-token",
+                    "expires_in": 3600
+                });
+                return Ok(http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(serde_json::to_vec(&body).expect("json must encode").into())
+                    .expect("response must build"));
+            }
+
+            if url.contains("generateAccessToken") {
+                assert_eq!(
+                    req.headers()
+                        .get(AUTHORIZATION)
+                        .expect("authorization must exist")
+                        .to_str()
+                        .expect("authorization must be valid string"),
+                    "Bearer sts-token"
+                );
+                let body: serde_json::Value =
+                    serde_json::from_slice(req.body()).expect("impersonation body must be json");
+                let scopes = body
+                    .get("scope")
+                    .and_then(|v| v.as_array())
+                    .expect("scope array")
+                    .iter()
+                    .map(|v| v.as_str().expect("scope string").to_string())
+                    .collect::<Vec<_>>();
+                *self.impersonation_scopes.lock().expect("lock") = Some(scopes);
+
+                let resp = serde_json::json!({
+                    "accessToken": "impersonated-token",
+                    "expireTime": "2099-01-01T00:00:00Z"
+                });
+                return Ok(http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(serde_json::to_vec(&resp).expect("json must encode").into())
+                    .expect("response must build"));
+            }
+
+            panic!("unexpected URL: {url}");
+        }
+    }
+
     #[derive(Debug)]
     struct UrlThenStsHttpSend {
         expected_get_url: String,
@@ -1473,6 +1558,50 @@ mod tests {
             .expect("credential must exist");
         assert!(cred.has_token());
         assert!(cred.has_valid_token());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_external_account_impersonation_uses_iam_scope_for_sts() -> Result<()> {
+        let impersonation_url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/sa@example.com:generateAccessToken";
+        let business_scope = "https://www.googleapis.com/auth/devstorage.read_write";
+
+        let external_account = ExternalAccount {
+            audience: "aud".to_string(),
+            subject_token_type: "urn:ietf:params:oauth:token-type:jwt".to_string(),
+            token_url: "https://sts.googleapis.com/v1/token".to_string(),
+            credential_source: external_account::Source::File(external_account::FileSource {
+                file: "/var/run/token".to_string(),
+                format: external_account::Format::Text,
+            }),
+            service_account_impersonation_url: Some(impersonation_url.to_string()),
+            service_account_impersonation: None,
+        };
+
+        let http = CaptureStsAndImpersonateHttpSend::default();
+        let sts_scope = Arc::clone(&http.sts_scope);
+        let impersonation_scopes = Arc::clone(&http.impersonation_scopes);
+        let fs = MockFileRead::default().with_file("/var/run/token", b"test-oidc");
+        let ctx = Context::new().with_http_send(http).with_file_read(fs);
+
+        let provider =
+            ExternalAccountCredentialProvider::new(external_account).with_scope(business_scope);
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must exist");
+        assert!(cred.has_valid_token());
+
+        assert_eq!(
+            sts_scope.lock().expect("lock").as_deref(),
+            Some(STS_IMPERSONATION_SCOPE),
+            "STS intermediate token must use IAM scope when impersonating"
+        );
+        assert_eq!(
+            impersonation_scopes.lock().expect("lock").as_deref(),
+            Some([business_scope.to_string()].as_slice()),
+            "generateAccessToken must request the caller's business scope"
+        );
         Ok(())
     }
 
