@@ -223,7 +223,8 @@ impl CognitoIdentityCredentialProvider {
             .map_err(|e| Error::unexpected(format!("failed to parse credentials response: {e}")))?;
 
         let creds = result.credentials;
-        let expires_in = Timestamp::from_second(creds.expiration)
+        let expiration = parse_expiration(&creds.expiration)?;
+        let expires_in = Timestamp::from_second(expiration)
             .map_err(|e| Error::unexpected(format!("invalid expiration date: {e}")))?;
 
         Ok(Credential {
@@ -255,7 +256,27 @@ struct CognitoCredentials {
     access_key_id: String,
     secret_key: String,
     session_token: String,
-    expiration: i64,
+    expiration: serde_json::Number,
+}
+
+fn parse_expiration(expiration: &serde_json::Number) -> Result<i64> {
+    if let Some(expiration) = expiration.as_i64() {
+        return Ok(expiration);
+    }
+
+    let expiration = expiration
+        .as_f64()
+        .ok_or_else(|| Error::unexpected("Cognito credential expiration is not a JSON number"))?;
+    if !expiration.is_finite()
+        || expiration.fract() != 0.0
+        || expiration < i64::MIN as f64
+        || expiration >= -(i64::MIN as f64)
+    {
+        return Err(Error::unexpected(
+            "Cognito credential expiration must be a whole number of Unix seconds",
+        ));
+    }
+    Ok(expiration as i64)
 }
 impl ProvideCredential for CognitoIdentityCredentialProvider {
     type Credential = Credential;
@@ -308,5 +329,17 @@ mod tests {
             Some("us-east-1:12345678-1234-1234-1234-123456789012".to_string())
         );
         assert_eq!(provider.region, Some("us-east-1".to_string()));
+    }
+
+    #[test]
+    fn test_parse_cognito_expiration() {
+        let integer = serde_json::from_str("1786124131").unwrap();
+        assert_eq!(parse_expiration(&integer).unwrap(), 1_786_124_131);
+
+        let whole_float = serde_json::from_str("1786124131.0").unwrap();
+        assert_eq!(parse_expiration(&whole_float).unwrap(), 1_786_124_131);
+
+        let fractional = serde_json::from_str("1786124131.5").unwrap();
+        assert!(parse_expiration(&fractional).is_err());
     }
 }

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context;
+use super::{assert_credentials_work, create_test_context};
 use log::info;
 use reqsign_aws_v4::{
     AssumeRoleCredentialProvider, AssumeRoleGrant, AssumeRoleGranter, DefaultCredentialProvider,
@@ -63,6 +63,7 @@ async fn test_assume_role_credential_provider() {
         cred.session_token.is_some(),
         "AssumeRole should return session token"
     );
+    assert_credentials_work(&ctx, &cred).await;
 }
 
 #[tokio::test]
@@ -78,7 +79,7 @@ async fn test_assume_role_granter() {
     let context = create_test_context();
     let grant = AssumeRoleGrant::new(role_arn, "reqsign-granter");
     let granter = Granter::new(
-        context,
+        context.clone(),
         DefaultCredentialProvider::new(),
         AssumeRoleGranter::new(region, grant),
     );
@@ -97,4 +98,5 @@ async fn test_assume_role_granter() {
         credential.expires_in.is_some(),
         "AssumeRole grant should preserve expiration"
     );
+    assert_credentials_work(&context, &credential).await;
 }

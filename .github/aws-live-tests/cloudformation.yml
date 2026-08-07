@@ -1,0 +1,518 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Persistent control plane for reqsign AWS live credential-provider tests
+
+Parameters:
+  GitHubOrganization:
+    Type: String
+    Default: apache
+  GitHubRepository:
+    Type: String
+    Default: opendal-reqsign
+  TestBucketName:
+    Type: String
+    Default: reqsign-aws-v4-test
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetId:
+    Type: AWS::EC2::Subnet::Id
+
+Resources:
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: reqsign-live-test
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the ten newest live-test images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: reqsign-live-test
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  EcsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /reqsign/live-tests/ecs
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  LiveTestSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Outbound-only networking for reqsign live tests
+      GroupName: reqsign-live-test
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: AWS public service endpoints
+      Tags:
+        - Key: Name
+          Value: reqsign-live-test
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: reqsign-live-test-ecs-execution
+      Description: Pulls the reqsign test image and publishes task logs
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: reqsign-live-test-ecs-execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !GetAtt EcrRepository.Arn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${EcsLogGroup.Arn}:*
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: reqsign-live-test-ecs-task
+      Description: Credential source exercised by ECSCredentialProvider
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  Ec2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: reqsign-live-test-ec2-instance
+      Description: Credential source exercised by IMDSv2CredentialProvider
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: reqsign-live-test-ec2-bootstrap
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !GetAtt EcrRepository.Arn
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${TestBucketName}/live-tests/results/*
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  Ec2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: reqsign-live-test-ec2-instance
+      Roles:
+        - !Ref Ec2InstanceRole
+
+  CognitoIdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: reqsign_live_test
+      AllowUnauthenticatedIdentities: true
+
+  CognitoUnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: reqsign-live-test-cognito-unauthenticated
+      Description: Credential source exercised by CognitoIdentityCredentialProvider
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref CognitoIdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: unauthenticated
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  CognitoIdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref CognitoIdentityPool
+      Roles:
+        unauthenticated: !GetAtt CognitoUnauthenticatedRole.Arn
+
+  S3AccessGrantsInstance:
+    Type: AWS::S3::AccessGrantsInstance
+    Properties:
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  S3AccessGrantsLocationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: reqsign-live-test-s3-access-grants-location
+      Description: Vends scoped S3 credentials through S3 Access Grants
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: access-grants.s3.amazonaws.com
+            Action:
+              - sts:AssumeRole
+              - sts:SetSourceIdentity
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+                aws:SourceArn: !Sub arn:${AWS::Partition}:s3:${AWS::Region}:${AWS::AccountId}:access-grants/default
+      Policies:
+        - PolicyName: reqsign-live-test-s3-access-grants-location
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${TestBucketName}
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - access-grants/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${TestBucketName}/access-grants/*
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  S3AccessGrantsLocation:
+    Type: AWS::S3::AccessGrantsLocation
+    DependsOn: S3AccessGrantsInstance
+    Properties:
+      IamRoleArn: !GetAtt S3AccessGrantsLocationRole.Arn
+      LocationScope: !Sub s3://${TestBucketName}/access-grants/*
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: reqsign-live-test-github
+      Description: GitHub OIDC role for reqsign AWS live tests
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/heads/main
+                  - !Sub repo:${GitHubOrganization}/${GitHubRepository}:pull_request
+      Policies:
+        - PolicyName: reqsign-live-test-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: AssumeRoleProvider
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/reqsign-live-test-assume-role
+              - Sid: GeneralPurposeS3TestBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub arn:${AWS::Partition}:s3:::${TestBucketName}
+              - Sid: GeneralPurposeS3TestObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub arn:${AWS::Partition}:s3:::${TestBucketName}/*
+              - Sid: S3AccessGrants
+                Effect: Allow
+                Action: s3:GetDataAccess
+                Resource: !GetAtt S3AccessGrantsInstance.AccessGrantsInstanceArn
+              - Sid: S3ExpressSessions
+                Effect: Allow
+                Action: s3express:CreateSession
+                Resource: !Sub arn:${AWS::Partition}:s3express:*:${AWS::AccountId}:bucket/*
+              - Sid: PushLiveTestImageAuthorization
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: PushLiveTestImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:DescribeImages
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt EcrRepository.Arn
+              - Sid: RegisterTaskDefinition
+                Effect: Allow
+                Action: ecs:RegisterTaskDefinition
+                Resource: "*"
+              - Sid: RunTask
+                Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/reqsign-live-test:*
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !GetAtt EcsCluster.Arn
+              - Sid: CleanUpTaskDefinition
+                Effect: Allow
+                Action: ecs:DeregisterTaskDefinition
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/reqsign-live-test:*
+              - Sid: ObserveAndStopTask
+                Effect: Allow
+                Action:
+                  - ecs:DescribeTasks
+                  - ecs:StopTask
+                  - ecs:TagResource
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task/${EcsCluster}/*
+              - Sid: ReadTaskLogs
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogStreams
+                  - logs:GetLogEvents
+                Resource: !Sub ${EcsLogGroup.Arn}:*
+              - Sid: PassLiveTestRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt EcsTaskExecutionRole.Arn
+                  - !GetAtt EcsTaskRole.Arn
+                  - !GetAtt Ec2InstanceRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService:
+                      - ecs-tasks.amazonaws.com
+                      - ec2.amazonaws.com
+              - Sid: ResolveAmazonLinuxAmi
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+              - Sid: LaunchEphemeralImdsInstance
+                Effect: Allow
+                Action: ec2:RunInstances
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}::image/*
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:security-group/${LiveTestSecurityGroup.GroupId}
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:subnet/${PublicSubnetId}
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+                Condition:
+                  StringEquals:
+                    aws:RequestedRegion: !Ref AWS::Region
+                    ec2:InstanceType: t3.nano
+                    ec2:MetadataHttpTokens: required
+                    aws:RequestTag/Project: reqsign
+                    aws:RequestTag/Purpose: live-test
+              - Sid: TagEphemeralImdsInstance
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction: RunInstances
+              - Sid: TerminateEphemeralImdsInstance
+                Effect: Allow
+                Action: ec2:TerminateInstances
+                Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Project: reqsign
+                    aws:ResourceTag/Purpose: live-test
+              - Sid: ObserveEphemeralImdsInstance
+                Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - ec2:GetConsoleOutput
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  AssumeRoleTargetRole:
+    Type: AWS::IAM::Role
+    DependsOn: GitHubActionsRole
+    Properties:
+      RoleName: reqsign-live-test-assume-role
+      Description: Target exercised by AssumeRoleCredentialProvider
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/reqsign-live-test-github
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+  S3AccessGrant:
+    Type: AWS::S3::AccessGrant
+    Properties:
+      AccessGrantsLocationId: !GetAtt S3AccessGrantsLocation.AccessGrantsLocationId
+      Grantee:
+        GranteeType: IAM
+        GranteeIdentifier: !GetAtt GitHubActionsRole.Arn
+      Permission: READWRITE
+      Tags:
+        - Key: Project
+          Value: reqsign
+        - Key: Purpose
+          Value: live-test
+
+Outputs:
+  GitHubActionsRoleArn:
+    Value: !GetAtt GitHubActionsRole.Arn
+  AssumeRoleTargetArn:
+    Value: !GetAtt AssumeRoleTargetRole.Arn
+  CognitoIdentityPoolId:
+    Value: !Ref CognitoIdentityPool
+  EcrRepositoryUri:
+    Value: !GetAtt EcrRepository.RepositoryUri
+  EcsClusterName:
+    Value: !Ref EcsCluster
+  EcsTaskExecutionRoleArn:
+    Value: !GetAtt EcsTaskExecutionRole.Arn
+  EcsTaskRoleArn:
+    Value: !GetAtt EcsTaskRole.Arn
+  EcsLogGroupName:
+    Value: !Ref EcsLogGroup
+  PublicSubnetId:
+    Value: !Ref PublicSubnetId
+  SecurityGroupId:
+    Value: !GetAtt LiveTestSecurityGroup.GroupId
+  Ec2InstanceProfileName:
+    Value: !Ref Ec2InstanceProfile
+  TestBucketName:
+    Value: !Ref TestBucketName
+  S3AccessGrantsPrefix:
+    Value: access-grants/
