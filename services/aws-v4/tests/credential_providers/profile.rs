@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context_with_env;
+use super::{assert_credentials_work, create_test_context_with_env};
 use log::info;
 use reqsign_aws_v4::ProfileCredentialProvider;
 use reqsign_core::ProvideCredential;
@@ -60,4 +60,5 @@ async fn test_profile_credential_provider() {
     let cred = cred.unwrap();
     assert!(!cred.access_key_id.is_empty());
     assert!(!cred.secret_access_key.is_empty());
+    assert_credentials_work(&ctx, &cred).await;
 }

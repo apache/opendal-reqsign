@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context;
+use super::{assert_credentials_work, create_test_context};
 use log::info;
 use reqsign_aws_v4::CognitoIdentityCredentialProvider;
 use reqsign_core::ProvideCredential;
@@ -48,4 +48,5 @@ async fn test_cognito_identity_credential_provider() {
         cred.session_token.is_some(),
         "Cognito should return session token"
     );
+    assert_credentials_work(&ctx, &cred).await;
 }

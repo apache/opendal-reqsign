@@ -17,35 +17,29 @@
 
 use super::{assert_credentials_work, create_test_context};
 use log::info;
-use reqsign_aws_v4::IMDSv2CredentialProvider;
+use reqsign_aws_v4::StaticCredentialProvider;
 use reqsign_core::ProvideCredential;
 use std::env;
 
 #[tokio::test]
-async fn test_imds_v2_credential_provider() {
-    if env::var("REQSIGN_AWS_V4_TEST_IMDS").unwrap_or_default() != "on" {
-        info!("REQSIGN_AWS_V4_TEST_IMDS not set, skipping");
+async fn test_static_credential_provider_live() {
+    if env::var("REQSIGN_AWS_V4_TEST_STATIC").unwrap_or_default() != "on" {
+        info!("REQSIGN_AWS_V4_TEST_STATIC not set, skipping");
         return;
     }
 
-    let ctx = create_test_context();
-    let provider = IMDSv2CredentialProvider::new();
+    let access_key = env::var("AWS_ACCESS_KEY_ID").expect("AWS_ACCESS_KEY_ID must be set");
+    let secret_key = env::var("AWS_SECRET_ACCESS_KEY").expect("AWS_SECRET_ACCESS_KEY must be set");
+    let mut provider = StaticCredentialProvider::new(&access_key, &secret_key);
+    if let Ok(session_token) = env::var("AWS_SESSION_TOKEN") {
+        provider = provider.with_session_token(&session_token);
+    }
 
-    let cred = provider
+    let ctx = create_test_context();
+    let credential = provider
         .provide_credential(&ctx)
         .await
-        .expect("IMDSv2CredentialProvider should succeed on EC2");
-
-    assert!(
-        cred.is_some(),
-        "Should load credentials from EC2 instance metadata"
-    );
-    let cred = cred.unwrap();
-    assert!(!cred.access_key_id.is_empty());
-    assert!(!cred.secret_access_key.is_empty());
-    assert!(
-        cred.session_token.is_some(),
-        "IMDS should return session token"
-    );
-    assert_credentials_work(&ctx, &cred).await;
+        .expect("StaticCredentialProvider should succeed")
+        .expect("StaticCredentialProvider should return credentials");
+    assert_credentials_work(&ctx, &credential).await;
 }
