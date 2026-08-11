@@ -114,8 +114,9 @@ jobs:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
       - name: Doc Test
-        run: cargo test --doc --all-features --workspace
+        run: cargo +nightly test --doc --all-features --workspace
         env:
+          RUSTDOCFLAGS: --cfg docsrs
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
 
