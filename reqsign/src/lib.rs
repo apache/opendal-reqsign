@@ -16,7 +16,7 @@
 // under the License.
 
 #![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 // Re-export core types
 pub use reqsign_core::*;
