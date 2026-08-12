@@ -17,7 +17,7 @@
 
 use crate::Credential;
 use bytes::Bytes;
-use http::{HeaderValue, Method, Request, StatusCode, header};
+use http::{HeaderValue, Method, Request, StatusCode, Uri, header};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
     Context, Error, GrantCredential, ProvideCredential, ProvideCredentialDyn, Result, SignRequest,
@@ -134,10 +134,11 @@ impl FromStr for S3ExpressSessionPartition {
 
 /// A complete S3 Express `CreateSession` authorization grant.
 ///
-/// The source AWS principal must have `s3express:CreateSession` permission for
-/// the directory bucket bound by [`S3ExpressSessionConfig`]. A bucket or
-/// identity policy can use the `s3express:SessionMode` condition key to limit
-/// which mode that principal may grant.
+/// For AWS directory buckets, the source AWS principal must have
+/// `s3express:CreateSession` permission for the bucket bound by
+/// [`S3ExpressSessionConfig`]. A bucket or identity policy can use the
+/// `s3express:SessionMode` condition key to limit which mode that principal may
+/// grant. A trusted compatible service defines its own authorization policy.
 ///
 /// This grant does not override the directory bucket's encryption settings.
 /// CreateSession therefore uses the bucket default, matching the compatibility
@@ -264,7 +265,174 @@ impl S3ExpressSessionConfig {
     }
 }
 
-/// Grants expiration-aware AWS credentials for one S3 Express directory bucket.
+/// Validated configuration for an explicitly trusted compatible
+/// `CreateSession` endpoint.
+///
+/// This configuration deliberately does not apply AWS directory-bucket name,
+/// Zone ID, partition, or DNS derivation rules. The endpoint must already route
+/// `CreateSession` to `bucket`; reqsign sends the exact configured authority and
+/// does not add the bucket to the request target.
+///
+/// # Security
+///
+/// Constructing this configuration is an explicit trust decision. The endpoint
+/// receives AWS `Authorization` material and, when the source credential is
+/// temporary, its `x-amz-security-token`. Only configure an endpoint that is
+/// trusted to receive that material.
+///
+/// # Example
+///
+/// ```
+/// use reqsign_aws_v4::{
+///     S3ExpressSessionGrant, S3ExpressSessionGranter, S3ExpressSessionMode,
+///     S3ExpressSessionTrustedEndpointConfig,
+/// };
+///
+/// # fn example() -> reqsign_core::Result<()> {
+/// let config = S3ExpressSessionTrustedEndpointConfig::new(
+///     "compatible-bucket",
+///     "custom-region-1",
+///     "https://sessions.example.com",
+/// )?;
+/// let granter = S3ExpressSessionGranter::new_with_trusted_endpoint(
+///     config,
+///     S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+/// );
+/// # let _ = granter;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone, Eq, PartialEq)]
+pub struct S3ExpressSessionTrustedEndpointConfig {
+    bucket: String,
+    region: String,
+    endpoint: String,
+    authority: String,
+}
+
+impl Debug for S3ExpressSessionTrustedEndpointConfig {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3ExpressSessionTrustedEndpointConfig")
+            .finish_non_exhaustive()
+    }
+}
+
+impl S3ExpressSessionTrustedEndpointConfig {
+    /// Bind a bucket, signing Region, and explicitly trusted HTTPS endpoint.
+    ///
+    /// The endpoint must be an origin with an authority and host, without user
+    /// information, a non-root path, or a query. A trailing root slash is
+    /// accepted and normalized away. The Region is used verbatim in the SigV4
+    /// credential scope and is not mapped to an AWS partition.
+    pub fn new(
+        bucket: impl Into<String>,
+        region: impl Into<String>,
+        endpoint: impl Into<String>,
+    ) -> Result<Self> {
+        let bucket = bucket.into();
+        if bucket.is_empty() {
+            return Err(Error::config_invalid(
+                "S3 Express trusted endpoint requires a bucket",
+            ));
+        }
+
+        let region = region.into();
+        validate_custom_signing_region(&region)?;
+
+        let endpoint: Uri = endpoint
+            .into()
+            .parse()
+            .map_err(|_| Error::config_invalid("invalid S3 Express trusted endpoint"))?;
+        if endpoint.scheme_str() != Some("https") {
+            return Err(Error::config_invalid(
+                "S3 Express trusted endpoint must use HTTPS",
+            ));
+        }
+        if endpoint.path() != "/" || endpoint.query().is_some() {
+            return Err(Error::config_invalid(
+                "S3 Express trusted endpoint must not include a path or query",
+            ));
+        }
+        let authority = endpoint
+            .authority()
+            .ok_or_else(|| Error::config_invalid("S3 Express trusted endpoint has no authority"))?;
+        if authority.as_str().contains('@') {
+            return Err(Error::config_invalid(
+                "S3 Express trusted endpoint must not include user information",
+            ));
+        }
+        let host = endpoint
+            .host()
+            .ok_or_else(|| Error::config_invalid("S3 Express trusted endpoint has no host"))?;
+        if host.is_empty() {
+            return Err(Error::config_invalid(
+                "S3 Express trusted endpoint has no host",
+            ));
+        }
+
+        let authority = authority.as_str().to_string();
+        Ok(Self {
+            bucket,
+            region,
+            endpoint: format!("https://{authority}"),
+            authority,
+        })
+    }
+
+    /// Return the compatible service's bucket identifier.
+    pub fn bucket(&self) -> &str {
+        &self.bucket
+    }
+
+    /// Return the Region used in the SigV4 credential scope.
+    pub fn region(&self) -> &str {
+        &self.region
+    }
+
+    /// Return the normalized trusted HTTPS origin.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+}
+
+#[derive(Clone)]
+enum S3ExpressSessionEndpointConfig {
+    Aws(S3ExpressSessionConfig),
+    Trusted(S3ExpressSessionTrustedEndpointConfig),
+}
+
+impl S3ExpressSessionEndpointConfig {
+    fn region(&self) -> &str {
+        match self {
+            Self::Aws(config) => &config.region,
+            Self::Trusted(config) => &config.region,
+        }
+    }
+
+    fn endpoint(&self) -> &str {
+        match self {
+            Self::Aws(config) => &config.endpoint,
+            Self::Trusted(config) => &config.endpoint,
+        }
+    }
+
+    fn authority(&self) -> &str {
+        match self {
+            Self::Aws(config) => config
+                .endpoint
+                .strip_prefix("https://")
+                .expect("validated endpoint must use HTTPS"),
+            Self::Trusted(config) => &config.authority,
+        }
+    }
+
+    fn is_trusted(&self) -> bool {
+        matches!(self, Self::Trusted(_))
+    }
+}
+
+/// Grants expiration-aware credentials for one S3 Express directory bucket or
+/// one explicitly trusted compatible endpoint.
 ///
 /// The source credential authorizes `s3express:CreateSession` and is used only
 /// to sign the issuance request. The output contains only the independently
@@ -305,7 +473,7 @@ impl S3ExpressSessionConfig {
 /// ```
 #[derive(Clone)]
 pub struct S3ExpressSessionGranter {
-    config: S3ExpressSessionConfig,
+    config: S3ExpressSessionEndpointConfig,
     grant: S3ExpressSessionGrant,
     #[cfg(test)]
     time: Option<Timestamp>,
@@ -324,7 +492,26 @@ impl S3ExpressSessionGranter {
     /// Create a granter with stable bucket configuration and a complete grant.
     pub fn new(config: S3ExpressSessionConfig, grant: S3ExpressSessionGrant) -> Self {
         Self {
-            config,
+            config: S3ExpressSessionEndpointConfig::Aws(config),
+            grant,
+            #[cfg(test)]
+            time: None,
+            #[cfg(test)]
+            time_after_request: None,
+        }
+    }
+
+    /// Create a granter for an explicitly trusted compatible endpoint.
+    ///
+    /// Construct [`S3ExpressSessionTrustedEndpointConfig`] only after deciding
+    /// that its endpoint may receive AWS authorization material and an optional
+    /// source session token.
+    pub fn new_with_trusted_endpoint(
+        config: S3ExpressSessionTrustedEndpointConfig,
+        grant: S3ExpressSessionGrant,
+    ) -> Self {
+        Self {
+            config: S3ExpressSessionEndpointConfig::Trusted(config),
             grant,
             #[cfg(test)]
             time: None,
@@ -397,14 +584,10 @@ impl S3ExpressSessionGranter {
     }
 
     async fn create_session(&self, ctx: &Context, source: &Credential) -> Result<Credential> {
-        let authority = self
-            .config
-            .endpoint
-            .strip_prefix("https://")
-            .expect("validated endpoint must use HTTPS");
+        let authority = self.config.authority();
         let request = Request::builder()
             .method(Method::GET)
-            .uri(format!("{}/?session", self.config.endpoint))
+            .uri(format!("{}/?session", self.config.endpoint()))
             .header(header::HOST, authority)
             .header("x-amz-content-sha256", crate::EMPTY_STRING_SHA256)
             .header("x-amz-create-session-mode", self.grant.mode.as_str())
@@ -426,7 +609,7 @@ impl S3ExpressSessionGranter {
             parts.headers.insert("x-amz-security-token", value);
         }
 
-        let signer = crate::RequestSigner::new("s3express", &self.config.region);
+        let signer = crate::RequestSigner::new("s3express", self.config.region());
         #[cfg(test)]
         let signer = if let Some(time) = self.time {
             signer.with_time(time)
@@ -437,7 +620,21 @@ impl S3ExpressSessionGranter {
             .sign_request(ctx, &mut parts, Some(&signing_source), None)
             .await?;
 
-        let response = ctx.http_send(Request::from_parts(parts, body)).await?;
+        let response = ctx
+            .http_send(Request::from_parts(parts, body))
+            .await
+            .map_err(|err| {
+                if self.config.is_trusted() {
+                    Error::new(
+                        err.kind(),
+                        "failed to send S3 Express CreateSession request",
+                    )
+                    .with_context("operation: CreateSession")
+                    .set_retryable(err.is_retryable())
+                } else {
+                    err
+                }
+            })?;
         let status = response.status();
         if !status.is_success() {
             return Err(create_session_status_error(status));
@@ -626,6 +823,27 @@ fn create_session_status_error(status: StatusCode) -> Error {
         _ => Error::unexpected("S3 Express CreateSession request failed"),
     };
     error.with_context(format!("status: {}", status.as_u16()))
+}
+
+fn validate_custom_signing_region(region: &str) -> Result<()> {
+    let valid_length = (1..=64).contains(&region.len());
+    let valid_characters = region
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'));
+    let valid_edges = region
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphanumeric)
+        && region
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric);
+    if !valid_length || !valid_characters || !valid_edges {
+        return Err(Error::config_invalid(
+            "invalid S3 Express trusted endpoint signing Region",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_directory_bucket_name(bucket: &str) -> Result<()> {
@@ -876,6 +1094,24 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct FailingHttpSend;
+
+    impl Debug for FailingHttpSend {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("FailingHttpSend").finish_non_exhaustive()
+        }
+    }
+
+    impl HttpSend for FailingHttpSend {
+        async fn http_send(&self, _request: Request<Bytes>) -> Result<Response<Bytes>> {
+            Err(Error::unexpected(
+                "transport failed for https://sensitive-session.example.com using AKIDEXAMPLE, wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY, and source-session-token",
+            )
+            .set_retryable(true))
+        }
+    }
+
     fn timestamp(value: &str) -> Timestamp {
         value.parse().expect("timestamp must parse")
     }
@@ -889,7 +1125,7 @@ mod tests {
         }
     }
 
-    fn sign_with_aws_sdk(request: &CapturedRequest, region: &str) -> String {
+    fn sign_with_aws_sdk(request: &CapturedRequest, region: &str, source: &Credential) -> String {
         let mut reference = Request::builder()
             .method(request.method.clone())
             .uri(request.uri.clone())
@@ -905,9 +1141,9 @@ mod tests {
             .body(request.body.clone())
             .expect("AWS SDK reference request must build");
         let identity = AwsCredentials::new(
-            "AKIDEXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-            Some("source-session-token".to_string()),
+            source.access_key_id.clone(),
+            source.secret_access_key.clone(),
+            source.session_token.clone(),
             None,
             "reqsign-s3-express-test",
         )
@@ -959,6 +1195,15 @@ mod tests {
         .expect("configuration must be valid")
     }
 
+    fn trusted_endpoint_config() -> S3ExpressSessionTrustedEndpointConfig {
+        S3ExpressSessionTrustedEndpointConfig::new(
+            "compatible-bucket",
+            "custom-region-1",
+            "https://sessions.example.com:8443/",
+        )
+        .expect("trusted endpoint configuration must be valid")
+    }
+
     fn success_response(
         access_key_id: &str,
         secret_access_key: &str,
@@ -1000,6 +1245,22 @@ mod tests {
         let ctx = Context::new().with_http_send(http.clone());
         let operation =
             S3ExpressSessionGranter::new(config, S3ExpressSessionGrant::new(mode)).with_time(now);
+        (operation, ctx, http)
+    }
+
+    fn operation_with_trusted_endpoint(
+        config: S3ExpressSessionTrustedEndpointConfig,
+        mode: S3ExpressSessionMode,
+        now: Timestamp,
+        responses: impl IntoIterator<Item = Response<Bytes>>,
+    ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
+        let http = MockHttpSend::new(responses);
+        let ctx = Context::new().with_http_send(http.clone());
+        let operation = S3ExpressSessionGranter::new_with_trusted_endpoint(
+            config,
+            S3ExpressSessionGrant::new(mode),
+        )
+        .with_time(now);
         (operation, ctx, http)
     }
 
@@ -1162,6 +1423,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn validates_explicit_trusted_endpoint_configuration() {
+        let config = trusted_endpoint_config();
+        assert_eq!(config.bucket(), "compatible-bucket");
+        assert_eq!(config.region(), "custom-region-1");
+        assert_eq!(config.endpoint(), "https://sessions.example.com:8443");
+
+        assert_eq!(
+            S3ExpressSessionConfig::new(
+                config.bucket(),
+                "custom-zone-1",
+                config.region(),
+                S3ExpressSessionPartition::Aws,
+            )
+            .expect_err("the standard AWS constructor must remain strict")
+            .kind(),
+            ErrorKind::ConfigInvalid
+        );
+    }
+
     #[tokio::test]
     async fn builds_and_signs_exact_create_session_request() {
         let now = timestamp("2030-01-01T00:00:00Z");
@@ -1221,7 +1502,10 @@ mod tests {
             authorization,
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=8bced65039aee22da12f49209a59ab8890db30e8d49889c09943697d684ddc1d"
         );
-        assert_eq!(sign_with_aws_sdk(&request, "us-west-2"), authorization);
+        assert_eq!(
+            sign_with_aws_sdk(&request, "us-west-2", &source_credential()),
+            authorization
+        );
     }
 
     #[tokio::test]
@@ -1280,7 +1564,101 @@ mod tests {
             authorization,
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/cn-north-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=48449b573534252c610bc8a20a8c76017039bb6c59b56120d41bbdae44fb47a3"
         );
-        assert_eq!(sign_with_aws_sdk(&request, "cn-north-1"), authorization);
+        assert_eq!(
+            sign_with_aws_sdk(&request, "cn-north-1", &source_credential()),
+            authorization
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_and_signs_exact_trusted_endpoint_request_with_temporary_source() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation_with_trusted_endpoint(
+            trusted_endpoint_config(),
+            S3ExpressSessionMode::ReadOnly,
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+        let source = source_credential();
+
+        operation
+            .grant_credential(&ctx, &source, None)
+            .await
+            .expect("trusted endpoint CreateSession must succeed");
+
+        let request = http.request(0);
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(
+            request.uri,
+            "https://sessions.example.com:8443/?session"
+                .parse::<Uri>()
+                .unwrap()
+        );
+        assert!(request.body.is_empty());
+        assert_eq!(request.headers[header::HOST], "sessions.example.com:8443");
+        assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
+        assert_eq!(
+            request.headers["x-amz-security-token"],
+            "source-session-token"
+        );
+        assert!(request.headers["x-amz-security-token"].is_sensitive());
+        assert!(!request.headers.contains_key("x-amz-s3session-token"));
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/custom-region-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=27e3fd0b349ab99b6e629e8b0c741b3c88bfbef1cb4fbbf491c461df213a0dbe"
+        );
+        assert_eq!(
+            sign_with_aws_sdk(&request, "custom-region-1", &source),
+            authorization
+        );
+    }
+
+    #[tokio::test]
+    async fn signs_trusted_endpoint_request_with_long_term_source() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation_with_trusted_endpoint(
+            trusted_endpoint_config(),
+            S3ExpressSessionMode::ReadWrite,
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+        let source = Credential {
+            session_token: None,
+            ..source_credential()
+        };
+
+        operation
+            .grant_credential(&ctx, &source, None)
+            .await
+            .expect("long-term source credential must sign the trusted endpoint request");
+
+        let request = http.request(0);
+        assert!(!request.headers.contains_key("x-amz-security-token"));
+        assert!(!request.headers.contains_key("x-amz-s3session-token"));
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/custom-region-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date, Signature=47ba9abd7e57001176a0c0f77fecd54f1d5c71b680fddeae5549548cf85e1d72"
+        );
+        assert_eq!(
+            sign_with_aws_sdk(&request, "custom-region-1", &source),
+            authorization
+        );
     }
 
     #[test]
@@ -1384,6 +1762,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_invalid_trusted_endpoint_configuration_before_provider_io() {
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let http = MockHttpSend::new([]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let invalid = [
+            (
+                "",
+                "custom-region-1",
+                "https://sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "",
+                "https://sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom/region",
+                "https://sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "http://sensitive-session.example.com",
+            ),
+            ("compatible-bucket", "custom-region-1", "https:///"),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "https://user@sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "https://sensitive-session.example.com/create-session",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "https://sensitive-session.example.com?secret=query",
+            ),
+            ("compatible-bucket", "custom-region-1", "https://:8443"),
+        ];
+
+        for (bucket, region, endpoint) in invalid {
+            let result: Result<()> = async {
+                let config = S3ExpressSessionTrustedEndpointConfig::new(bucket, region, endpoint)?;
+                let operation = S3ExpressSessionGranter::new_with_trusted_endpoint(
+                    config,
+                    S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+                );
+                Granter::new(ctx.clone(), source_provider.clone(), operation)
+                    .grant(None)
+                    .await?;
+                Ok(())
+            }
+            .await;
+            let err = result.expect_err("invalid trusted endpoint configuration must fail");
+            assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+            let rendered = format!("{err}\n{err:?}");
+            for sensitive in [
+                "compatible-bucket",
+                "custom-region-1",
+                "sensitive-session",
+                "secret=query",
+            ] {
+                assert!(!rendered.contains(sensitive));
+            }
+        }
+
+        assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn rejects_output_that_expires_during_io() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let completed_at = timestamp("2030-01-01T00:05:00Z");
@@ -1458,6 +1916,43 @@ mod tests {
             (format!("{err:?}"), "raw-response-secret"),
         ] {
             assert!(!debug.contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn trusted_endpoint_debug_and_transport_errors_are_redacted() {
+        let config = S3ExpressSessionTrustedEndpointConfig::new(
+            "sensitive-compatible-bucket",
+            "sensitive-region-1",
+            "https://sensitive-session.example.com",
+        )
+        .expect("trusted endpoint configuration must be valid");
+        let operation = S3ExpressSessionGranter::new_with_trusted_endpoint(
+            config.clone(),
+            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+        )
+        .with_time(timestamp("2030-01-01T00:00:00Z"));
+        let source = source_credential();
+        let ctx = Context::new().with_http_send(FailingHttpSend);
+
+        let err = operation
+            .grant_credential(&ctx, &source, None)
+            .await
+            .expect_err("transport failure must be sanitized");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert!(err.is_retryable());
+        assert_eq!(err.context(), &["operation: CreateSession"]);
+
+        let combined = format!("{config:?}\n{operation:?}\n{source:?}\n{err:?}");
+        for sensitive in [
+            "sensitive-compatible-bucket",
+            "sensitive-region-1",
+            "sensitive-session.example.com",
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            "source-session-token",
+        ] {
+            assert!(!combined.contains(sensitive));
         }
     }
 
