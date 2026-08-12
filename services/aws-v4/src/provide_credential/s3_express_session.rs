@@ -160,9 +160,59 @@ impl S3ExpressSessionGrant {
         Self { mode }
     }
 
+    /// Select the maximum session privilege allowed by AWS policy.
+    ///
+    /// This selection omits `x-amz-create-session-mode`, so AWS attempts a
+    /// `ReadWrite` session first and falls back to `ReadOnly` when required by
+    /// policy. It remains distinct from either explicit session mode.
+    pub fn maximum_allowed() -> S3ExpressSessionGrantSelection {
+        S3ExpressSessionGrantSelection::MaximumAllowed
+    }
+
     /// Return the bound session mode.
     pub fn mode(&self) -> S3ExpressSessionMode {
         self.mode
+    }
+}
+
+/// Selects how S3 Express determines the `CreateSession` permission mode.
+///
+/// Explicit grants send the corresponding `x-amz-create-session-mode` value.
+/// [`Self::MaximumAllowed`] omits that header and delegates the final mode to
+/// AWS policy evaluation.
+#[non_exhaustive]
+#[derive(Clone, Eq, PartialEq)]
+pub enum S3ExpressSessionGrantSelection {
+    /// Let AWS create the session with the maximum privilege allowed by policy.
+    MaximumAllowed,
+    /// Request exactly the mode bound by the explicit grant.
+    Explicit(S3ExpressSessionGrant),
+}
+
+impl S3ExpressSessionGrantSelection {
+    /// Return the explicitly requested mode, or `None` for maximum-allowed.
+    pub fn explicit_mode(&self) -> Option<S3ExpressSessionMode> {
+        match self {
+            Self::MaximumAllowed => None,
+            Self::Explicit(grant) => Some(grant.mode()),
+        }
+    }
+
+    fn mode_header_value(&self) -> Option<&'static str> {
+        self.explicit_mode().map(S3ExpressSessionMode::as_str)
+    }
+}
+
+impl Debug for S3ExpressSessionGrantSelection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3ExpressSessionGrantSelection")
+            .finish_non_exhaustive()
+    }
+}
+
+impl From<S3ExpressSessionGrant> for S3ExpressSessionGrantSelection {
+    fn from(grant: S3ExpressSessionGrant) -> Self {
+        Self::Explicit(grant)
     }
 }
 
@@ -280,7 +330,7 @@ impl S3ExpressSessionConfig {
 /// ```no_run
 /// use reqsign_aws_v4::{
 ///     DefaultCredentialProvider, S3ExpressSessionConfig, S3ExpressSessionGrant,
-///     S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
+///     S3ExpressSessionGranter, S3ExpressSessionPartition,
 /// };
 /// use reqsign_core::{Context, Granter};
 ///
@@ -291,7 +341,7 @@ impl S3ExpressSessionConfig {
 ///     "us-west-2",
 ///     S3ExpressSessionPartition::Aws,
 /// )?;
-/// let grant = S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly);
+/// let grant = S3ExpressSessionGrant::maximum_allowed();
 /// let granter = Granter::new(
 ///     Context::new(),
 ///     DefaultCredentialProvider::new(),
@@ -306,7 +356,7 @@ impl S3ExpressSessionConfig {
 #[derive(Clone)]
 pub struct S3ExpressSessionGranter {
     config: S3ExpressSessionConfig,
-    grant: S3ExpressSessionGrant,
+    grant: S3ExpressSessionGrantSelection,
     #[cfg(test)]
     time: Option<Timestamp>,
     #[cfg(test)]
@@ -321,11 +371,14 @@ impl Debug for S3ExpressSessionGranter {
 }
 
 impl S3ExpressSessionGranter {
-    /// Create a granter with stable bucket configuration and a complete grant.
-    pub fn new(config: S3ExpressSessionConfig, grant: S3ExpressSessionGrant) -> Self {
+    /// Create a granter with stable bucket configuration and a mode selection.
+    pub fn new(
+        config: S3ExpressSessionConfig,
+        grant: impl Into<S3ExpressSessionGrantSelection>,
+    ) -> Self {
         Self {
             config,
-            grant,
+            grant: grant.into(),
             #[cfg(test)]
             time: None,
             #[cfg(test)]
@@ -333,9 +386,9 @@ impl S3ExpressSessionGranter {
         }
     }
 
-    /// Replace the bound grant while retaining the stable bucket configuration.
-    pub fn with_grant(mut self, grant: S3ExpressSessionGrant) -> Self {
-        self.grant = grant;
+    /// Replace the bound mode selection while retaining the stable bucket configuration.
+    pub fn with_grant(mut self, grant: impl Into<S3ExpressSessionGrantSelection>) -> Self {
+        self.grant = grant.into();
         self
     }
 
@@ -402,17 +455,18 @@ impl S3ExpressSessionGranter {
             .endpoint
             .strip_prefix("https://")
             .expect("validated endpoint must use HTTPS");
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method(Method::GET)
             .uri(format!("{}/?session", self.config.endpoint))
             .header(header::HOST, authority)
-            .header("x-amz-content-sha256", crate::EMPTY_STRING_SHA256)
-            .header("x-amz-create-session-mode", self.grant.mode.as_str())
-            .body(Bytes::new())
-            .map_err(|e| {
-                Error::request_invalid("failed to build S3 Express CreateSession request")
-                    .with_source(e)
-            })?;
+            .header("x-amz-content-sha256", crate::EMPTY_STRING_SHA256);
+        if let Some(mode) = self.grant.mode_header_value() {
+            request = request.header("x-amz-create-session-mode", mode);
+        }
+        let request = request.body(Bytes::new()).map_err(|e| {
+            Error::request_invalid("failed to build S3 Express CreateSession request")
+                .with_source(e)
+        })?;
 
         let (mut parts, body) = request.into_parts();
         let mut signing_source = source.clone();
@@ -897,11 +951,11 @@ mod tests {
             .header(
                 "x-amz-content-sha256",
                 request.headers["x-amz-content-sha256"].clone(),
-            )
-            .header(
-                "x-amz-create-session-mode",
-                request.headers["x-amz-create-session-mode"].clone(),
-            )
+            );
+        if let Some(mode) = request.headers.get("x-amz-create-session-mode") {
+            reference = reference.header("x-amz-create-session-mode", mode.clone());
+        }
+        let mut reference = reference
             .body(request.body.clone())
             .expect("AWS SDK reference request must build");
         let identity = AwsCredentials::new(
@@ -996,15 +1050,31 @@ mod tests {
         now: Timestamp,
         responses: impl IntoIterator<Item = Response<Bytes>>,
     ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
+        operation_with_selection(config, S3ExpressSessionGrant::new(mode), now, responses)
+    }
+
+    fn operation_with_selection(
+        config: S3ExpressSessionConfig,
+        grant: impl Into<S3ExpressSessionGrantSelection>,
+        now: Timestamp,
+        responses: impl IntoIterator<Item = Response<Bytes>>,
+    ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
         let http = MockHttpSend::new(responses);
         let ctx = Context::new().with_http_send(http.clone());
-        let operation =
-            S3ExpressSessionGranter::new(config, S3ExpressSessionGrant::new(mode)).with_time(now);
+        let operation = S3ExpressSessionGranter::new(config, grant).with_time(now);
         (operation, ctx, http)
     }
 
     #[test]
     fn validates_typed_mode_partition_and_configuration() {
+        let maximum_allowed = S3ExpressSessionGrant::maximum_allowed();
+        assert_eq!(maximum_allowed.explicit_mode(), None);
+        let explicit_read_only: S3ExpressSessionGrantSelection =
+            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly).into();
+        assert_eq!(
+            explicit_read_only.explicit_mode(),
+            Some(S3ExpressSessionMode::ReadOnly)
+        );
         assert_eq!(
             "ReadOnly".parse::<S3ExpressSessionMode>().unwrap(),
             S3ExpressSessionMode::ReadOnly
@@ -1162,8 +1232,69 @@ mod tests {
         }
     }
 
+    fn assert_standard_create_session_request(request: &CapturedRequest) {
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(
+            request.uri,
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/?session"
+                .parse::<Uri>()
+                .unwrap()
+        );
+        assert!(request.body.is_empty());
+        assert_eq!(
+            request.headers[header::HOST],
+            "example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
+        );
+        assert_eq!(
+            request.headers["x-amz-content-sha256"],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(request.headers["x-amz-date"], "20300101T000000Z");
+        assert_eq!(
+            request.headers["x-amz-security-token"],
+            "source-session-token"
+        );
+        assert!(request.headers["x-amz-security-token"].is_sensitive());
+        assert!(!request.headers.contains_key("x-amz-s3session-token"));
+        assert!(request.headers[header::AUTHORIZATION].is_sensitive());
+    }
+
     #[tokio::test]
-    async fn builds_and_signs_exact_create_session_request() {
+    async fn builds_and_signs_exact_maximum_allowed_create_session_request() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation_with_selection(
+            config(),
+            S3ExpressSessionGrant::maximum_allowed(),
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+
+        let output = operation
+            .grant_credential(&ctx, &source_credential(), None)
+            .await
+            .expect("maximum-allowed CreateSession must succeed");
+        assert_eq!(output.expires_in, Some(timestamp("2030-01-01T00:05:00Z")));
+
+        let request = http.request(0);
+        assert_standard_create_session_request(&request);
+        assert!(!request.headers.contains_key("x-amz-create-session-mode"));
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=3ae2a693a57537e21f96c0bb753071ff58c7398cd4df5ddf1f772ba059cdf0b2"
+        );
+        assert_eq!(sign_with_aws_sdk(&request, "us-west-2"), authorization);
+    }
+
+    #[tokio::test]
+    async fn builds_and_signs_exact_read_only_create_session_request() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let (operation, ctx, http) = operation(
             S3ExpressSessionMode::ReadOnly,
@@ -1189,37 +1320,47 @@ mod tests {
         assert_eq!(output.expires_in, Some(timestamp("2030-01-01T00:05:00Z")));
 
         let request = http.request(0);
-        assert_eq!(request.method, Method::GET);
-        assert_eq!(
-            request.uri,
-            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/?session"
-                .parse::<Uri>()
-                .unwrap()
-        );
-        assert!(request.body.is_empty());
-        assert_eq!(
-            request.headers[header::HOST],
-            "example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
-        );
-        assert_eq!(
-            request.headers["x-amz-content-sha256"],
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
+        assert_standard_create_session_request(&request);
         assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
-        assert_eq!(request.headers["x-amz-date"], "20300101T000000Z");
-        assert_eq!(
-            request.headers["x-amz-security-token"],
-            "source-session-token"
-        );
-        assert!(request.headers["x-amz-security-token"].is_sensitive());
-        assert!(!request.headers.contains_key("x-amz-s3session-token"));
-        assert!(request.headers[header::AUTHORIZATION].is_sensitive());
         let authorization = request.headers[header::AUTHORIZATION]
             .to_str()
             .expect("authorization must be ASCII");
         assert_eq!(
             authorization,
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=8bced65039aee22da12f49209a59ab8890db30e8d49889c09943697d684ddc1d"
+        );
+        assert_eq!(sign_with_aws_sdk(&request, "us-west-2"), authorization);
+    }
+
+    #[tokio::test]
+    async fn builds_and_signs_exact_read_write_create_session_request() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation(
+            S3ExpressSessionMode::ReadWrite,
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+
+        let output = operation
+            .grant_credential(&ctx, &source_credential(), None)
+            .await
+            .expect("ReadWrite CreateSession must succeed");
+        assert_eq!(output.expires_in, Some(timestamp("2030-01-01T00:05:00Z")));
+
+        let request = http.request(0);
+        assert_standard_create_session_request(&request);
+        assert_eq!(request.headers["x-amz-create-session-mode"], "ReadWrite");
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=93753ad279dc7f13295350a3ad9bc2d643a3972bd9e1d52caa65fd1716e00374"
         );
         assert_eq!(sign_with_aws_sdk(&request, "us-west-2"), authorization);
     }
@@ -1447,6 +1588,15 @@ mod tests {
                 ),
                 "ReadWrite",
             ),
+            (
+                format!(
+                    "{:?}",
+                    S3ExpressSessionGrantSelection::from(S3ExpressSessionGrant::new(
+                        S3ExpressSessionMode::ReadWrite
+                    ))
+                ),
+                "ReadWrite",
+            ),
             (format!("{operation:?}"), "example--usw2-az1--x-s3"),
             (format!("{provider:?}"), "sensitive-bucket"),
             (format!("{source:?}"), "source-session-token"),
@@ -1591,11 +1741,9 @@ mod tests {
         };
         let http = MockHttpSend::new([response(), response()]);
         let ctx = Context::new().with_http_send(http.clone());
-        let operation = S3ExpressSessionGranter::new(
-            config(),
-            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
-        )
-        .with_time(now);
+        let operation =
+            S3ExpressSessionGranter::new(config(), S3ExpressSessionGrant::maximum_allowed())
+                .with_time(now);
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let granter = Granter::new(ctx, source_provider, operation);
 
@@ -1606,6 +1754,18 @@ mod tests {
             .expect("second grant must issue another session");
         assert_eq!(source_calls.load(Ordering::SeqCst), 1);
         assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        assert!(
+            !http
+                .request(0)
+                .headers
+                .contains_key("x-amz-create-session-mode")
+        );
+        assert!(
+            !http
+                .request(1)
+                .headers
+                .contains_key("x-amz-create-session-mode")
+        );
 
         let (output_provider, _) = FixedCredentialProvider::new(output);
         let signer = Signer::new(

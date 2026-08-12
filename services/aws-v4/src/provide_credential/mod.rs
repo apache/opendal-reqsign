@@ -17,6 +17,7 @@
 
 mod s3_express_session;
 pub use s3_express_session::{
-    S3ExpressSessionConfig, S3ExpressSessionGrant, S3ExpressSessionGranter, S3ExpressSessionMode,
-    S3ExpressSessionPartition, S3ExpressSessionProvider,
+    S3ExpressSessionConfig, S3ExpressSessionGrant, S3ExpressSessionGrantSelection,
+    S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
+    S3ExpressSessionProvider,
 };
