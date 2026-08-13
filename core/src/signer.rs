@@ -23,178 +23,11 @@ use crate::Result;
 use crate::SignRequest;
 use crate::SignRequestDyn;
 use crate::SigningCredential;
-use futures::channel::oneshot;
+use mea::mutex::Mutex;
 use std::any::type_name;
 use std::fmt::{Debug, Formatter};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
-
-struct CredentialCache<K> {
-    state: Mutex<CredentialCacheState<K>>,
-}
-
-struct CredentialCacheState<K> {
-    credential: Option<K>,
-    refresh: Option<CredentialRefresh<K>>,
-    next_refresh_generation: u64,
-}
-
-struct CredentialRefresh<K> {
-    generation: u64,
-    waiters: Vec<oneshot::Sender<CredentialRefreshOutcome<K>>>,
-}
-
-#[derive(Clone)]
-enum CredentialRefreshOutcome<K> {
-    Loaded(K),
-    Failed(SharedRefreshError),
-}
-
-#[derive(Clone)]
-struct SharedRefreshError {
-    kind: crate::ErrorKind,
-    message: String,
-    context: Vec<String>,
-    retryable: bool,
-}
-
-impl SharedRefreshError {
-    fn capture(error: &Error) -> Self {
-        Self {
-            kind: error.kind(),
-            message: error.to_string(),
-            context: error.context().to_vec(),
-            retryable: error.is_retryable(),
-        }
-    }
-
-    fn into_error(self) -> Error {
-        let mut error = Error::new(self.kind, self.message).set_retryable(self.retryable);
-        for context in self.context {
-            error = error.with_context(context);
-        }
-        error
-    }
-}
-
-enum CredentialCacheAction<K: SigningCredential> {
-    Ready(K),
-    Wait(oneshot::Receiver<CredentialRefreshOutcome<K>>),
-    Refresh(CredentialRefreshGuard<K>),
-}
-
-impl<K: SigningCredential> CredentialCache<K> {
-    fn new() -> Self {
-        Self {
-            state: Mutex::new(CredentialCacheState {
-                credential: None,
-                refresh: None,
-                next_refresh_generation: 0,
-            }),
-        }
-    }
-
-    fn action(
-        self: &Arc<Self>,
-        cached_is_usable: impl FnOnce(&K) -> bool,
-    ) -> CredentialCacheAction<K> {
-        let mut state = self.state.lock().expect("lock poisoned");
-        if let Some(credential) = state.credential.as_ref() {
-            if cached_is_usable(credential) {
-                return CredentialCacheAction::Ready(credential.clone());
-            }
-        }
-
-        if let Some(refresh) = state.refresh.as_mut() {
-            let (sender, receiver) = oneshot::channel();
-            refresh.waiters.push(sender);
-            return CredentialCacheAction::Wait(receiver);
-        }
-
-        let generation = state.next_refresh_generation;
-        state.next_refresh_generation = state.next_refresh_generation.wrapping_add(1);
-        state.refresh = Some(CredentialRefresh {
-            generation,
-            waiters: Vec::new(),
-        });
-        CredentialCacheAction::Refresh(CredentialRefreshGuard {
-            cache: self.clone(),
-            generation,
-            completed: false,
-        })
-    }
-
-    fn complete(&self, generation: u64, outcome: CredentialRefreshOutcome<K>) {
-        let waiters = {
-            let mut state = self.state.lock().expect("lock poisoned");
-            if state
-                .refresh
-                .as_ref()
-                .is_none_or(|refresh| refresh.generation != generation)
-            {
-                return;
-            }
-
-            if let CredentialRefreshOutcome::Loaded(credential) = &outcome {
-                state.credential = Some(credential.clone());
-            }
-            state
-                .refresh
-                .take()
-                .expect("matching refresh must exist")
-                .waiters
-        };
-
-        for waiter in waiters {
-            let _ = waiter.send(outcome.clone());
-        }
-    }
-
-    #[cfg(test)]
-    fn set_credential(&self, credential: K) {
-        self.state.lock().expect("lock poisoned").credential = Some(credential);
-    }
-}
-
-struct CredentialRefreshGuard<K: SigningCredential> {
-    cache: Arc<CredentialCache<K>>,
-    generation: u64,
-    completed: bool,
-}
-
-impl<K: SigningCredential> CredentialRefreshGuard<K> {
-    fn complete_success(mut self, credential: K) {
-        self.completed = true;
-        self.cache.complete(
-            self.generation,
-            CredentialRefreshOutcome::Loaded(credential),
-        );
-    }
-
-    fn complete_failure(mut self, error: &Error) {
-        self.completed = true;
-        self.cache.complete(
-            self.generation,
-            CredentialRefreshOutcome::Failed(SharedRefreshError::capture(error)),
-        );
-    }
-}
-
-impl<K: SigningCredential> Drop for CredentialRefreshGuard<K> {
-    fn drop(&mut self) {
-        if self.completed {
-            return;
-        }
-
-        let error = Error::unexpected("credential refresh was cancelled")
-            .with_context(format!("credential_type: {}", type_name::<K>()))
-            .set_retryable(true);
-        self.cache.complete(
-            self.generation,
-            CredentialRefreshOutcome::Failed(SharedRefreshError::capture(&error)),
-        );
-    }
-}
 
 /// Loads credentials and atomically signs request heads.
 ///
@@ -205,7 +38,7 @@ pub struct Signer<K: SigningCredential> {
     ctx: Context,
     loader: Arc<dyn ProvideCredentialDyn<Credential = K>>,
     builder: Arc<dyn SignRequestDyn<Credential = K>>,
-    credential_cache: Arc<CredentialCache<K>>,
+    credential: Arc<Mutex<Option<K>>>,
 }
 
 impl<K: SigningCredential> Debug for Signer<K> {
@@ -228,7 +61,7 @@ impl<K: SigningCredential> Signer<K> {
 
             loader: Arc::new(loader),
             builder: Arc::new(builder),
-            credential_cache: Arc::new(CredentialCache::new()),
+            credential: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -246,7 +79,7 @@ impl<K: SigningCredential> Signer<K> {
         provider: impl ProvideCredential<Credential = K>,
     ) -> Self {
         self.loader = Arc::new(provider);
-        self.credential_cache = Arc::new(CredentialCache::new());
+        self.credential = Arc::new(Mutex::new(None));
         self
     }
 
@@ -273,12 +106,11 @@ impl<K: SigningCredential> Signer<K> {
     ///
     /// Cached credentials must be fresh according to [`SigningCredential::is_valid`]
     /// and usable through [`SignRequest::required_valid_until`]. A refreshed credential
-    /// only needs to satisfy the exact operation deadline. Concurrent callers that need
-    /// the same cache refresh share one provider invocation and its result. A failed
-    /// refresh is returned to its current waiters but is not cached, so a later call can
-    /// retry. Provider errors are returned without internal retry or fallback to the
-    /// previous cached credential. Request signing runs after refresh coordination has
-    /// completed and remains concurrent.
+    /// only needs to satisfy the exact operation deadline. Credential refresh is
+    /// serialized per shared cache. A failed refresh is not cached, so the next waiting
+    /// or later caller can retry. Provider errors are returned without internal retry or
+    /// fallback to the previous cached credential. Request signing runs after refresh
+    /// coordination has completed and remains concurrent.
     pub async fn sign(
         &self,
         req: &mut http::request::Parts,
@@ -297,51 +129,31 @@ impl<K: SigningCredential> Signer<K> {
     }
 
     async fn credential(&self, expires_in: Option<Duration>) -> Result<K> {
-        let action = self.credential_cache.action(|credential| {
-            credential.is_valid()
+        let mut cached = self.credential.lock().await;
+        if let Some(credential) = cached.as_ref() {
+            if credential.is_valid()
                 && credential.is_valid_at(
                     self.builder
                         .required_valid_until_dyn(credential, expires_in),
                 )
-        });
-
-        match action {
-            CredentialCacheAction::Ready(credential) => Ok(credential),
-            CredentialCacheAction::Wait(receiver) => match receiver.await {
-                Ok(CredentialRefreshOutcome::Loaded(credential)) => {
-                    self.validate_refreshed_credential(credential, expires_in)
-                }
-                Ok(CredentialRefreshOutcome::Failed(error)) => Err(error.into_error()),
-                Err(_) => Err(Error::unexpected(
-                    "credential refresh coordination ended without a result",
-                )
-                .with_context(format!("credential_type: {}", type_name::<K>()))
-                .set_retryable(true)),
-            },
-            CredentialCacheAction::Refresh(refresh) => {
-                let result = self
-                    .loader
-                    .provide_credential_dyn(&self.ctx)
-                    .await
-                    .and_then(|credential| {
-                        credential.ok_or_else(|| {
-                            Error::credential_invalid("failed to load signing credential")
-                                .with_context(format!("credential_type: {}", type_name::<K>()))
-                        })
-                    });
-
-                match result {
-                    Ok(credential) => {
-                        refresh.complete_success(credential.clone());
-                        self.validate_refreshed_credential(credential, expires_in)
-                    }
-                    Err(error) => {
-                        refresh.complete_failure(&error);
-                        Err(error)
-                    }
-                }
+            {
+                return Ok(credential.clone());
             }
         }
+
+        let credential = self
+            .loader
+            .provide_credential_dyn(&self.ctx)
+            .await?
+            .ok_or_else(|| {
+                Error::credential_invalid("failed to load signing credential")
+                    .with_context(format!("credential_type: {}", type_name::<K>()))
+            })?;
+
+        *cached = Some(credential.clone());
+        drop(cached);
+
+        self.validate_refreshed_credential(credential, expires_in)
     }
 
     fn validate_refreshed_credential(
@@ -374,6 +186,7 @@ mod tests {
     use futures::poll;
     use http::{HeaderValue, Method, Request, Version};
     use std::collections::VecDeque;
+    use std::sync::Mutex as StdMutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Clone, Debug)]
@@ -459,7 +272,7 @@ mod tests {
 
     #[derive(Debug)]
     struct SequenceProvider {
-        responses: Mutex<VecDeque<Result<Option<ExpiringCredential>>>>,
+        responses: StdMutex<VecDeque<Result<Option<ExpiringCredential>>>>,
         calls: Arc<AtomicUsize>,
     }
 
@@ -470,7 +283,7 @@ mod tests {
             let calls = Arc::new(AtomicUsize::new(0));
             (
                 Self {
-                    responses: Mutex::new(responses.into_iter().collect()),
+                    responses: StdMutex::new(responses.into_iter().collect()),
                     calls: calls.clone(),
                 },
                 calls,
@@ -492,7 +305,7 @@ mod tests {
     }
 
     struct ControlledProvider {
-        responses: Mutex<VecDeque<oneshot::Receiver<ControlledResponse>>>,
+        responses: StdMutex<VecDeque<oneshot::Receiver<ControlledResponse>>>,
         calls: Arc<AtomicUsize>,
     }
 
@@ -510,7 +323,7 @@ mod tests {
                 .unzip::<_, _, Vec<_>, VecDeque<_>>();
             (
                 Self {
-                    responses: Mutex::new(receivers),
+                    responses: StdMutex::new(receivers),
                     calls: calls.clone(),
                 },
                 calls,
@@ -538,7 +351,7 @@ mod tests {
 
     struct ControlledRequestSigner {
         started: Arc<AtomicUsize>,
-        releases: Mutex<VecDeque<oneshot::Receiver<()>>>,
+        releases: StdMutex<VecDeque<oneshot::Receiver<()>>>,
     }
 
     impl Debug for ControlledRequestSigner {
@@ -557,7 +370,7 @@ mod tests {
             (
                 Self {
                     started: started.clone(),
-                    releases: Mutex::new(receivers),
+                    releases: StdMutex::new(receivers),
                 },
                 started,
                 senders,
@@ -722,6 +535,13 @@ mod tests {
         parts
     }
 
+    fn set_cached_credential<K: SigningCredential>(signer: &Signer<K>, credential: K) {
+        *signer
+            .credential
+            .try_lock()
+            .expect("credential cache must be unlocked") = Some(credential);
+    }
+
     #[test]
     fn failure_leaves_entire_request_head_unchanged() {
         let signer = Signer::new(
@@ -829,7 +649,7 @@ mod tests {
             };
             let (provider, calls, mut responses) = ControlledProvider::new(1);
             let signer = Signer::new(Context::new(), provider, OperationSigner);
-            signer.credential_cache.set_credential(cached);
+            set_cached_credential(&signer, cached);
             let mut requests = (0..8).map(|_| request_parts()).collect::<Vec<_>>();
             let mut batch = Box::pin(join_all(
                 requests
@@ -858,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_refresh_failure_is_shared_and_later_call_retries() {
+    fn concurrent_refresh_failure_allows_waiter_retry() {
         futures::executor::block_on(async {
             let base = Timestamp::from_second(700).expect("timestamp must be valid");
             let refreshed = ExpiringCredential {
@@ -884,34 +704,38 @@ mod tests {
                 .send(Err(Error::rate_limited("injected refresh failure")
                     .with_context("refresh_generation: 1")))
                 .expect("controlled failure must be received");
-            for result in batch.await {
-                let error = result.expect_err("current waiter must receive refresh failure");
-                assert_eq!(error.kind(), ErrorKind::RateLimited);
-                assert_eq!(error.to_string(), "injected refresh failure");
-                assert_eq!(error.context(), &["refresh_generation: 1"]);
-                assert!(error.is_retryable());
-            }
-            assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-            let mut retry_request = request_parts();
-            let mut retry = Box::pin(signer.sign(&mut retry_request, None));
-            assert!(poll!(&mut retry).is_pending());
+            assert!(poll!(&mut batch).is_pending());
             assert_eq!(calls.load(Ordering::SeqCst), 2);
             responses
                 .remove(0)
                 .send(Ok(Some(refreshed)))
                 .expect("controlled recovery must be received");
-            retry.await.expect("later caller must retry and recover");
+
+            let results = batch.await;
+            let errors = results
+                .iter()
+                .filter_map(|result| result.as_ref().err())
+                .collect::<Vec<_>>();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].kind(), ErrorKind::RateLimited);
+            assert_eq!(errors[0].to_string(), "injected refresh failure");
+            assert_eq!(errors[0].context(), &["refresh_generation: 1"]);
+            assert!(errors[0].is_retryable());
+            assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 7);
             assert_eq!(calls.load(Ordering::SeqCst), 2);
-            assert_eq!(
-                retry_request.headers.get("x-credential-generation"),
-                Some(&HeaderValue::from_static("2"))
-            );
+
+            let mut later_request = request_parts();
+            signer
+                .sign(&mut later_request, None)
+                .await
+                .expect("later caller must reuse the recovered credential");
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
         });
     }
 
     #[test]
-    fn concurrent_callers_apply_exact_refreshed_validity_check() {
+    fn refreshed_credential_is_checked_for_exact_operation_deadline() {
         futures::executor::block_on(async {
             let base = Timestamp::from_second(800).expect("timestamp must be valid");
             let credential = ExpiringCredential {
@@ -922,27 +746,23 @@ mod tests {
             };
             let (provider, calls, mut responses) = ControlledProvider::new(1);
             let signer = Signer::new(Context::new(), provider, OperationSigner);
-            let mut requests = (0..8).map(|_| request_parts()).collect::<Vec<_>>();
-            let mut batch = Box::pin(join_all(
-                requests
-                    .iter_mut()
-                    .map(|request| signer.sign(request, None)),
-            ));
+            let mut request = request_parts();
+            let mut signing = Box::pin(signer.sign(&mut request, None));
 
-            assert!(poll!(&mut batch).is_pending());
+            assert!(poll!(&mut signing).is_pending());
             responses
                 .remove(0)
                 .send(Ok(Some(credential)))
                 .expect("controlled response must be received");
-            for result in batch.await {
-                let error = result.expect_err("exact deadline must reject the credential");
-                assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
-                assert!(
-                    error
-                        .to_string()
-                        .contains("expires before the requested operation deadline")
-                );
-            }
+            let error = signing
+                .await
+                .expect_err("exact deadline must reject the credential");
+            assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+            assert!(
+                error
+                    .to_string()
+                    .contains("expires before the requested operation deadline")
+            );
             assert_eq!(calls.load(Ordering::SeqCst), 1);
         });
     }
@@ -1047,26 +867,17 @@ mod tests {
             .with_request_signer(MutatingSigner { fail: false });
         let with_provider = signer.clone().with_credential_provider(StaticProvider);
 
+        assert!(Arc::ptr_eq(&signer.credential, &clone.credential));
+        assert!(Arc::ptr_eq(&signer.credential, &with_context.credential));
         assert!(Arc::ptr_eq(
-            &signer.credential_cache,
-            &clone.credential_cache
+            &signer.credential,
+            &with_request_signer.credential
         ));
-        assert!(Arc::ptr_eq(
-            &signer.credential_cache,
-            &with_context.credential_cache
-        ));
-        assert!(Arc::ptr_eq(
-            &signer.credential_cache,
-            &with_request_signer.credential_cache
-        ));
-        assert!(!Arc::ptr_eq(
-            &signer.credential_cache,
-            &with_provider.credential_cache
-        ));
+        assert!(!Arc::ptr_eq(&signer.credential, &with_provider.credential));
     }
 
     #[test]
-    fn cancelled_refresh_notifies_waiters_and_allows_retry() {
+    fn cancelled_refresh_releases_lock_and_waiter_retries() {
         futures::executor::block_on(async {
             let base = Timestamp::from_second(975).expect("timestamp must be valid");
             let calls = Arc::new(AtomicUsize::new(0));
@@ -1090,20 +901,14 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             drop(leader);
 
-            let error = waiter
+            waiter
                 .await
-                .expect_err("waiter must receive refresh cancellation");
-            assert_eq!(error.kind(), ErrorKind::Unexpected);
-            assert_eq!(error.to_string(), "credential refresh was cancelled");
-            assert!(error.is_retryable());
-            assert_eq!(calls.load(Ordering::SeqCst), 1);
-
-            let mut retry_request = request_parts();
-            signer
-                .sign(&mut retry_request, None)
-                .await
-                .expect("later call must retry after cancellation");
+                .expect("waiter must retry after leader cancellation");
             assert_eq!(calls.load(Ordering::SeqCst), 2);
+            assert_eq!(
+                waiter_request.headers.get("x-credential-generation"),
+                Some(&HeaderValue::from_static("2"))
+            );
         });
     }
 
@@ -1150,7 +955,7 @@ mod tests {
         };
         let (provider, calls) = SequenceProvider::new([Ok(Some(refreshed))]);
         let signer = Signer::new(Context::new(), provider, OperationSigner);
-        signer.credential_cache.set_credential(cached);
+        set_cached_credential(&signer, cached);
 
         let mut parts = request_parts();
         futures::executor::block_on(signer.sign(&mut parts, None))
@@ -1205,7 +1010,7 @@ mod tests {
             Ok(Some(refreshed)),
         ]);
         let signer = Signer::new(Context::new(), provider, OperationSigner);
-        signer.credential_cache.set_credential(cached);
+        set_cached_credential(&signer, cached);
 
         let mut parts = request_parts();
         let original = parts.clone();
@@ -1242,7 +1047,7 @@ mod tests {
         };
         let (provider, calls) = SequenceProvider::new([Ok(None), Ok(Some(refreshed))]);
         let signer = Signer::new(Context::new(), provider, OperationSigner);
-        signer.credential_cache.set_credential(cached);
+        set_cached_credential(&signer, cached);
         let mut parts = request_parts();
         let original = parts.clone();
 
@@ -1270,7 +1075,7 @@ mod tests {
             StaticProvider,
             MutatingSigner { fail: false },
         );
-        signer.credential_cache.set_credential(TestCredential);
+        set_cached_credential(&signer, TestCredential);
 
         let debug = format!("{signer:?}");
         assert!(debug.starts_with("Signer"));
