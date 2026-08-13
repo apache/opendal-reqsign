@@ -237,6 +237,20 @@ impl Debug for S3ExpressSessionConfig {
 }
 
 impl S3ExpressSessionConfig {
+    /// Resolve a directory bucket configuration from its bucket name and Region.
+    ///
+    /// The complete `base--zone-id--x-s3` bucket name is validated, the Zone ID
+    /// is extracted from its suffix, and the partition is derived from `region`.
+    /// Supplying the Region explicitly supports Local Zones and new Zone ID
+    /// prefixes without relying on compatibility inference.
+    pub fn from_bucket(bucket: impl Into<String>, region: impl Into<String>) -> Result<Self> {
+        let bucket = bucket.into();
+        let region = region.into();
+        let zone_id = zone_id_from_bucket(&bucket)?;
+        let partition = S3ExpressSessionPartition::from_region(&region)?;
+        Self::new(bucket, zone_id, region, partition)
+    }
+
     /// Create and validate a directory bucket configuration.
     ///
     /// `bucket` must include the exact `--{zone_id}--x-s3` suffix. `zone_id`
@@ -330,16 +344,14 @@ impl S3ExpressSessionConfig {
 /// ```no_run
 /// use reqsign_aws_v4::{
 ///     DefaultCredentialProvider, S3ExpressSessionConfig, S3ExpressSessionGrant,
-///     S3ExpressSessionGranter, S3ExpressSessionPartition,
+///     S3ExpressSessionGranter,
 /// };
 /// use reqsign_core::{Context, Granter};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = S3ExpressSessionConfig::new(
+/// let config = S3ExpressSessionConfig::from_bucket(
 ///     "my-bucket--usw2-az1--x-s3",
-///     "usw2-az1",
 ///     "us-west-2",
-///     S3ExpressSessionPartition::Aws,
 /// )?;
 /// let grant = S3ExpressSessionGrant::maximum_allowed();
 /// let granter = Granter::new(
@@ -576,8 +588,7 @@ impl S3ExpressSessionProvider {
                 )
             })?,
         };
-        let partition = S3ExpressSessionPartition::from_region(&region)?;
-        let config = S3ExpressSessionConfig::new(&self.bucket, zone_id, region, partition)?;
+        let config = S3ExpressSessionConfig::from_bucket(&self.bucket, region)?;
         Ok(S3ExpressSessionGranter::new(
             config,
             S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
@@ -1063,6 +1074,119 @@ mod tests {
         let ctx = Context::new().with_http_send(http.clone());
         let operation = S3ExpressSessionGranter::new(config, grant).with_time(now);
         (operation, ctx, http)
+    }
+
+    #[test]
+    fn resolves_configuration_from_bucket_and_region() {
+        let config = S3ExpressSessionConfig::from_bucket("example--usw2-az1--x-s3", "us-west-2")
+            .expect("standard AWS configuration must resolve");
+        assert_eq!(config.bucket(), "example--usw2-az1--x-s3");
+        assert_eq!(config.zone_id(), "usw2-az1");
+        assert_eq!(config.region(), "us-west-2");
+        assert_eq!(config.partition(), S3ExpressSessionPartition::Aws);
+        assert_eq!(
+            config.endpoint(),
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
+        );
+
+        let explicit = S3ExpressSessionConfig::new(
+            "example--usw2-az1--x-s3",
+            "usw2-az1",
+            "us-west-2",
+            S3ExpressSessionPartition::Aws,
+        )
+        .expect("explicit constructor must remain available");
+        assert_eq!(config, explicit);
+
+        let china =
+            S3ExpressSessionConfig::from_bucket("example--cnn1-pkx1-az1--x-s3", "cn-north-1")
+                .expect("AWS China configuration must resolve");
+        assert_eq!(china.zone_id(), "cnn1-pkx1-az1");
+        assert_eq!(china.partition(), S3ExpressSessionPartition::AwsCn);
+        assert_eq!(
+            china.endpoint(),
+            "https://example--cnn1-pkx1-az1--x-s3.s3express-cnn1-pkx1-az1.cn-north-1.amazonaws.com.cn"
+        );
+    }
+
+    #[test]
+    fn explicit_region_supports_local_zones_and_new_zone_prefixes() {
+        let local_zone =
+            S3ExpressSessionConfig::from_bucket("example--usw2-lax1-az1--x-s3", "us-west-2")
+                .expect("Local Zone configuration must resolve");
+        assert_eq!(local_zone.zone_id(), "usw2-lax1-az1");
+
+        assert_eq!(infer_region_from_zone_id("apse6-az1"), None);
+        let new_zone =
+            S3ExpressSessionConfig::from_bucket("example--apse6-az1--x-s3", "ap-southeast-6")
+                .expect("explicit Region must not depend on compatibility inference");
+        assert_eq!(new_zone.zone_id(), "apse6-az1");
+        assert_eq!(new_zone.region(), "ap-southeast-6");
+        assert_eq!(
+            new_zone.endpoint(),
+            "https://example--apse6-az1--x-s3.s3express-apse6-az1.ap-southeast-6.amazonaws.com"
+        );
+    }
+
+    #[test]
+    fn validates_complete_directory_bucket_name() {
+        let max_length = format!("{}--usw2-az1--x-s3", "a".repeat(47));
+        assert_eq!(max_length.len(), 63);
+        S3ExpressSessionConfig::from_bucket(max_length, "us-west-2")
+            .expect("63-character directory bucket name must be accepted");
+        S3ExpressSessionConfig::from_bucket("a--usw2-az1--x-s3", "us-west-2")
+            .expect("one-character base name must be accepted");
+
+        let too_long = format!("{}--usw2-az1--x-s3", "a".repeat(48));
+        assert_eq!(too_long.len(), 64);
+        let invalid_buckets = [
+            "general-purpose-bucket".to_string(),
+            "--usw2-az1--x-s3".to_string(),
+            "example----x-s3".to_string(),
+            "-example--usw2-az1--x-s3".to_string(),
+            "UPPER--usw2-az1--x-s3".to_string(),
+            "example_name--usw2-az1--x-s3".to_string(),
+            "example.name--usw2-az1--x-s3".to_string(),
+            "xn--name--usw2-az1--x-s3".to_string(),
+            "sthree-name--usw2-az1--x-s3".to_string(),
+            "sthree-configurator--usw2-az1--x-s3".to_string(),
+            "amzn-s3-demo-name--usw2-az1--x-s3".to_string(),
+            "example--usw2--x-s3".to_string(),
+            "example--usw2--az1--x-s3".to_string(),
+            "example--USW2-az1--x-s3".to_string(),
+            "example--usw2-zone1--x-s3".to_string(),
+            "example--usw2-az--x-s3".to_string(),
+            "example--usw2-azx--x-s3".to_string(),
+            too_long,
+        ];
+        for bucket in invalid_buckets {
+            assert_eq!(
+                S3ExpressSessionConfig::from_bucket(bucket, "us-west-2")
+                    .expect_err("invalid directory bucket name must fail")
+                    .kind(),
+                ErrorKind::ConfigInvalid
+            );
+        }
+    }
+
+    #[test]
+    fn validates_explicit_region_and_zone_match() {
+        for (bucket, region) in [
+            ("example--use1-az1--x-s3", "us-west-2"),
+            ("example--cnn1-az1--x-s3", "us-west-2"),
+            ("example--usw2-az1--x-s3", "cn-north-1"),
+            ("example--usw2-az1--x-s3", "US-WEST-2"),
+            ("example--usw2-az1--x-s3", "us-west"),
+            ("example--usw2-az1--x-s3", "us-west-x"),
+            ("example--usgw1-az1--x-s3", "us-gov-west-1"),
+        ] {
+            assert_eq!(
+                S3ExpressSessionConfig::from_bucket(bucket, region)
+                    .expect_err("invalid Region or Zone/Region mismatch must fail")
+                    .kind(),
+                ErrorKind::ConfigInvalid
+            );
+        }
     }
 
     #[test]
@@ -1578,9 +1702,21 @@ mod tests {
             "sensitive-bucket--usw2-az1--x-s3",
             FixedCredentialProvider::new(source.clone()).0,
         );
+        let resolved_config = S3ExpressSessionConfig::from_bucket(
+            "resolved-sensitive-bucket--usw2-az1--x-s3",
+            "us-west-2",
+        )
+        .expect("sensitive configuration must resolve");
+        let resolution_err = S3ExpressSessionConfig::from_bucket(
+            "mismatched-sensitive-bucket--use1-az1--x-s3",
+            "us-west-2",
+        )
+        .expect_err("mismatched sensitive configuration must fail");
 
         for (debug, secret) in [
             (format!("{:?}", config()), "example--usw2-az1--x-s3"),
+            (format!("{resolved_config:?}"), "resolved-sensitive-bucket"),
+            (format!("{resolution_err:?}"), "mismatched-sensitive-bucket"),
             (
                 format!(
                     "{:?}",
@@ -1661,6 +1797,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compatibility_provider_uses_explicit_region_for_new_zone_prefix() {
+        let response = success_response(
+            "session-access-key",
+            "session-secret-key",
+            "session-token",
+            "2099-01-01T00:05:00Z",
+        );
+        let http = MockHttpSend::new([response]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let provider = S3ExpressSessionProvider::new("example--apse6-az1--x-s3", source_provider)
+            .with_region("ap-southeast-6");
+
+        provider
+            .provide_credential(&ctx)
+            .await
+            .expect("explicit Region compatibility provider must succeed")
+            .expect("compatibility provider must return a credential");
+
+        assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            http.request(0).uri.authority().unwrap().as_str(),
+            "example--apse6-az1--x-s3.s3express-apse6-az1.ap-southeast-6.amazonaws.com"
+        );
+    }
+
+    #[tokio::test]
     async fn compatibility_provider_resolves_aws_china_partition() {
         let response = success_response(
             "session-access-key",
@@ -1723,6 +1887,23 @@ mod tests {
             .provide_credential(&ctx)
             .await
             .expect_err("unsupported S3 Express partition must fail");
+        assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+        assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn provider_rejects_zone_region_mismatch_before_loading_source() {
+        let http = MockHttpSend::new([]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let provider = S3ExpressSessionProvider::new("example--use1-az1--x-s3", source_provider)
+            .with_region("us-west-2");
+
+        let err = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("Zone/Region mismatch must fail before source loading");
         assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
         assert_eq!(source_calls.load(Ordering::SeqCst), 0);
         assert_eq!(http.calls.load(Ordering::SeqCst), 0);

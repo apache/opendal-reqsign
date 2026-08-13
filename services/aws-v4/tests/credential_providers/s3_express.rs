@@ -19,8 +19,7 @@ use super::create_test_context;
 use log::info;
 use reqsign_aws_v4::{
     DefaultCredentialProvider, S3ExpressSessionConfig, S3ExpressSessionGrant,
-    S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
-    S3ExpressSessionProvider,
+    S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionProvider,
 };
 use reqsign_core::{Granter, ProvideCredential};
 use std::env;
@@ -72,14 +71,7 @@ async fn test_s3_express_session_granter() {
         .expect("REQSIGN_AWS_V4_S3_EXPRESS_BUCKET must be set for S3 Express test");
     let region =
         env::var("AWS_REGION").expect("AWS_REGION must be set for S3 Express granter test");
-    let zone_id = bucket
-        .strip_suffix("--x-s3")
-        .and_then(|value| value.rsplit_once("--"))
-        .map(|(_, zone_id)| zone_id)
-        .expect("S3 Express bucket must include its Zone ID");
-    let partition = S3ExpressSessionPartition::from_region(&region)
-        .expect("S3 Express partition must be supported");
-    let config = S3ExpressSessionConfig::new(&bucket, zone_id, region, partition)
+    let config = S3ExpressSessionConfig::from_bucket(&bucket, region)
         .expect("S3 Express configuration must be valid");
     let operation = S3ExpressSessionGranter::new(
         config,
