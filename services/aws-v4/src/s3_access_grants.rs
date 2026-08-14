@@ -677,8 +677,7 @@ impl S3AccessGrantsGranter {
     ) -> Result<Credential> {
         let request = self.build_request(config, grant, duration_seconds)?;
         let (mut parts, body) = request.into_parts();
-        let signer =
-            RequestSigner::new("s3", &self.config.region).with_standard_session_token_header();
+        let signer = RequestSigner::new("s3", &self.config.region).with_standard_session_token();
         #[cfg(test)]
         let signer = if let Some(time) = self.time {
             signer.with_time(time)

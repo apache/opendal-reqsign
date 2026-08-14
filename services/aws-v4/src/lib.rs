@@ -162,8 +162,9 @@ pub use s3_access_grants::{
 };
 mod provide_credential;
 pub use provide_credential::{
-    S3ExpressSessionConfig, S3ExpressSessionGrant, S3ExpressSessionGranter, S3ExpressSessionMode,
-    S3ExpressSessionPartition, S3ExpressSessionProvider, S3ExpressSessionTrustedEndpointConfig,
+    S3ExpressSessionConfig, S3ExpressSessionGrant, S3ExpressSessionGrantSelection,
+    S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
+    S3ExpressSessionProvider, S3ExpressSessionTrustedEndpointConfig,
 };
 pub use reqsign_aws_core::constants;
 pub use reqsign_aws_core::{

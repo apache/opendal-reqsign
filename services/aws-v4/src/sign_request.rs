@@ -38,7 +38,7 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 pub struct RequestSigner {
     service: String,
     region: String,
-    force_standard_session_token: bool,
+    use_standard_session_token: bool,
 
     time: Option<Timestamp>,
 }
@@ -49,15 +49,44 @@ impl RequestSigner {
         Self {
             service: service.into(),
             region: region.into(),
-            force_standard_session_token: false,
+            use_standard_session_token: false,
 
             time: None,
         }
     }
 
-    /// Always use `x-amz-security-token` for temporary credentials.
-    pub(crate) fn with_standard_session_token_header(mut self) -> Self {
-        self.force_standard_session_token = true;
+    /// Use the standard AWS session-token representation.
+    ///
+    /// This mode is required when an S3 Express request is authenticated with
+    /// temporary IAM or STS credentials. Header authentication uses
+    /// `x-amz-security-token`, and query authentication uses
+    /// `X-Amz-Security-Token`.
+    ///
+    /// By default, S3 Express endpoints use the [`CreateSession`] credential
+    /// representation: `x-amz-s3session-token` for header authentication and
+    /// `X-Amz-S3session-Token` for query authentication. The S3 Express
+    /// [`CopyObject`], [`HeadBucket`], and [`UploadPartCopy`] operations require
+    /// IAM credentials instead of CreateSession credentials.
+    ///
+    /// This setting only selects how an existing [`Credential`] session token
+    /// is represented. It does not modify the credential or load a different
+    /// credential source.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use reqsign_aws_v4::RequestSigner;
+    ///
+    /// let signer = RequestSigner::new("s3express", "us-west-2")
+    ///     .with_standard_session_token();
+    /// ```
+    ///
+    /// [`CopyObject`]: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html
+    /// [`CreateSession`]: https://docs.aws.amazon.com/AmazonS3/latest/API/API_CreateSession.html
+    /// [`HeadBucket`]: https://docs.aws.amazon.com/AmazonS3/latest/API/API_HeadBucket.html
+    /// [`UploadPartCopy`]: https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
+    pub fn with_standard_session_token(mut self) -> Self {
+        self.use_standard_session_token = true;
         self
     }
 
@@ -119,7 +148,7 @@ impl SignRequest for RequestSigner {
         let mut signed_req = SigningRequest::build(req)?;
 
         // canonicalize context
-        if self.force_standard_session_token {
+        if self.use_standard_session_token {
             canonicalize_headers_with_standard_session_token(
                 &mut signed_req,
                 cred,
@@ -136,6 +165,7 @@ impl SignRequest for RequestSigner {
             now,
             &self.service,
             &self.region,
+            self.use_standard_session_token,
         );
         let canonical_query = canonicalize_query(&signed_req, &authentication_query);
 
@@ -223,6 +253,7 @@ fn authentication_query(
     now: Timestamp,
     service: &str,
     region: &str,
+    use_standard_session_token: bool,
 ) -> Vec<(String, String)> {
     let mut query = Vec::new();
     if let Some(expire) = expires_in {
@@ -245,7 +276,15 @@ fn authentication_query(
         ));
 
         if let Some(token) = &cred.session_token {
-            query.push(("X-Amz-Security-Token".into(), token.into()));
+            let is_s3_express = !use_standard_session_token
+                && (ctx.authority.as_str().contains("s3express")
+                    || ctx.authority.as_str().contains("--x-s3"));
+            let name = if is_s3_express {
+                "X-Amz-S3session-Token"
+            } else {
+                "X-Amz-Security-Token"
+            };
+            query.push((name.into(), token.into()));
         }
     }
     query
@@ -289,6 +328,101 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+    const S3_EXPRESS_URI: &str =
+        "https://bucket--use2-az1--x-s3.s3express-use2-az1.us-east-2.amazonaws.com/object";
+    const S3_EXPRESS_REGION: &str = "us-east-2";
+    const TEST_ACCESS_KEY: &str = "AKIDEXAMPLE";
+    const TEST_SECRET_KEY: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+    const TEST_SESSION_TOKEN: &str = "test-session-token";
+
+    fn s3_express_credential(now: Timestamp) -> Credential {
+        Credential {
+            access_key_id: TEST_ACCESS_KEY.to_string(),
+            secret_access_key: TEST_SECRET_KEY.to_string(),
+            session_token: Some(TEST_SESSION_TOKEN.to_string()),
+            expires_in: Some(now + Duration::from_secs(3600)),
+        }
+    }
+
+    fn aws_signed_s3_express_request(
+        mut request: Request<&'static str>,
+        now: Timestamp,
+        presigned: bool,
+        session_token_name_override: Option<&'static str>,
+    ) -> Result<Request<&'static str>> {
+        let mut settings = SigningSettings::default();
+        settings.percent_encoding_mode = PercentEncodingMode::Double;
+        settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        settings.session_token_name_override = session_token_name_override;
+        if presigned {
+            settings.signature_location = SignatureLocation::QueryParams;
+            settings.expires_in = Some(Duration::from_secs(60));
+        }
+
+        let identity = Credentials::new(
+            TEST_ACCESS_KEY,
+            TEST_SECRET_KEY,
+            Some(TEST_SESSION_TOKEN.to_string()),
+            None,
+            "hardcoded-credentials",
+        )
+        .into();
+        let params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region(S3_EXPRESS_REGION)
+            .name("s3express")
+            .time(now.as_system_time())
+            .settings(settings)
+            .build()
+            .expect("signing params must be valid");
+        let output = aws_sigv4::http_request::sign(
+            SignableRequest::new(
+                request.method().as_str(),
+                request.uri().to_string(),
+                request
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.to_str().unwrap())),
+                SignableBody::UnsignedPayload,
+            )?,
+            &params.into(),
+        )?;
+        let (instructions, _) = output.into_parts();
+        instructions.apply_to_request_http1x(&mut request);
+        Ok(request)
+    }
+
+    fn reqsign_s3_express_canonical_request(
+        now: Timestamp,
+        presigned: bool,
+        use_standard_session_token: bool,
+    ) -> Result<String> {
+        let credential = s3_express_credential(now);
+        let mut parts = Request::get(S3_EXPRESS_URI).body(())?.into_parts().0;
+        let mut signing_request = SigningRequest::build(&mut parts)?;
+        let expires_in = presigned.then_some(Duration::from_secs(60));
+        if use_standard_session_token {
+            canonicalize_headers_with_standard_session_token(
+                &mut signing_request,
+                &credential,
+                expires_in,
+                now,
+            )?;
+        } else {
+            canonicalize_headers(&mut signing_request, &credential, expires_in, now)?;
+        }
+        let authentication_query = authentication_query(
+            &signing_request,
+            &credential,
+            expires_in,
+            now,
+            "s3express",
+            S3_EXPRESS_REGION,
+            use_standard_session_token,
+        );
+        let canonical_query = canonicalize_query(&signing_request, &authentication_query);
+        canonical_request_string(&signing_request, &canonical_query).map_err(Into::into)
+    }
 
     #[derive(Debug)]
     struct SequenceProvider {
@@ -327,43 +461,207 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn standard_session_token_override_preserves_s3_express_default() -> Result<()> {
+    async fn s3_express_header_token_modes_match_aws_sigv4() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
-        let credential = Credential {
-            access_key_id: "access-key".to_string(),
-            secret_access_key: "secret-key".to_string(),
-            session_token: Some("session-token".to_string()),
-            expires_in: Some(now + Duration::from_secs(60)),
-        };
-        let uri = "https://bucket--use2-az1--x-s3.s3express-use2-az1.amazonaws.com/object";
+        let credential = s3_express_credential(now);
 
-        let mut express_parts = Request::get(uri).body(())?.into_parts().0;
-        RequestSigner::new("s3express", "us-east-2")
+        let expected_session = aws_signed_s3_express_request(
+            Request::get(S3_EXPRESS_URI).body("")?,
+            now,
+            false,
+            Some("x-amz-s3session-token"),
+        )?;
+        let (mut session_parts, body) = Request::get(S3_EXPRESS_URI).body("")?.into_parts();
+        RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_time(now)
-            .sign_request(&Context::new(), &mut express_parts, Some(&credential), None)
+            .sign_request(&Context::new(), &mut session_parts, Some(&credential), None)
             .await?;
-        assert_eq!(
-            express_parts.headers["x-amz-s3session-token"],
-            "session-token"
+        let actual_session = Request::from_parts(session_parts, body);
+        compare_request(
+            "S3 Express CreateSession header mode",
+            &expected_session,
+            &actual_session,
         );
-        assert!(!express_parts.headers.contains_key("x-amz-security-token"));
+        assert_eq!(
+            actual_session.headers()["x-amz-s3session-token"],
+            TEST_SESSION_TOKEN
+        );
+        assert!(actual_session.headers()["x-amz-s3session-token"].is_sensitive());
+        assert!(
+            !actual_session
+                .headers()
+                .contains_key("x-amz-security-token")
+        );
 
-        let mut standard_parts = Request::get(uri).body(())?.into_parts().0;
-        RequestSigner::new("s3", "us-east-2")
-            .with_standard_session_token_header()
+        let expected_iam = aws_signed_s3_express_request(
+            Request::get(S3_EXPRESS_URI).body("")?,
+            now,
+            false,
+            None,
+        )?;
+        let (mut iam_parts, body) = Request::get(S3_EXPRESS_URI).body("")?.into_parts();
+        RequestSigner::new("s3express", S3_EXPRESS_REGION)
+            .with_standard_session_token()
+            .with_time(now)
+            .sign_request(&Context::new(), &mut iam_parts, Some(&credential), None)
+            .await?;
+        let actual_iam = Request::from_parts(iam_parts, body);
+        compare_request("S3 Express IAM header mode", &expected_iam, &actual_iam);
+        assert_eq!(
+            actual_iam.headers()["x-amz-security-token"],
+            TEST_SESSION_TOKEN
+        );
+        assert!(actual_iam.headers()["x-amz-security-token"].is_sensitive());
+        assert!(!actual_iam.headers().contains_key("x-amz-s3session-token"));
+
+        let session_authorization = actual_session.headers()[header::AUTHORIZATION].to_str()?;
+        let iam_authorization = actual_iam.headers()[header::AUTHORIZATION].to_str()?;
+        assert!(session_authorization.contains("x-amz-s3session-token"));
+        assert!(iam_authorization.contains("x-amz-security-token"));
+        assert_ne!(session_authorization, iam_authorization);
+        let session_canonical = reqsign_s3_express_canonical_request(now, false, false)?;
+        let iam_canonical = reqsign_s3_express_canonical_request(now, false, true)?;
+        assert_eq!(
+            session_canonical,
+            format!(
+                "GET\n/object\n\nhost:bucket--use2-az1--x-s3.s3express-use2-az1.us-east-2.amazonaws.com\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:20260722T000000Z\nx-amz-s3session-token:{TEST_SESSION_TOKEN}\n\nhost;x-amz-content-sha256;x-amz-date;x-amz-s3session-token\nUNSIGNED-PAYLOAD"
+            )
+        );
+        assert_eq!(
+            iam_canonical,
+            format!(
+                "GET\n/object\n\nhost:bucket--use2-az1--x-s3.s3express-use2-az1.us-east-2.amazonaws.com\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:20260722T000000Z\nx-amz-security-token:{TEST_SESSION_TOKEN}\n\nhost;x-amz-content-sha256;x-amz-date;x-amz-security-token\nUNSIGNED-PAYLOAD"
+            )
+        );
+        assert_ne!(session_canonical, iam_canonical);
+        assert_eq!(
+            credential.session_token.as_deref(),
+            Some(TEST_SESSION_TOKEN)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn s3_express_query_token_modes_match_aws_sigv4() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = s3_express_credential(now);
+        let expires_in = Some(Duration::from_secs(60));
+
+        let expected_session = aws_signed_s3_express_request(
+            Request::get(S3_EXPRESS_URI).body("")?,
+            now,
+            true,
+            Some("X-Amz-S3session-Token"),
+        )?;
+        let (mut session_parts, body) = Request::get(S3_EXPRESS_URI).body("")?.into_parts();
+        RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_time(now)
             .sign_request(
                 &Context::new(),
-                &mut standard_parts,
+                &mut session_parts,
                 Some(&credential),
-                None,
+                expires_in,
             )
             .await?;
-        assert_eq!(
-            standard_parts.headers["x-amz-security-token"],
-            "session-token"
+        let actual_session = Request::from_parts(session_parts, body);
+        compare_request(
+            "S3 Express CreateSession query mode",
+            &expected_session,
+            &actual_session,
         );
-        assert!(!standard_parts.headers.contains_key("x-amz-s3session-token"));
+
+        let expected_iam =
+            aws_signed_s3_express_request(Request::get(S3_EXPRESS_URI).body("")?, now, true, None)?;
+        let (mut iam_parts, body) = Request::get(S3_EXPRESS_URI).body("")?.into_parts();
+        RequestSigner::new("s3express", S3_EXPRESS_REGION)
+            .with_standard_session_token()
+            .with_time(now)
+            .sign_request(
+                &Context::new(),
+                &mut iam_parts,
+                Some(&credential),
+                expires_in,
+            )
+            .await?;
+        let actual_iam = Request::from_parts(iam_parts, body);
+        compare_request("S3 Express IAM query mode", &expected_iam, &actual_iam);
+
+        let session_query = actual_session.uri().query().expect("query must exist");
+        let iam_query = actual_iam.uri().query().expect("query must exist");
+        assert!(session_query.contains("X-Amz-S3session-Token="));
+        assert!(!session_query.contains("X-Amz-Security-Token="));
+        assert!(iam_query.contains("X-Amz-Security-Token="));
+        assert!(!iam_query.contains("X-Amz-S3session-Token="));
+        let session_signature = form_urlencoded::parse(session_query.as_bytes())
+            .find(|(name, _)| name == "X-Amz-Signature")
+            .expect("signature must exist")
+            .1;
+        let iam_signature = form_urlencoded::parse(iam_query.as_bytes())
+            .find(|(name, _)| name == "X-Amz-Signature")
+            .expect("signature must exist")
+            .1;
+        assert_ne!(session_signature, iam_signature);
+        let session_canonical = reqsign_s3_express_canonical_request(now, true, false)?;
+        let iam_canonical = reqsign_s3_express_canonical_request(now, true, true)?;
+        assert_eq!(
+            session_canonical,
+            format!(
+                "GET\n/object\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20260722%2Fus-east-2%2Fs3express%2Faws4_request&X-Amz-Date=20260722T000000Z&X-Amz-Expires=60&X-Amz-S3session-Token={TEST_SESSION_TOKEN}&X-Amz-SignedHeaders=host\nhost:bucket--use2-az1--x-s3.s3express-use2-az1.us-east-2.amazonaws.com\n\nhost\nUNSIGNED-PAYLOAD"
+            )
+        );
+        assert_eq!(
+            iam_canonical,
+            format!(
+                "GET\n/object\nX-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIDEXAMPLE%2F20260722%2Fus-east-2%2Fs3express%2Faws4_request&X-Amz-Date=20260722T000000Z&X-Amz-Expires=60&X-Amz-Security-Token={TEST_SESSION_TOKEN}&X-Amz-SignedHeaders=host\nhost:bucket--use2-az1--x-s3.s3express-use2-az1.us-east-2.amazonaws.com\n\nhost\nUNSIGNED-PAYLOAD"
+            )
+        );
+        assert_ne!(session_canonical, iam_canonical);
+        assert_eq!(
+            credential.session_token.as_deref(),
+            Some(TEST_SESSION_TOKEN)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_token_is_redacted_from_debug_and_signing_errors() -> Result<()> {
+        const TOKEN_MARKER: &str = "SENSITIVE_SESSION_TOKEN";
+
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = Credential {
+            session_token: Some(format!("{TOKEN_MARKER}\n")),
+            ..s3_express_credential(now)
+        };
+        assert!(!format!("{credential:?}").contains(TOKEN_MARKER));
+
+        for use_standard_session_token in [false, true] {
+            let signer = RequestSigner::new("s3express", S3_EXPRESS_REGION);
+            let signer = if use_standard_session_token {
+                signer.with_standard_session_token()
+            } else {
+                signer
+            }
+            .with_time(now);
+            assert!(!format!("{signer:?}").contains(TOKEN_MARKER));
+
+            let mut parts = Request::get(S3_EXPRESS_URI).body(())?.into_parts().0;
+            let original = parts.clone();
+            let error = signer
+                .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+                .await
+                .expect_err("invalid session token must be rejected");
+
+            assert!(!format!("{error}").contains(TOKEN_MARKER));
+            assert!(!format!("{error:?}").contains(TOKEN_MARKER));
+            assert_eq!(parts.uri, original.uri);
+            assert_eq!(parts.headers, original.headers);
+            assert_eq!(
+                credential.session_token.as_deref(),
+                Some("SENSITIVE_SESSION_TOKEN\n")
+            );
+        }
 
         Ok(())
     }
@@ -679,6 +977,7 @@ mod tests {
             now,
             "s3",
             "test",
+            false,
         );
         let canonical_query = canonicalize_query(&signing_req, &auth_query);
 
