@@ -250,6 +250,9 @@ mod constants;
 mod credential;
 pub use credential::Credential;
 
+mod assume_role;
+pub use assume_role::{AssumeRoleGrant, AssumeRoleGranter};
+
 mod sign_request;
 pub use sign_request::{RequestSigner, SigningVersion};
 
