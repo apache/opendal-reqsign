@@ -694,15 +694,15 @@ impl GrantCredential for S3ExpressSessionGranter {
     }
 }
 
-/// S3 Express fixed-flow credential provider.
+/// S3 Express session credential provider.
 ///
-/// This compatibility API loads its source through [`ProvideCredential`] and
-/// creates a `ReadWrite` session on every call. New explicit credential-vending
-/// flows should use [`S3ExpressSessionGranter`] through
-/// [`reqsign_core::Granter`].
+/// This API loads its source through [`ProvideCredential`] and creates a session
+/// on every call. It defaults to an explicit `ReadWrite` session for compatibility;
+/// use [`Self::with_grant`] to select another mode.
 pub struct S3ExpressSessionProvider {
     bucket: String,
     region: Option<String>,
+    grant: S3ExpressSessionGrantSelection,
     base_provider: Box<dyn ProvideCredentialDyn<Credential = Credential>>,
 }
 
@@ -714,7 +714,7 @@ impl Debug for S3ExpressSessionProvider {
 }
 
 impl S3ExpressSessionProvider {
-    /// Create a fixed `ReadWrite` session provider for a directory bucket.
+    /// Create a session provider that defaults to `ReadWrite` for a directory bucket.
     ///
     /// The legacy constructor infers the Region from well-known AWS Zone ID
     /// prefixes. Use [`S3ExpressSessionProvider::with_region`] when the Zone is
@@ -727,6 +727,7 @@ impl S3ExpressSessionProvider {
         Self {
             bucket: bucket.into(),
             region: None,
+            grant: S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite).into(),
             base_provider: Box::new(provider),
         }
     }
@@ -734,6 +735,12 @@ impl S3ExpressSessionProvider {
     /// Bind the AWS Region instead of using compatibility inference.
     pub fn with_region(mut self, region: impl Into<String>) -> Self {
         self.region = Some(region.into());
+        self
+    }
+
+    /// Select how S3 Express determines the `CreateSession` permission mode.
+    pub fn with_grant(mut self, grant: impl Into<S3ExpressSessionGrantSelection>) -> Self {
+        self.grant = grant.into();
         self
     }
 
@@ -748,10 +755,7 @@ impl S3ExpressSessionProvider {
             })?,
         };
         let config = S3ExpressSessionConfig::from_bucket(&self.bucket, region)?;
-        Ok(S3ExpressSessionGranter::new(
-            config,
-            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
-        ))
+        Ok(S3ExpressSessionGranter::new(config, self.grant.clone()))
     }
 }
 
@@ -2296,6 +2300,78 @@ mod tests {
             request.uri.authority().unwrap().as_str(),
             "example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
         );
+    }
+
+    #[tokio::test]
+    async fn configurable_provider_refreshes_maximum_allowed_sessions_for_signer() {
+        let first_expiration = (Timestamp::now() + Duration::from_secs(110)).format_rfc3339_zulu();
+        let second_expiration = (Timestamp::now() + Duration::from_secs(300)).format_rfc3339_zulu();
+        let http = MockHttpSend::new([
+            success_response(
+                "first-session-access-key",
+                "first-session-secret-key",
+                "first-session-token",
+                &first_expiration,
+            ),
+            success_response(
+                "second-session-access-key",
+                "second-session-secret-key",
+                "second-session-token",
+                &second_expiration,
+            ),
+        ]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let provider = S3ExpressSessionProvider::new("example--usw2-az1--x-s3", source_provider)
+            .with_grant(S3ExpressSessionGrant::maximum_allowed());
+        let signer = Signer::new(
+            ctx,
+            provider,
+            crate::RequestSigner::new("s3express", "us-west-2"),
+        );
+
+        let mut first = Request::get(
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/first",
+        )
+        .body(())
+        .expect("first request must build")
+        .into_parts()
+        .0;
+        signer
+            .sign(&mut first, None)
+            .await
+            .expect("first request must use a maximum-allowed session");
+        assert_eq!(
+            first.headers["x-amz-s3session-token"],
+            "first-session-token"
+        );
+
+        let mut second = Request::get(
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/second",
+        )
+        .body(())
+        .expect("second request must build")
+        .into_parts()
+        .0;
+        signer
+            .sign(&mut second, None)
+            .await
+            .expect("second request must refresh the maximum-allowed session");
+        assert_eq!(
+            second.headers["x-amz-s3session-token"],
+            "second-session-token"
+        );
+
+        assert_eq!(source_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        for index in 0..2 {
+            assert!(
+                !http
+                    .request(index)
+                    .headers
+                    .contains_key("x-amz-create-session-mode")
+            );
+        }
     }
 
     #[tokio::test]
