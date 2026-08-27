@@ -58,7 +58,8 @@ impl VmMetadataCredentialProvider {
 
     /// Set the service account used to retrieve a token from VM metadata service.
     ///
-    /// Defaults to `default` if not configured.
+    /// Defaults to `default` if not configured. A configured value other than `default` is also
+    /// preserved as the token credential's signer email for query signing.
     pub fn with_service_account(mut self, service_account: impl Into<String>) -> Self {
         self.service_account = Some(service_account.into());
         self
@@ -114,10 +115,16 @@ impl ProvideCredential for VmMetadataCredentialProvider {
             })?;
 
         let expires_at = Timestamp::now() + Duration::from_secs(token_resp.expires_in);
-        Ok(Some(Credential::with_token(Token {
+        let credential = Credential::with_token(Token {
             access_token: token_resp.access_token,
             expires_at: Some(expires_at),
-        })))
+        });
+        Ok(Some(match self.service_account.as_deref() {
+            Some(service_account) if service_account != "default" => {
+                credential.with_signer_email(service_account)
+            }
+            _ => credential,
+        }))
     }
 }
 
@@ -160,6 +167,7 @@ mod tests {
             .expect("credential must exist");
 
         assert!(cred.has_token());
+        assert!(cred.signer_email.is_none());
         assert_eq!(
             http.uris.lock().unwrap().as_slice(),
             &["http://127.0.0.1:8080/computeMetadata/v1/instance/service-accounts/default/token?scopes=https://www.googleapis.com/auth/cloud-platform".to_string()]
@@ -182,6 +190,10 @@ mod tests {
             .expect("credential must exist");
 
         assert!(cred.has_token());
+        assert_eq!(
+            cred.signer_email.as_deref(),
+            Some("custom@test-project.iam.gserviceaccount.com")
+        );
         assert_eq!(
             http.uris.lock().unwrap().as_slice(),
             &["http://127.0.0.1:8080/computeMetadata/v1/instance/service-accounts/custom@test-project.iam.gserviceaccount.com/token?scopes=https://www.googleapis.com/auth/cloud-platform".to_string()]

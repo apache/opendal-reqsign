@@ -31,6 +31,12 @@ The crate also supports server-side Cloud Storage Credential Access Boundary
 downscoping. Enable the `credential-access-boundary-client-side` feature for
 local client-side token generation.
 
+For query signing, credential providers preserve a target service account email
+when they can determine it from impersonation or VM metadata configuration. The
+request signer uses that identity with IAMCredentials `signBlob`. An email set
+with `RequestSigner::with_signer_email` takes precedence over the
+provider-discovered identity.
+
 ## Examples
 
 - [Credential-chain logging](examples/chain_logging.rs)

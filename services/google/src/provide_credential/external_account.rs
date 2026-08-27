@@ -28,7 +28,9 @@ use reqsign_aws_v4::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::credential::{Credential, ExternalAccount, Token, external_account};
+use crate::credential::{
+    Credential, ExternalAccount, Token, external_account, parse_service_account_impersonation_url,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result, SignRequest};
 
@@ -574,7 +576,7 @@ impl ExternalAccountCredentialProvider {
 
         if let Some(url) = &self.external_account.service_account_impersonation_url {
             let url = resolve_template(ctx, url)?;
-            let email = parse_impersonated_service_account_email(&url)?;
+            let email = parse_service_account_impersonation_url(&url)?;
             envs.insert(
                 GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL.to_string(),
                 email,
@@ -932,6 +934,12 @@ impl ProvideCredential for ExternalAccountCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        let signer_email = self
+            .external_account
+            .service_account_impersonation_url
+            .as_deref()
+            .and_then(|url| parse_service_account_impersonation_url(url).ok());
+
         // Load OIDC token from source
         let oidc_token = self.load_oidc_token(ctx).await?;
 
@@ -948,7 +956,11 @@ impl ProvideCredential for ExternalAccountCredentialProvider {
             sts_token
         };
 
-        Ok(Some(Credential::with_token(final_token)))
+        let credential = Credential::with_token(final_token);
+        Ok(Some(match signer_email {
+            Some(signer_email) => credential.with_signer_email(signer_email),
+            None => credential,
+        }))
     }
 }
 
@@ -989,37 +1001,6 @@ fn resolve_template(ctx: &Context, input: &str) -> Result<String> {
         })?;
         out.push_str(&value);
     }
-}
-
-fn parse_impersonated_service_account_email(url: &str) -> Result<String> {
-    let marker = "/serviceAccounts/";
-    let start = url.find(marker).ok_or_else(|| {
-        reqsign_core::Error::config_invalid(format!(
-            "service_account_impersonation_url missing {marker}: {url}"
-        ))
-    })?;
-    let rest = &url[start + marker.len()..];
-    let end = rest.find(':').ok_or_else(|| {
-        reqsign_core::Error::config_invalid(format!(
-            "service_account_impersonation_url missing action separator: {url}"
-        ))
-    })?;
-
-    let email = percent_encoding::percent_decode_str(&rest[..end])
-        .decode_utf8()
-        .map_err(|e| {
-            reqsign_core::Error::config_invalid(
-                "service_account_impersonation_url contains invalid UTF-8 email",
-            )
-            .with_source(e)
-        })?;
-    if email.is_empty() {
-        return Err(reqsign_core::Error::config_invalid(
-            "service_account_impersonation_url resolved empty service account email",
-        ));
-    }
-
-    Ok(email.into_owned())
 }
 
 struct ResolvedAwsSource {
@@ -1591,6 +1572,7 @@ mod tests {
             .await?
             .expect("credential must exist");
         assert!(cred.has_valid_token());
+        assert_eq!(cred.signer_email.as_deref(), Some("sa@example.com"));
 
         assert_eq!(
             sts_scope.lock().expect("lock").as_deref(),

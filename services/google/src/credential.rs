@@ -259,13 +259,15 @@ impl KeyTrait for Token {
     }
 }
 
-/// Credential represents Google credentials that may contain both service account and token.
+/// Credential represents Google credentials that may contain a service account, token, and
+/// provider-discovered signer identity.
 ///
 /// **IMPORTANT**: This is a specially designed structure that can hold both ServiceAccount
 /// and Token simultaneously. This design is intentional and critical for Google's authentication:
 ///
 /// - Service account only: Used for signed URL generation and JWT-based authentication
-/// - Token only: Used for Bearer authentication (e.g., from metadata server, OAuth2)  
+/// - Token only: Used for Bearer authentication (e.g., from metadata server, OAuth2)
+/// - Token with signer email: Also supports query signing through IAMCredentials `signBlob`
 /// - Both: The RequestSigner is responsible for exchanging service account for tokens when needed,
 ///   and can use cached tokens when available to avoid unnecessary exchanges
 ///
@@ -278,6 +280,10 @@ pub struct Credential {
     pub service_account: Option<ServiceAccount>,
     /// OAuth2 access token, if available.
     pub token: Option<Token>,
+    /// Service account email authorized to sign with the token, if known by the provider.
+    ///
+    /// This identity is used only for query signing and does not affect Bearer authentication.
+    pub signer_email: Option<String>,
 }
 
 impl Credential {
@@ -286,15 +292,25 @@ impl Credential {
         Self {
             service_account: Some(service_account),
             token: None,
+            signer_email: None,
         }
     }
 
-    /// Create a credential with only a token.
+    /// Create a credential with a token.
     pub fn with_token(token: Token) -> Self {
         Self {
             service_account: None,
             token: Some(token),
+            signer_email: None,
         }
+    }
+
+    /// Set the service account email authorized to sign with this credential's token.
+    ///
+    /// This identity is used only for query signing and does not affect Bearer authentication.
+    pub fn with_signer_email(mut self, signer_email: impl Into<String>) -> Self {
+        self.signer_email = Some(signer_email.into());
+        self
     }
 
     /// Check if the credential has a service account.
@@ -311,6 +327,37 @@ impl Credential {
     pub fn has_valid_token(&self) -> bool {
         self.token.as_ref().is_some_and(|t| t.is_valid())
     }
+}
+
+pub(crate) fn parse_service_account_impersonation_url(url: &str) -> Result<String> {
+    let marker = "/serviceAccounts/";
+    let start = url.find(marker).ok_or_else(|| {
+        reqsign_core::Error::config_invalid(format!(
+            "service_account_impersonation_url missing {marker}: {url}"
+        ))
+    })?;
+    let rest = &url[start + marker.len()..];
+    let end = rest.find(':').ok_or_else(|| {
+        reqsign_core::Error::config_invalid(format!(
+            "service_account_impersonation_url missing action separator: {url}"
+        ))
+    })?;
+
+    let email = percent_encoding::percent_decode_str(&rest[..end])
+        .decode_utf8()
+        .map_err(|e| {
+            reqsign_core::Error::config_invalid(
+                "service_account_impersonation_url contains invalid UTF-8 email",
+            )
+            .with_source(e)
+        })?;
+    if email.is_empty() {
+        return Err(reqsign_core::Error::config_invalid(
+            "service_account_impersonation_url resolved empty service account email",
+        ));
+    }
+
+    Ok(email.into_owned())
 }
 
 impl KeyTrait for Credential {
@@ -385,6 +432,15 @@ mod tests {
         let data = br#"{"wrong_field": "test-token"}"#;
         let result = format.parse(data);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_service_account_impersonation_url() {
+        let url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/signer%40example.com:generateAccessToken";
+        assert_eq!(
+            parse_service_account_impersonation_url(url).unwrap(),
+            "signer@example.com"
+        );
     }
 
     #[test]
@@ -565,6 +621,10 @@ mod tests {
         assert!(!cred.has_service_account());
         assert!(cred.has_token());
         assert!(cred.has_valid_token());
+        assert!(cred.signer_email.is_none());
+
+        let cred = cred.with_signer_email("signer@example.com");
+        assert_eq!(cred.signer_email.as_deref(), Some("signer@example.com"));
 
         // Invalid token only
         let cred = Credential::with_token(Token {
