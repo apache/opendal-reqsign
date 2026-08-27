@@ -1682,6 +1682,7 @@ mod tests {
                     client_email: "service@example.com".to_string(),
                 }),
                 token: Some(valid_token),
+                signer_email: None,
             },
             source_token("", Some(now + Duration::from_secs(2 * 60 * 60))),
             source_token("source", None),

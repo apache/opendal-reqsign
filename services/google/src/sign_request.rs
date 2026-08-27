@@ -122,8 +122,9 @@ impl RequestSigner {
 
     /// Set the signer service account email used for query signing via IAMCredentials `signBlob`.
     ///
-    /// This is required when generating signed URLs without an embedded service account private key
-    /// (e.g. ADC / WIF / impersonation tokens).
+    /// This explicitly configured email takes precedence over a signer email discovered by the
+    /// credential provider. It is required when generating signed URLs from a token whose provider
+    /// cannot determine the signer identity.
     pub fn with_signer_email(mut self, signer_email: impl Into<String>) -> Self {
         self.signer_email = Some(signer_email.into());
         self
@@ -430,9 +431,12 @@ impl SignRequest for RequestSigner {
                     let (signing_req, uri) =
                         self.build_signed_query_with_service_account(req, sa, expires)?;
                     (signing_req, Some(uri))
-                } else if let (Some(token), Some(signer_email)) =
-                    (cred.token.as_ref(), self.signer_email.as_deref())
-                {
+                } else if let (Some(token), Some(signer_email)) = (
+                    cred.token.as_ref(),
+                    self.signer_email
+                        .as_deref()
+                        .or(cred.signer_email.as_deref()),
+                ) {
                     if !token.is_valid_at(required_until) {
                         return Err(reqsign_core::Error::credential_invalid(
                             "token required for iamcredentials signBlob query signing",
@@ -451,7 +455,7 @@ impl SignRequest for RequestSigner {
                     (signing_req, Some(uri))
                 } else {
                     return Err(reqsign_core::Error::credential_invalid(
-                        "service account or token + signer_email required for query signing",
+                        "service account or token + signer identity required for query signing",
                     ));
                 }
             }
@@ -696,16 +700,37 @@ mod tests {
         payload_b64: Option<String>,
     }
 
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     struct MockHttpSend {
         recorded: Arc<Mutex<Recorded>>,
+        expected_signer_email: String,
     }
+
+    impl Default for MockHttpSend {
+        fn default() -> Self {
+            Self {
+                recorded: Arc::default(),
+                expected_signer_email: "test-signer@example.com".to_string(),
+            }
+        }
+    }
+
+    impl MockHttpSend {
+        fn with_expected_signer_email(mut self, signer_email: &str) -> Self {
+            self.expected_signer_email = signer_email.to_string();
+            self
+        }
+    }
+
     impl HttpSend for MockHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             assert_eq!(req.method(), http::Method::POST);
             assert_eq!(
                 req.uri().to_string(),
-                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/test-signer@example.com:signBlob"
+                format!(
+                    "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{}:signBlob",
+                    self.expected_signer_email
+                )
             );
             assert_eq!(
                 req.headers()
@@ -854,6 +879,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_signing_uses_credential_signer_email() -> Result<()> {
+        let signer_email = "inferred-signer@example.com";
+        let ctx = Context::new()
+            .with_http_send(MockHttpSend::default().with_expected_signer_email(signer_email));
+        let credential = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(60)),
+        })
+        .with_signer_email(signer_email);
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        RequestSigner::new("storage")
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&credential),
+                Some(Duration::from_secs(300)),
+            )
+            .await?;
+
+        assert!(
+            query_get(
+                parts.uri.query().expect("signed URL query must exist"),
+                "X-Goog-Credential"
+            )
+            .expect("credential query must exist")
+            .starts_with("inferred-signer%40example.com%2F")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn explicit_signer_email_overrides_credential_identity() -> Result<()> {
+        let explicit_email = "explicit-signer@example.com";
+        let ctx = Context::new()
+            .with_http_send(MockHttpSend::default().with_expected_signer_email(explicit_email));
+        let credential = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(60)),
+        })
+        .with_signer_email("inferred-signer@example.com");
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        RequestSigner::new("storage")
+            .with_signer_email(explicit_email)
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&credential),
+                Some(Duration::from_secs(300)),
+            )
+            .await?;
+
+        assert!(
+            query_get(
+                parts.uri.query().expect("signed URL query must exist"),
+                "X-Goog-Credential"
+            )
+            .expect("credential query must exist")
+            .starts_with("explicit-signer%40example.com%2F")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn signer_refreshes_near_expiry_token_without_binding_it_to_signed_url_lifetime()
     -> Result<()> {
         let mock_http = MockHttpSend::default();
@@ -903,7 +999,8 @@ mod tests {
         let credential = Credential::with_token(Token {
             access_token: "test-access-token".to_string(),
             expires_at: None,
-        });
+        })
+        .with_signer_email("signer@example.com");
         let original_uri = format!("https://storage.googleapis.com/bucket/object?{RAW_QUERY}");
         let mut parts = http::Request::get(&original_uri)
             .header("x-custom", " value ")

@@ -21,7 +21,9 @@ use http::header::CONTENT_TYPE;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use crate::credential::{Credential, ImpersonatedServiceAccount, Token};
+use crate::credential::{
+    Credential, ImpersonatedServiceAccount, Token, parse_service_account_impersonation_url,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 
@@ -216,6 +218,80 @@ impl ProvideCredential for ImpersonatedServiceAccountCredentialProvider {
         // Then exchange for impersonated access token
         let access_token = self.generate_access_token(ctx, &bearer_token).await?;
 
-        Ok(Some(Credential::with_token(access_token)))
+        let credential = Credential::with_token(access_token);
+        let signer_email = parse_service_account_impersonation_url(
+            &self
+                .impersonated_service_account
+                .service_account_impersonation_url,
+        )
+        .ok();
+        Ok(Some(match signer_email {
+            Some(signer_email) => credential.with_signer_email(signer_email),
+            None => credential,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use reqsign_core::HttpSend;
+
+    #[derive(Clone, Debug)]
+    struct MockHttpSend;
+
+    impl HttpSend for MockHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            let body = match req.uri().to_string().as_str() {
+                "https://oauth2.googleapis.com/token" => {
+                    br#"{"access_token":"source-token","expires_in":3600}"#.as_slice()
+                }
+                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/target%40example.com:generateAccessToken" => {
+                    br#"{"accessToken":"impersonated-token","expireTime":"2100-01-01T00:00:00Z"}"#
+                        .as_slice()
+                }
+                uri => panic!("unexpected request: {uri}"),
+            };
+
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(body.into())
+                .expect("response must build"))
+        }
+    }
+
+    #[tokio::test]
+    async fn preserves_impersonated_service_account_identity() -> Result<()> {
+        let provider = ImpersonatedServiceAccountCredentialProvider::new(
+            ImpersonatedServiceAccount {
+                service_account_impersonation_url: "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/target%40example.com:generateAccessToken".to_string(),
+                source_credentials: crate::credential::OAuth2Credentials {
+                    client_id: "client-id".to_string(),
+                    client_secret: "client-secret".to_string(),
+                    refresh_token: "refresh-token".to_string(),
+                },
+                delegates: Vec::new(),
+            },
+        );
+
+        let credential = provider
+            .provide_credential(&Context::new().with_http_send(MockHttpSend))
+            .await?
+            .expect("credential must exist");
+
+        assert_eq!(
+            credential.signer_email.as_deref(),
+            Some("target@example.com")
+        );
+        assert_eq!(
+            credential
+                .token
+                .as_ref()
+                .expect("token must exist")
+                .access_token,
+            "impersonated-token"
+        );
+        Ok(())
     }
 }
