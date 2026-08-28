@@ -1,0 +1,824 @@
+{
+  "_comment": "Single source of truth for provider capability claims on the website. Every entry must be traceable to source_refs in this repository. Validated against cargo metadata by scripts/validate-providers.mjs; drift fails CI. credential_sources lists the default chain slots in real chain order (verified against each service's DefaultCredentialProviderBuilder); explicit_sources lists providers that exist but are never part of the default chain.",
+  "verified_commit": "cd22149",
+  "last_verified": "2026-08-01",
+  "internal_crates": [
+    {
+      "name": "reqsign-core",
+      "role": "Core traits (ProvideCredential, SignRequest, GrantCredential) and the runtime-agnostic Context, Signer, and Granter types."
+    },
+    {
+      "name": "reqsign-aws-core",
+      "role": "Shared AWS credential chain and canonicalization used by both SigV4 and SigV4a."
+    },
+    {
+      "name": "reqsign-file-read-tokio",
+      "role": "Context component: file reading backed by Tokio."
+    },
+    {
+      "name": "reqsign-http-send-reqwest",
+      "role": "Context component: HTTP sending backed by reqwest."
+    },
+    {
+      "name": "reqsign-command-execute-tokio",
+      "role": "Context component: command execution backed by Tokio."
+    },
+    {
+      "name": "reqsign",
+      "role": "Facade crate re-exporting every service behind feature flags, with default_context() and per-service default signers."
+    }
+  ],
+  "providers": [
+    {
+      "id": "aws-sigv4",
+      "display_name": "AWS SigV4",
+      "family": "AWS",
+      "blurb": "Signature Version 4 for AWS services, with the full shared credential chain.",
+      "service_scope": "AWS services that authenticate requests with Signature Version 4, addressed by service name and region (for example s3, sqs, execute-api).",
+      "signing_schemes": [
+        "AWS Signature Version 4"
+      ],
+      "crates": [
+        "reqsign-aws-v4",
+        "reqsign-aws-core"
+      ],
+      "facade_features": [
+        {
+          "name": "aws",
+          "capability": "Enables reqsign-aws-v4 (alias of aws-v4)."
+        },
+        {
+          "name": "aws-v4",
+          "capability": "Enables reqsign-aws-v4."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::aws::default_signer(service, region)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "profile",
+          "label": "Shared config and credentials files",
+          "provider": "ProfileCredentialProvider"
+        },
+        {
+          "id": "sso",
+          "label": "IAM Identity Center (SSO)",
+          "provider": "SSOCredentialProvider"
+        },
+        {
+          "id": "web_identity",
+          "label": "STS AssumeRoleWithWebIdentity (OIDC)",
+          "provider": "AssumeRoleWithWebIdentityCredentialProvider"
+        },
+        {
+          "id": "process",
+          "label": "External credential process",
+          "provider": "ProcessCredentialProvider"
+        },
+        {
+          "id": "ecs",
+          "label": "ECS container credentials",
+          "provider": "ECSCredentialProvider"
+        },
+        {
+          "id": "imds",
+          "label": "EC2 instance metadata (IMDSv2)",
+          "provider": "IMDSv2CredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": true,
+        "notes": "Query authentication produces presigned URLs with X-Amz-Expires derived from expires_in."
+      },
+      "credential_granting": [
+        {
+          "name": "S3 Access Grants",
+          "mechanism": "GetDataAccess exchanges IAM credentials for grant-scoped credentials.",
+          "source_refs": [
+            "services/aws-v4/src/s3_access_grants.rs"
+          ]
+        },
+        {
+          "name": "S3 Express Session",
+          "mechanism": "CreateSession issues bucket-scoped session credentials for S3 Express One Zone.",
+          "source_refs": [
+            "services/aws-v4/src/provide_credential/s3_express_session.rs"
+          ]
+        }
+      ],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the facade with --features aws for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Signing fixtures plus Python mock servers for IMDS, ECS, SSO, Process, and Cognito providers.",
+        "refs": [
+          "services/aws-v4/tests"
+        ]
+      },
+      "source_refs": [
+        "services/aws-v4",
+        "services/aws-core"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access keys",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "assume_role",
+          "label": "STS AssumeRole",
+          "provider": "AssumeRoleCredentialProvider"
+        },
+        {
+          "id": "cognito",
+          "label": "Cognito Identity",
+          "provider": "CognitoIdentityCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-aws-core"
+    },
+    {
+      "id": "aws-sigv4a",
+      "display_name": "AWS SigV4a",
+      "family": "AWS",
+      "blurb": "Asymmetric multi-region signing for AWS, sharing the SigV4 credential chain.",
+      "service_scope": "AWS services that accept Signature Version 4A for multi-region requests, addressed by service name and a region set (for example s3 with us-east-1,us-west-2).",
+      "signing_schemes": [
+        "AWS Signature Version 4A"
+      ],
+      "crates": [
+        "reqsign-aws-v4a",
+        "reqsign-aws-core"
+      ],
+      "facade_features": [
+        {
+          "name": "aws-v4a",
+          "capability": "Enables reqsign-aws-v4a."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::aws::v4a::default_signer(service, region_set)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "profile",
+          "label": "Shared config and credentials files",
+          "provider": "ProfileCredentialProvider"
+        },
+        {
+          "id": "sso",
+          "label": "IAM Identity Center (SSO)",
+          "provider": "SSOCredentialProvider"
+        },
+        {
+          "id": "web_identity",
+          "label": "STS AssumeRoleWithWebIdentity (OIDC)",
+          "provider": "AssumeRoleWithWebIdentityCredentialProvider"
+        },
+        {
+          "id": "process",
+          "label": "External credential process",
+          "provider": "ProcessCredentialProvider"
+        },
+        {
+          "id": "ecs",
+          "label": "ECS container credentials",
+          "provider": "ECSCredentialProvider"
+        },
+        {
+          "id": "imds",
+          "label": "EC2 instance metadata (IMDSv2)",
+          "provider": "IMDSv2CredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": true,
+        "notes": "Query authentication mirrors SigV4 presigning with the ECDSA-based SigV4a signature."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-aws-v4a and builds the facade with --features aws-v4a for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "shared",
+        "notes": "Credential providers are covered by the shared aws-core suite under reqsign-aws-v4; no SigV4a-specific signing suite yet.",
+        "refs": [
+          "services/aws-v4/tests"
+        ]
+      },
+      "source_refs": [
+        "services/aws-v4a",
+        "services/aws-core"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access keys",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "assume_role",
+          "label": "STS AssumeRole",
+          "provider": "AssumeRoleCredentialProvider"
+        },
+        {
+          "id": "cognito",
+          "label": "Cognito Identity",
+          "provider": "CognitoIdentityCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-aws-core"
+    },
+    {
+      "id": "azure-storage",
+      "display_name": "Azure Storage",
+      "family": "Azure",
+      "blurb": "Shared Key, SAS, and Microsoft Entra ID auth for Azure Storage.",
+      "service_scope": "Azure Storage services (Blob, Queue, File) authenticating with account shared keys, SAS tokens, or Microsoft Entra ID bearer tokens.",
+      "signing_schemes": [
+        "Shared Key",
+        "SAS token",
+        "Entra ID bearer token"
+      ],
+      "crates": [
+        "reqsign-azure-storage"
+      ],
+      "facade_features": [
+        {
+          "name": "azure",
+          "capability": "Enables reqsign-azure-storage."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::azure::default_signer()"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "azure_cli",
+          "label": "Azure CLI",
+          "provider": "AzureCliCredentialProvider"
+        },
+        {
+          "id": "client_certificate",
+          "label": "Entra ID client certificate",
+          "provider": "ClientCertificateCredentialProvider"
+        },
+        {
+          "id": "client_secret",
+          "label": "Entra ID client secret",
+          "provider": "ClientSecretCredentialProvider"
+        },
+        {
+          "id": "azure_pipelines",
+          "label": "Azure Pipelines federation",
+          "provider": "AzurePipelinesCredentialProvider"
+        },
+        {
+          "id": "workload_identity",
+          "label": "Workload identity federation",
+          "provider": "WorkloadIdentityCredentialProvider"
+        },
+        {
+          "id": "imds",
+          "label": "Managed identity (IMDS)",
+          "provider": "ImdsCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": true,
+        "notes": "SAS credentials authenticate through the query string; shared keys and bearer tokens sign headers."
+      },
+      "credential_granting": [
+        {
+          "name": "User Delegation SAS",
+          "mechanism": "Exchanges an Entra ID bearer token for a user delegation key and derives scoped SAS tokens from it.",
+          "source_refs": [
+            "services/azure-storage/src/user_delegation_sas.rs"
+          ]
+        }
+      ],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the facade with --features azure for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Signing fixtures plus mock servers for credential providers.",
+        "refs": [
+          "services/azure-storage/tests"
+        ]
+      },
+      "source_refs": [
+        "services/azure-storage"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static account key or SAS token",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-azure-storage"
+    },
+    {
+      "id": "google",
+      "display_name": "Google Cloud",
+      "family": "Google",
+      "blurb": "OAuth 2.0 tokens and V4 signed URLs for Google Cloud services.",
+      "service_scope": "Google Cloud services that accept OAuth 2.0 bearer tokens, plus V4 signed URLs for Cloud Storage.",
+      "signing_schemes": [
+        "OAuth 2.0 bearer token",
+        "V4 signed URLs"
+      ],
+      "crates": [
+        "reqsign-google"
+      ],
+      "facade_features": [
+        {
+          "name": "google",
+          "capability": "Enables reqsign-google."
+        },
+        {
+          "name": "google-credential-access-boundary-client-side",
+          "capability": "Enables client-side Credential Access Boundary downscoping inside reqsign-google."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::google::default_signer(service)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Application Default Credentials from GOOGLE_APPLICATION_CREDENTIALS",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "well_known",
+          "label": "Well-known gcloud ADC file",
+          "provider": "WellKnownCredentialProvider"
+        },
+        {
+          "id": "vm_metadata",
+          "label": "VM metadata server",
+          "provider": "VmMetadataCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": true,
+        "notes": "Bearer tokens sign headers; expires_in selects V4 signed URLs for Cloud Storage."
+      },
+      "credential_granting": [
+        {
+          "name": "Credential Access Boundary (server-side)",
+          "mechanism": "Exchanges a token through the STS API for one downscoped by an access boundary.",
+          "source_refs": [
+            "services/google/src/credential_access_boundary/server_side.rs"
+          ]
+        },
+        {
+          "name": "Credential Access Boundary (client-side)",
+          "mechanism": "Derives a downscoped token locally without a round-trip to the STS API. Requires the google-credential-access-boundary-client-side facade feature.",
+          "source_refs": [
+            "services/google/src/credential_access_boundary/client_side.rs"
+          ]
+        }
+      ],
+      "wasm": {
+        "supported": false,
+        "verified_by": "Not part of the wasm32 feature set exercised in CI."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Signing fixtures, credential provider mocks, and Credential Access Boundary tests.",
+        "refs": [
+          "services/google/tests"
+        ]
+      },
+      "source_refs": [
+        "services/google"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static service account JSON",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "file",
+          "label": "Credential file at a fixed path",
+          "provider": "FileCredentialProvider"
+        },
+        {
+          "id": "token",
+          "label": "Pre-issued OAuth2 token",
+          "provider": "TokenCredentialProvider"
+        },
+        {
+          "id": "authorized_user",
+          "label": "Authorized user (gcloud) credentials",
+          "provider": "AuthorizedUserCredentialProvider"
+        },
+        {
+          "id": "external_account",
+          "label": "External account (workload identity federation)",
+          "provider": "ExternalAccountCredentialProvider"
+        },
+        {
+          "id": "impersonated_service_account",
+          "label": "Service account impersonation",
+          "provider": "ImpersonatedServiceAccountCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-google"
+    },
+    {
+      "id": "aliyun-oss",
+      "display_name": "Aliyun OSS",
+      "family": "Aliyun",
+      "blurb": "OSS signatures V1, V2, and V4 with a deep RAM credential chain.",
+      "service_scope": "Aliyun Object Storage Service requests signed with OSS signature V1, V2, or V4.",
+      "signing_schemes": [
+        "OSS signature V1",
+        "OSS signature V2",
+        "OSS signature V4"
+      ],
+      "crates": [
+        "reqsign-aliyun-oss"
+      ],
+      "facade_features": [
+        {
+          "name": "aliyun",
+          "capability": "Enables reqsign-aliyun-oss."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::aliyun::default_signer(bucket)"
+      },
+      "credential_sources": [
+        {
+          "id": "assume_role",
+          "label": "STS AssumeRole (when a role is configured)",
+          "provider": "AssumeRoleCredentialProvider"
+        },
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "oss_profile",
+          "label": "OSS profile",
+          "provider": "OssProfileCredentialProvider"
+        },
+        {
+          "id": "credentials_file",
+          "label": "Credentials file",
+          "provider": "CredentialsFileCredentialProvider"
+        },
+        {
+          "id": "config_file",
+          "label": "CLI config file",
+          "provider": "ConfigFileCredentialProvider"
+        },
+        {
+          "id": "credentials_uri",
+          "label": "Credentials URI",
+          "provider": "CredentialsUriCredentialProvider"
+        },
+        {
+          "id": "ecs_ram_role",
+          "label": "ECS RAM role metadata",
+          "provider": "EcsRamRoleCredentialProvider"
+        },
+        {
+          "id": "oidc",
+          "label": "STS AssumeRole with OIDC",
+          "provider": "AssumeRoleWithOidcCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": true,
+        "notes": "expires_in selects query-string authentication for presigned OSS URLs."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the facade with --features aliyun for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Credential chain tests with gated live-service entry points.",
+        "refs": [
+          "services/aliyun-oss/tests"
+        ]
+      },
+      "source_refs": [
+        "services/aliyun-oss"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access keys",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-aliyun-oss"
+    },
+    {
+      "id": "huaweicloud-obs",
+      "display_name": "Huawei Cloud OBS",
+      "family": "Huawei Cloud",
+      "blurb": "OBS signature signing for Huawei Cloud Object Storage.",
+      "service_scope": "Huawei Cloud Object Storage Service requests signed with the OBS signature.",
+      "signing_schemes": [
+        "OBS signature"
+      ],
+      "crates": [
+        "reqsign-huaweicloud-obs"
+      ],
+      "facade_features": [
+        {
+          "name": "huaweicloud",
+          "capability": "Enables reqsign-huaweicloud-obs."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::huaweicloud::default_signer(bucket)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Header signing only; expires_in bounds credential validity but does not produce query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": false,
+        "verified_by": "Not part of the wasm32 feature set exercised in CI."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Credential chain tests with gated live-service entry points.",
+        "refs": [
+          "services/huaweicloud-obs/tests"
+        ]
+      },
+      "source_refs": [
+        "services/huaweicloud-obs"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access keys",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "config",
+          "label": "Config-based credentials",
+          "provider": "ConfigCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-huaweicloud-obs"
+    },
+    {
+      "id": "oracle",
+      "display_name": "Oracle Cloud",
+      "family": "Oracle",
+      "blurb": "OCI HTTP request signatures from API keys and config files.",
+      "service_scope": "Oracle Cloud Infrastructure services authenticating with the OCI HTTP request signature.",
+      "signing_schemes": [
+        "OCI request signature"
+      ],
+      "crates": [
+        "reqsign-oracle"
+      ],
+      "facade_features": [
+        {
+          "name": "oracle",
+          "capability": "Enables reqsign-oracle."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::oracle::default_signer()"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "config_file",
+          "label": "OCI config file (~/.oci/config)",
+          "provider": "ConfigFileCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Header signing only; expires_in is not interpreted as query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": false,
+        "verified_by": "Not part of the wasm32 feature set exercised in CI."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Credential chain tests with gated live-service entry points.",
+        "refs": [
+          "services/oracle/tests"
+        ]
+      },
+      "source_refs": [
+        "services/oracle"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static API key material",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "config",
+          "label": "Explicit config object",
+          "provider": "ConfigCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-oracle"
+    },
+    {
+      "id": "tencent-cos",
+      "display_name": "Tencent COS",
+      "family": "Tencent",
+      "blurb": "COS signatures with OIDC federation for Tencent Cloud Object Storage.",
+      "service_scope": "Tencent Cloud Object Storage requests signed with the COS signature.",
+      "signing_schemes": [
+        "COS signature"
+      ],
+      "crates": [
+        "reqsign-tencent-cos"
+      ],
+      "facade_features": [
+        {
+          "name": "tencent",
+          "capability": "Enables reqsign-tencent-cos."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::tencent::default_signer()"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "web_identity",
+          "label": "STS AssumeRoleWithWebIdentity (OIDC)",
+          "provider": "AssumeRoleWithWebIdentityCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": true,
+        "notes": "expires_in selects q-sign query authentication for presigned COS URLs."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the facade with --features tencent for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Credential chain tests with gated live-service entry points.",
+        "refs": [
+          "services/tencent-cos/tests"
+        ]
+      },
+      "source_refs": [
+        "services/tencent-cos"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access keys",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "config",
+          "label": "Config-based credentials",
+          "provider": "ConfigCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-tencent-cos"
+    },
+    {
+      "id": "volcengine-tos",
+      "display_name": "Volcengine TOS",
+      "family": "Volcengine",
+      "blurb": "TOS signatures and presigned URLs for Volcengine object storage.",
+      "service_scope": "Volcengine Torch Object Storage requests signed with the TOS signature.",
+      "signing_schemes": [
+        "TOS signature"
+      ],
+      "crates": [
+        "reqsign-volcengine-tos"
+      ],
+      "facade_features": [
+        {
+          "name": "volcengine",
+          "capability": "Enables reqsign-volcengine-tos."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::volcengine::default_signer(region)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": true,
+        "notes": "expires_in selects query-string authentication for presigned TOS URLs."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": false,
+        "verified_by": "Not part of the wasm32 feature set exercised in CI."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Presigned URL tests with gated live-service entry points.",
+        "refs": [
+          "services/volcengine-tos/tests"
+        ]
+      },
+      "source_refs": [
+        "services/volcengine-tos"
+      ],
+      "last_verified": "2026-08-01",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access keys",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-volcengine-tos"
+    }
+  ]
+}
