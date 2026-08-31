@@ -54,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Check license headers
-        uses: korandoru/hawkeye@7ffde2c5fd29f3c486e4a6510436dca54f386e2a # v6.5.0
+        uses: korandoru/hawkeye@62ea202c0bea0074eda7b1dc9f1edbb9d40827f7 # v7.0.0
 
   build:
     runs-on: ${{ matrix.os }}
