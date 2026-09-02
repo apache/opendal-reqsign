@@ -39,7 +39,9 @@ pub use token::TokenCredentialProvider;
 mod service_account_token;
 pub use service_account_token::ServiceAccountTokenCredentialProvider;
 
-// Internal providers - not exported
 mod authorized_user;
 mod external_account;
+pub use external_account::{ExternalAccountConfig, ExternalAccountCredentialProvider};
+
+// Internal providers - not exported
 mod impersonated_service_account;

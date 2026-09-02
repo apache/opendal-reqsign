@@ -17,6 +17,10 @@
 
 //! Google Service Signer
 //!
+//! Generic service-account impersonation accepts any token-only Google source
+//! provider and can feed its output into a signer or Credential Access Boundary
+//! grant.
+//!
 //! Typed server-side Cloud Storage Credential Access Boundary downscoping is
 //! always available. Enable the `credential-access-boundary-client-side`
 //! feature for local client-side token generation.
@@ -34,12 +38,19 @@ pub use credential_access_boundary::{
     ServerSideCredentialAccessBoundaryGranter,
 };
 
+mod service_account_impersonation;
+pub use service_account_impersonation::{
+    ServiceAccountImpersonationCredentialProvider, ServiceAccountImpersonationGrant,
+    ServiceAccountImpersonationGranter,
+};
+
 mod sign_request;
 pub use sign_request::RequestSigner;
 
 mod provide_credential;
 pub use provide_credential::{
     DefaultCredentialProvider, DefaultCredentialProviderBuilder, EnvCredentialProvider,
-    FileCredentialProvider, ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
-    TokenCredentialProvider, VmMetadataCredentialProvider, WellKnownCredentialProvider,
+    ExternalAccountConfig, ExternalAccountCredentialProvider, FileCredentialProvider,
+    ServiceAccountTokenCredentialProvider, StaticCredentialProvider, TokenCredentialProvider,
+    VmMetadataCredentialProvider, WellKnownCredentialProvider,
 };
