@@ -88,7 +88,7 @@ impl ServiceAccountImpersonationGrant {
         self
     }
 
-    fn validate(&self) -> Result<ValidatedGrant> {
+    fn validate(&self) -> Result<(String, Vec<String>)> {
         if !is_service_account_email(&self.target_service_account_email) {
             return Err(Error::request_invalid(
                 "Google service-account impersonation target must be a valid service-account email",
@@ -123,22 +123,13 @@ impl ServiceAccountImpersonationGrant {
 
         let encoded_target =
             utf8_percent_encode(&self.target_service_account_email, &GOOG_URI_ENCODE_SET);
-        Ok(ValidatedGrant {
-            target_service_account_email: self.target_service_account_email.clone(),
-            endpoint: format!(
+        Ok((
+            format!(
                 "{IAM_CREDENTIALS_ENDPOINT}/v1/projects/-/serviceAccounts/{encoded_target}:generateAccessToken"
             ),
-            scopes: self.scopes.clone(),
             delegates,
-        })
+        ))
     }
-}
-
-struct ValidatedGrant {
-    target_service_account_email: String,
-    endpoint: String,
-    scopes: Vec<String>,
-    delegates: Vec<String>,
 }
 
 /// Exchanges a token-only Google credential through IAM Credentials
@@ -152,9 +143,9 @@ struct ValidatedGrant {
 /// signers and Credential Access Boundary granters.
 ///
 /// `None` as the requested lifetime omits the `lifetime` field and lets Google
-/// apply its one-hour default. Explicit lifetimes must use whole seconds, leave
-/// enough time for a Google operation, and not exceed 12 hours. Google requires
-/// an organization policy to allow lifetimes above one hour.
+/// apply its one-hour default. Explicit lifetimes must leave enough time for a
+/// Google operation and not exceed 12 hours. Google requires an organization
+/// policy to allow lifetimes above one hour.
 ///
 /// Every call performs a new IAM Credentials exchange. Granted outputs are not
 /// cached by this service granter.
@@ -294,12 +285,9 @@ impl ServiceAccountImpersonationGranter {
         let Some(expires_in) = expires_in else {
             return Ok(());
         };
-        if expires_in.subsec_nanos() != 0
-            || expires_in <= TOKEN_OPERATION_HEADROOM
-            || expires_in > MAX_ACCESS_TOKEN_LIFETIME
-        {
+        if expires_in <= TOKEN_OPERATION_HEADROOM || expires_in > MAX_ACCESS_TOKEN_LIFETIME {
             return Err(Error::request_invalid(
-                "Google service-account impersonation lifetime must use whole seconds between 11 and 43200 seconds",
+                "Google service-account impersonation lifetime must be greater than 10 seconds and at most 43200 seconds",
             ));
         }
         Ok(())
@@ -324,15 +312,15 @@ impl GrantCredential for ServiceAccountImpersonationGranter {
         expires_in: Option<Duration>,
     ) -> Result<Self::Credential> {
         Self::validate_lifetime(expires_in)?;
-        let grant = self.grant.validate()?;
+        let (endpoint, delegates) = self.grant.validate()?;
         let required_until = self.required_valid_until(credential, expires_in);
         let source = self.source_token(credential, required_until)?;
         let token = generate_access_token(
             ctx,
-            &grant.endpoint,
+            &endpoint,
             &source.access_token,
-            &grant.scopes,
-            Some(&grant.delegates),
+            &self.grant.scopes,
+            Some(&delegates),
             expires_in,
         )
         .await?;
@@ -349,7 +337,8 @@ impl GrantCredential for ServiceAccountImpersonationGranter {
             ));
         }
 
-        Ok(Credential::with_token(token).with_signer_email(grant.target_service_account_email))
+        Ok(Credential::with_token(token)
+            .with_signer_email(self.grant.target_service_account_email.clone()))
     }
 }
 
@@ -429,6 +418,20 @@ struct GenerateAccessTokenResponse {
     expire_time: String,
 }
 
+fn format_lifetime(lifetime: Duration) -> String {
+    let seconds = lifetime.as_secs();
+    let nanoseconds = lifetime.subsec_nanos();
+    if nanoseconds == 0 {
+        return format!("{seconds}s");
+    }
+
+    let mut fraction = format!("{nanoseconds:09}");
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+    format!("{seconds}.{fraction}s")
+}
+
 pub(crate) async fn generate_access_token(
     ctx: &Context,
     endpoint: &str,
@@ -440,7 +443,7 @@ pub(crate) async fn generate_access_token(
     let request = GenerateAccessTokenRequest {
         scope: scopes,
         delegates,
-        lifetime: lifetime.map(|value| format!("{}s", value.as_secs())),
+        lifetime: lifetime.map(format_lifetime),
     };
     let body = serde_json::to_vec(&request).map_err(|err| {
         Error::unexpected("failed to serialize IAM Credentials request").with_source(err)
@@ -648,7 +651,7 @@ mod tests {
             .grant_credential(
                 &Context::new().with_http_send(http.clone()),
                 &source("2026-09-02T02:00:00Z"),
-                Some(Duration::from_secs(3600)),
+                Some(Duration::from_millis(3_600_500)),
             )
             .await?;
 
@@ -686,10 +689,32 @@ mod tests {
                     "projects/-/serviceAccounts/delegate@example-project.iam.gserviceaccount.com",
                     "projects/-/serviceAccounts/123456789012345678901"
                 ],
-                "lifetime": "3600s"
+                "lifetime": "3600.5s"
             })
         );
         Ok(())
+    }
+
+    #[test]
+    fn formats_and_validates_fractional_lifetimes() {
+        assert_eq!(format_lifetime(Duration::from_secs(3600)), "3600s");
+        assert_eq!(format_lifetime(Duration::from_millis(3_600_500)), "3600.5s");
+        assert_eq!(format_lifetime(Duration::new(10, 1)), "10.000000001s");
+
+        assert!(
+            ServiceAccountImpersonationGranter::validate_lifetime(Some(Duration::new(10, 1)))
+                .is_ok()
+        );
+        assert!(
+            ServiceAccountImpersonationGranter::validate_lifetime(Some(MAX_ACCESS_TOKEN_LIFETIME))
+                .is_ok()
+        );
+        assert!(
+            ServiceAccountImpersonationGranter::validate_lifetime(Some(
+                MAX_ACCESS_TOKEN_LIFETIME + Duration::from_nanos(1)
+            ))
+            .is_err()
+        );
     }
 
     #[tokio::test]
@@ -762,11 +787,6 @@ mod tests {
                 ServiceAccountImpersonationGranter::new(grant()).with_time(now),
                 source("2026-09-02T02:00:00Z"),
                 Some(Duration::from_secs(43_201)),
-            ),
-            (
-                ServiceAccountImpersonationGranter::new(grant()).with_time(now),
-                source("2026-09-02T02:00:00Z"),
-                Some(Duration::from_millis(3_600_500)),
             ),
         ];
 
