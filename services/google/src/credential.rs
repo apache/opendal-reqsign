@@ -268,11 +268,13 @@ impl KeyTrait for Token {
 /// - Service account only: Used for signed URL generation and JWT-based authentication
 /// - Token only: Used for Bearer authentication (e.g., from metadata server, OAuth2)
 /// - Token with signer email: Also supports query signing through IAMCredentials `signBlob`
-/// - Both: The RequestSigner can exchange the service account when the attached token is unusable
+/// - Both: The RequestSigner is responsible for exchanging service account for tokens when needed,
+///   and can use cached tokens when available to avoid unnecessary exchanges
 ///
-/// Loading providers normally preserve the credential variant they discover. Explicit conversion
-/// providers may return a new variant, such as a token-only credential produced from a service
-/// account.
+/// The RequestSigner implementation handles the logic of when to use which credential type
+/// and when to perform token exchanges. Discovery providers should return credentials as they
+/// receive them without trying to perform exchanges themselves. Explicit conversion providers may
+/// return a new variant, such as a token-only credential produced from a service account.
 #[derive(Clone, Debug, Default)]
 pub struct Credential {
     /// Service account information, if available.

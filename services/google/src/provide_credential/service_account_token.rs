@@ -228,7 +228,7 @@ fn resolve_scope(ctx: &Context, scope: Option<&str>) -> String {
         .unwrap_or_else(|| DEFAULT_SCOPE.to_string())
 }
 
-pub(crate) async fn exchange_service_account_token(
+async fn exchange_service_account_token(
     ctx: &Context,
     service_account: &ServiceAccount,
     scope: Option<&str>,
@@ -378,7 +378,7 @@ mod tests {
     use bytes::Bytes;
     use http::{HeaderMap, Method};
     use reqsign_core::hash::base64_decode;
-    use reqsign_core::{FileRead, Granter, HttpSend, SignRequest, StaticEnv, time::Timestamp};
+    use reqsign_core::{FileRead, Granter, HttpSend, StaticEnv, time::Timestamp};
     use rsa::RsaPrivateKey;
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use rsa::rand_core::OsRng;
@@ -386,7 +386,7 @@ mod tests {
 
     use crate::{
         CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions,
-        DefaultCredentialProvider, FileCredentialProvider, RequestSigner,
+        DefaultCredentialProvider, FileCredentialProvider,
         ServerSideCredentialAccessBoundaryGranter, StaticCredentialProvider,
     };
 
@@ -799,33 +799,6 @@ mod tests {
             form_fields(&requests[1].body)["subject_token"],
             "source-token"
         );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn request_signer_uses_shared_service_account_exchange() -> Result<()> {
-        let http = MockHttpSend::new([oauth_success("source-token", 3600)]);
-        let credential = Credential::with_service_account(service_account());
-        let mut request = http::Request::get("https://storage.googleapis.com/bucket/object")
-            .body(())?
-            .into_parts()
-            .0;
-
-        RequestSigner::new("storage")
-            .sign_request(
-                &Context::new().with_http_send(http.clone()),
-                &mut request,
-                Some(&credential),
-                None,
-            )
-            .await?;
-
-        assert_eq!(
-            request.headers[http::header::AUTHORIZATION],
-            "Bearer source-token"
-        );
-        assert_eq!(http.requests().len(), 1);
-        assert_eq!(http.requests()[0].uri, OAUTH_TOKEN_ENDPOINT);
         Ok(())
     }
 }

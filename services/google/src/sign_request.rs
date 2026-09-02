@@ -29,9 +29,59 @@ use reqsign_core::{
     Context, Result, SignRequest, SigningCredential, SigningRequest, hash::hex_sha256, time::*,
 };
 
-use crate::constants::{GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, TOKEN_OPERATION_HEADROOM};
+use crate::constants::{
+    DEFAULT_SCOPE, GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, GOOGLE_SCOPE,
+    TOKEN_OPERATION_HEADROOM,
+};
 use crate::credential::{Credential, ServiceAccount, Token};
-use crate::provide_credential::exchange_service_account_token;
+
+/// Claims is used to build JWT for Google Cloud.
+#[derive(Debug, Serialize)]
+struct Claims {
+    iss: String,
+    scope: String,
+    aud: String,
+    exp: u64,
+    iat: u64,
+}
+
+impl Claims {
+    fn new(client_email: &str, scope: &str) -> Self {
+        let current = Timestamp::now().as_second() as u64;
+
+        Claims {
+            iss: client_email.to_string(),
+            scope: scope.to_string(),
+            aud: "https://oauth2.googleapis.com/token".to_string(),
+            exp: current + 3600,
+            iat: current,
+        }
+    }
+}
+
+/// Header is used to build RS256 JWT for Google Cloud OAuth2.
+#[derive(Debug, Serialize)]
+struct JwtHeader {
+    alg: &'static str,
+    typ: &'static str,
+}
+
+impl JwtHeader {
+    fn rs256() -> Self {
+        Self {
+            alg: "RS256",
+            typ: "JWT",
+        }
+    }
+}
+
+/// OAuth2 token response.
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    #[serde(default)]
+    expires_in: Option<u64>,
+}
 
 /// RequestSigner for Google service requests.
 #[derive(Debug)]
@@ -95,7 +145,53 @@ impl RequestSigner {
     /// This method is used internally when a token is needed but only a service account
     /// is available. It creates a JWT and exchanges it for an OAuth2 access token.
     async fn exchange_token(&self, ctx: &Context, sa: &ServiceAccount) -> Result<Token> {
-        exchange_service_account_token(ctx, sa, self.scope.as_deref()).await
+        let scope = self
+            .scope
+            .clone()
+            .or_else(|| ctx.env_var(GOOGLE_SCOPE))
+            .unwrap_or_else(|| DEFAULT_SCOPE.to_string());
+
+        debug!("exchanging service account for token with scope: {scope}");
+
+        let jwt = reqsign_core::jwt::encode_rs256_pem(
+            &JwtHeader::rs256(),
+            &Claims::new(&sa.client_email, &scope),
+            sa.private_key.as_bytes(),
+        )?;
+
+        // Exchange JWT for access token
+        let body =
+            format!("grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion={jwt}");
+        let req = http::Request::builder()
+            .method(http::Method::POST)
+            .uri("https://oauth2.googleapis.com/token")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(body.into_bytes().into())
+            .map_err(|e| {
+                reqsign_core::Error::unexpected("failed to build HTTP request").with_source(e)
+            })?;
+
+        let resp = ctx.http_send(req).await?;
+
+        if resp.status() != http::StatusCode::OK {
+            let body = String::from_utf8_lossy(resp.body());
+            return Err(reqsign_core::Error::unexpected(format!(
+                "exchange token failed: {body}"
+            )));
+        }
+
+        let token_resp: TokenResponse = serde_json::from_slice(resp.body()).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to parse token response").with_source(e)
+        })?;
+
+        let expires_at = token_resp
+            .expires_in
+            .map(|expires_in| Timestamp::now() + Duration::from_secs(expires_in));
+
+        Ok(Token {
+            access_token: token_resp.access_token,
+            expires_at,
+        })
     }
 
     fn build_token_auth(
@@ -594,6 +690,7 @@ mod tests {
     use bytes::Bytes;
     use http::header;
     use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
+    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -668,6 +765,20 @@ mod tests {
             Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(body.as_slice().into())
+                .expect("response must build"))
+        }
+    }
+
+    #[derive(Debug)]
+    struct OAuthTokenHttpSend;
+
+    impl HttpSend for OAuthTokenHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            assert_eq!(req.method(), http::Method::POST);
+            assert_eq!(req.uri(), "https://oauth2.googleapis.com/token");
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(Bytes::from_static(br#"{"access_token":"legacy-token"}"#))
                 .expect("response must build"))
         }
     }
@@ -947,6 +1058,35 @@ mod tests {
             parts.headers[header::AUTHORIZATION],
             "Bearer test-access-token"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_account_exchange_preserves_optional_expiration_response() -> Result<()> {
+        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
+            .expect("private key must generate")
+            .to_pkcs8_pem(LineEnding::LF)
+            .expect("private key must encode")
+            .to_string();
+        let credential = Credential::with_service_account(ServiceAccount {
+            private_key,
+            client_email: "signer@example.iam.gserviceaccount.com".to_string(),
+        });
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        RequestSigner::new("storage")
+            .sign_request(
+                &Context::new().with_http_send(OAuthTokenHttpSend),
+                &mut parts,
+                Some(&credential),
+                None,
+            )
+            .await?;
+
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer legacy-token");
         Ok(())
     }
 
