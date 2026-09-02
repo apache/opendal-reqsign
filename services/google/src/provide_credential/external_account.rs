@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use crate::credential::{
     Credential, ExternalAccount, Token, external_account, parse_service_account_impersonation_url,
 };
+use crate::service_account_impersonation::generate_access_token;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result, SignRequest};
 
@@ -75,21 +76,6 @@ const STS_IMPERSONATION_SCOPE: &str = "https://www.googleapis.com/auth/iam";
 struct StsTokenResponse {
     access_token: String,
     expires_in: Option<u64>,
-}
-
-/// Impersonated token response.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImpersonatedTokenResponse {
-    access_token: String,
-    expire_time: String,
-}
-
-/// Impersonation request.
-#[derive(Serialize)]
-struct ImpersonationRequest {
-    scope: Vec<String>,
-    lifetime: String,
 }
 
 #[derive(Deserialize)]
@@ -1026,59 +1012,12 @@ impl ExternalAccountCredentialProvider {
                 "service_account_impersonation.token_lifetime_seconds must be positive",
             ));
         } else {
-            lifetime.min(MAX_LIFETIME).as_secs()
+            lifetime.min(MAX_LIFETIME)
         };
 
-        let request = ImpersonationRequest {
-            scope: vec![scope.clone()],
-            lifetime: format!("{lifetime}s"),
-        };
-
-        let body = serde_json::to_vec(&request).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to serialize request").with_source(e)
-        })?;
-
-        let req = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(url)
-            .header(ACCEPT, "application/json")
-            .header(CONTENT_TYPE, "application/json")
-            .header(http::header::AUTHORIZATION, {
-                let mut value: http::HeaderValue =
-                    format!("Bearer {access_token}").parse().map_err(|e| {
-                        reqsign_core::Error::unexpected("failed to parse header value")
-                            .with_source(e)
-                    })?;
-                value.set_sensitive(true);
-                value
-            })
-            .body(body.into())
-            .map_err(|e| {
-                reqsign_core::Error::unexpected("failed to build HTTP request").with_source(e)
-            })?;
-
-        let resp = ctx.http_send(req).await?;
-
-        if resp.status() != http::StatusCode::OK {
-            let status = resp.status();
-            error!("Google service-account impersonation returned {status}");
-            return Err(reqsign_core::Error::unexpected(
-                "Google service-account impersonation failed",
-            )
-            .with_context(format!("http_status: {status}")));
-        }
-
-        let token_resp: ImpersonatedTokenResponse =
-            serde_json::from_slice(resp.body()).map_err(|e| {
-                reqsign_core::Error::unexpected("failed to parse impersonation response")
-                    .with_source(e)
-            })?;
-
-        // Parse expire time from RFC3339 format
-        Ok(Some(Token {
-            access_token: token_resp.access_token,
-            expires_at: token_resp.expire_time.parse().ok(),
-        }))
+        generate_access_token(ctx, url, access_token, &[scope], None, Some(lifetime))
+            .await
+            .map(Some)
     }
 }
 impl ProvideCredential for ExternalAccountCredentialProvider {
