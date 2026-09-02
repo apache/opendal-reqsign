@@ -166,6 +166,7 @@
 //! - [`HttpSend`]: For sending HTTP requests
 //! - [`Env`]: For environment variable access
 //! - [`ProvideCredential`]: For loading credentials from various sources
+//! - [`ProvideSubjectToken`]: For supplying caller-bound external assertions
 //! - [`SignRequest`]: For building service-specific signing requests
 //! - [`SigningCredential`]: For validating credentials
 //!
@@ -219,6 +220,12 @@ pub use api::ProvideCredentialDyn;
 pub use api::SignRequest;
 pub use api::SignRequestDyn;
 pub use api::SigningCredential;
+mod subject_token;
+pub use subject_token::FileSubjectTokenProvider;
+pub use subject_token::ProvideSubjectToken;
+pub use subject_token::ProvideSubjectTokenDyn;
+pub use subject_token::StaticSubjectTokenProvider;
+pub use subject_token::SubjectToken;
 mod request;
 pub use request::{SigningMethod, SigningRequest};
 mod signer;

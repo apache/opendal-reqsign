@@ -20,22 +20,35 @@ use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
 use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
-use reqsign_core::{Context, Error, ProvideCredential, Result, utils::Redact};
+use reqsign_core::time::Timestamp;
+use reqsign_core::{
+    Context, Error, FileSubjectTokenProvider, ProvideCredential, ProvideSubjectToken,
+    ProvideSubjectTokenDyn, Result, StaticSubjectTokenProvider, SubjectToken, utils::Redact,
+};
 use serde::Deserialize;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
+use std::sync::Arc;
+
+#[derive(Clone, Default)]
+enum WebIdentityTokenSource {
+    #[default]
+    Environment,
+    File(PathBuf),
+    Provider(Arc<dyn ProvideSubjectTokenDyn>),
+}
 
 /// AssumeRoleWithWebIdentityCredentialProvider will load credential via assume role with web identity.
 ///
 /// This provider reads configuration from:
-/// 1. Constructor parameters (if provided)
-/// 2. Environment variables (when constructor parameters are not set)
-#[derive(Debug, Default, Clone)]
+/// 1. An explicitly configured subject-token provider or token file
+/// 2. Environment variables when no explicit token source is configured
+#[derive(Default, Clone)]
 pub struct AssumeRoleWithWebIdentityCredentialProvider {
     // Web Identity configuration
     role_arn: Option<String>,
     role_session_name: Option<String>,
-    web_identity_token_file: Option<PathBuf>,
+    token_source: WebIdentityTokenSource,
     duration_seconds: Option<u32>,
     policy: Option<String>,
     policy_arns: Option<Vec<String>>,
@@ -43,6 +56,26 @@ pub struct AssumeRoleWithWebIdentityCredentialProvider {
     // STS configuration
     region: Option<String>,
     use_regional_sts_endpoint: Option<bool>,
+}
+
+impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let token_source = match self.token_source {
+            WebIdentityTokenSource::Environment => "environment",
+            WebIdentityTokenSource::File(_) => "file",
+            WebIdentityTokenSource::Provider(_) => "provider",
+        };
+        f.debug_struct("AssumeRoleWithWebIdentityCredentialProvider")
+            .field("role_arn", &self.role_arn)
+            .field("role_session_name", &self.role_session_name)
+            .field("token_source", &token_source)
+            .field("duration_seconds", &self.duration_seconds)
+            .field("policy", &self.policy)
+            .field("policy_arns", &self.policy_arns)
+            .field("region", &self.region)
+            .field("use_regional_sts_endpoint", &self.use_regional_sts_endpoint)
+            .finish()
+    }
 }
 
 impl AssumeRoleWithWebIdentityCredentialProvider {
@@ -56,7 +89,7 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
         Self {
             role_arn: Some(role_arn),
             role_session_name: None,
-            web_identity_token_file: Some(token_file),
+            token_source: WebIdentityTokenSource::File(token_file),
             duration_seconds: None,
             policy: None,
             policy_arns: None,
@@ -72,8 +105,28 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
     }
 
     /// Set the web identity token file path.
+    ///
+    /// This replaces any previously configured subject-token source.
     pub fn with_web_identity_token_file(mut self, token_file: impl Into<PathBuf>) -> Self {
-        self.web_identity_token_file = Some(token_file.into());
+        self.token_source = WebIdentityTokenSource::File(token_file.into());
+        self
+    }
+
+    /// Set a caller-provided subject token.
+    ///
+    /// This replaces any previously configured subject-token source.
+    pub fn with_subject_token(mut self, subject_token: impl Into<SubjectToken>) -> Self {
+        self.token_source = WebIdentityTokenSource::Provider(Arc::new(
+            StaticSubjectTokenProvider::from_subject_token(subject_token.into()),
+        ));
+        self
+    }
+
+    /// Set the provider that supplies caller-bound subject tokens.
+    ///
+    /// This replaces any previously configured subject-token source.
+    pub fn with_subject_token_provider(mut self, provider: impl ProvideSubjectToken) -> Self {
+        self.token_source = WebIdentityTokenSource::Provider(Arc::new(provider));
         self
     }
 
@@ -113,6 +166,56 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
         self
     }
 }
+
+impl AssumeRoleWithWebIdentityCredentialProvider {
+    async fn load_subject_token(
+        &self,
+        ctx: &Context,
+        envs: &std::collections::HashMap<String, String>,
+    ) -> Result<Option<(SubjectToken, String)>> {
+        let (subject_token, source_context) = match &self.token_source {
+            WebIdentityTokenSource::Environment => {
+                let Some(path) = envs
+                    .get("AWS_WEB_IDENTITY_TOKEN_FILE")
+                    .filter(|path| !path.is_empty())
+                else {
+                    return Ok(None);
+                };
+                let token = FileSubjectTokenProvider::new(path)
+                    .provide_subject_token(ctx)
+                    .await
+                    .map_err(|err| {
+                        Error::config_invalid("failed to read web identity token file")
+                            .with_source(err)
+                            .with_context(format!("file: {path}"))
+                            .with_context("hint: check if the token file exists and is readable")
+                    })?;
+                (token, format!("token_file: {path}"))
+            }
+            WebIdentityTokenSource::File(path) => {
+                let path = path.to_string_lossy();
+                let token = FileSubjectTokenProvider::new(path.as_ref())
+                    .provide_subject_token(ctx)
+                    .await
+                    .map_err(|err| {
+                        Error::config_invalid("failed to read web identity token file")
+                            .with_source(err)
+                            .with_context(format!("file: {path}"))
+                            .with_context("hint: check if the token file exists and is readable")
+                    })?;
+                (token, format!("token_file: {path}"))
+            }
+            WebIdentityTokenSource::Provider(provider) => (
+                provider.provide_subject_token_dyn(ctx).await?,
+                "subject_token_source: provider".to_string(),
+            ),
+        };
+
+        subject_token.validate_at(Timestamp::now())?;
+        Ok(Some((subject_token, source_context)))
+    }
+}
+
 impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
     type Credential = Credential;
 
@@ -126,26 +229,13 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             .or_else(|| envs.get("AWS_ROLE_ARN"))
             .cloned();
 
-        // Get token file from config or environment
-        let token_file = self
-            .web_identity_token_file
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .or_else(|| envs.get("AWS_WEB_IDENTITY_TOKEN_FILE").cloned());
-
-        // If either is missing, we can't proceed
-        let (role_arn, token_file) = match (role_arn, token_file) {
-            (Some(arn), Some(file)) => (arn, file),
-            _ => return Ok(None),
+        let Some(role_arn) = role_arn else {
+            return Ok(None);
         };
-
-        let token = ctx.file_read_as_string(&token_file).await.map_err(|e| {
-            Error::config_invalid("failed to read web identity token file")
-                .with_source(e)
-                .with_context(format!("file: {token_file}"))
-                .with_context("hint: check if the token file exists and is readable")
-        })?;
-        let token = token.trim().to_string();
+        let Some((subject_token, source_context)) = self.load_subject_token(ctx, &envs).await?
+        else {
+            return Ok(None);
+        };
 
         // Get region from config or environment
         let region = self
@@ -178,7 +268,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             serializer
                 .append_pair("Action", "AssumeRoleWithWebIdentity")
                 .append_pair("RoleArn", &role_arn)
-                .append_pair("WebIdentityToken", &token)
+                .append_pair("WebIdentityToken", subject_token.token())
                 .append_pair("Version", "2011-06-15")
                 .append_pair("RoleSessionName", &session_name);
 
@@ -196,15 +286,15 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
 
             serializer.finish()
         };
-        let url = format!("https://{endpoint}/?{query}");
+        let url = format!("https://{endpoint}/");
         let req = http::request::Request::builder()
-            .method("GET")
+            .method("POST")
             .uri(url)
             .header(
                 http::header::CONTENT_TYPE.as_str(),
                 "application/x-www-form-urlencoded",
             )
-            .body(Bytes::new())
+            .body(Bytes::from(query))
             .map_err(|e| {
                 Error::request_invalid("failed to build STS AssumeRoleWithWebIdentity request")
                     .with_source(e)
@@ -223,12 +313,14 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         let status = resp.status();
 
         if status != http::StatusCode::OK {
-            let content = resp.into_body();
+            let content = resp
+                .into_body()
+                .replace(subject_token.token(), "[REDACTED]");
             return Err(
                 parse_sts_error("AssumeRoleWithWebIdentity", status, &content)
                     .with_context(format!("role_arn: {role_arn}"))
                     .with_context(format!("session_name: {session_name}"))
-                    .with_context(format!("token_file: {token_file}")),
+                    .with_context(source_context),
             );
         }
 
@@ -351,6 +443,9 @@ mod tests {
     #[derive(Clone, Debug)]
     struct CaptureHttpSend {
         uri: Arc<Mutex<Option<String>>>,
+        method: Arc<Mutex<Option<http::Method>>>,
+        request_body: Arc<Mutex<Option<String>>>,
+        status: http::StatusCode,
         body: String,
     }
 
@@ -358,19 +453,40 @@ mod tests {
         fn new(body: impl Into<String>) -> Self {
             Self {
                 uri: Arc::new(Mutex::new(None)),
+                method: Arc::new(Mutex::new(None)),
+                request_body: Arc::new(Mutex::new(None)),
+                status: http::StatusCode::OK,
                 body: body.into(),
+            }
+        }
+
+        fn with_status(status: http::StatusCode, body: impl Into<String>) -> Self {
+            Self {
+                status,
+                ..Self::new(body)
             }
         }
 
         fn uri(&self) -> Option<String> {
             self.uri.lock().unwrap().clone()
         }
+
+        fn method(&self) -> Option<http::Method> {
+            self.method.lock().unwrap().clone()
+        }
+
+        fn request_body(&self) -> Option<String> {
+            self.request_body.lock().unwrap().clone()
+        }
     }
     impl HttpSend for CaptureHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             *self.uri.lock().unwrap() = Some(req.uri().to_string());
+            *self.method.lock().unwrap() = Some(req.method().clone());
+            *self.request_body.lock().unwrap() =
+                Some(String::from_utf8_lossy(req.body()).into_owned());
             let resp = http::Response::builder()
-                .status(http::StatusCode::OK)
+                .status(self.status)
                 .header("x-amzn-requestid", "test-request")
                 .body(Bytes::from(self.body.clone()))
                 .expect("response must build");
@@ -439,9 +555,12 @@ mod tests {
             .append_pair("Version", "2011-06-15")
             .append_pair("RoleSessionName", "reqsign")
             .finish();
-        let expected_uri = format!("https://sts.amazonaws.com/?{expected_query}");
-
-        assert_eq!(recorded_uri, expected_uri);
+        assert_eq!(recorded_uri, "https://sts.amazonaws.com/");
+        assert_eq!(http_send.method(), Some(http::Method::POST));
+        assert_eq!(
+            http_send.request_body().as_deref(),
+            Some(expected_query.as_str())
+        );
 
         Ok(())
     }
@@ -496,21 +615,110 @@ mod tests {
             .await?
             .expect("credential must be loaded");
 
-        let recorded_uri = http_send
-            .uri()
-            .expect("http_send must capture outgoing uri");
+        let recorded_body = http_send
+            .request_body()
+            .expect("http_send must capture outgoing body");
 
-        assert!(recorded_uri.contains("DurationSeconds=900"));
+        assert!(recorded_body.contains("DurationSeconds=900"));
         assert!(
-            recorded_uri.contains("Policy=%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Action%22%3A%22s3%3AListBucket%22%2C%22Resource%22%3A%22*%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22s3%3Aprefix%22%3A%22a+b%22%7D%7D%7D%5D%7D")
+            recorded_body.contains("Policy=%7B%22Version%22%3A%222012-10-17%22%2C%22Statement%22%3A%5B%7B%22Effect%22%3A%22Allow%22%2C%22Action%22%3A%22s3%3AListBucket%22%2C%22Resource%22%3A%22*%22%2C%22Condition%22%3A%7B%22StringEquals%22%3A%7B%22s3%3Aprefix%22%3A%22a+b%22%7D%7D%7D%5D%7D")
         );
-        assert!(recorded_uri.contains(
+        assert!(recorded_body.contains(
             "PolicyArns.member.1.arn=arn%3Aaws%3Aiam%3A%3Aaws%3Apolicy%2FReadOnlyAccess"
         ));
-        assert!(recorded_uri.contains(
+        assert!(recorded_body.contains(
             "PolicyArns.member.2.arn=arn%3Aaws%3Aiam%3A%3A123456789012%3Apolicy%2FExamplePolicy"
         ));
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn caller_provided_subject_tokens_are_isolated_and_use_post_body() -> Result<()> {
+        let response = r#"<AssumeRoleWithWebIdentityResponse>
+  <AssumeRoleWithWebIdentityResult>
+    <Credentials>
+      <AccessKeyId>access_key_id</AccessKeyId>
+      <SecretAccessKey>secret_access_key</SecretAccessKey>
+      <SessionToken>session_token</SessionToken>
+      <Expiration>2124-05-25T11:45:17Z</Expiration>
+    </Credentials>
+  </AssumeRoleWithWebIdentityResult>
+</AssumeRoleWithWebIdentityResponse>"#;
+        let http_send = CaptureHttpSend::new(response);
+        let ctx = Context::new().with_http_send(http_send.clone());
+
+        let first = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_role_arn("arn:aws:iam::123456789012:role/test-role")
+            .with_web_identity_token_file("/must-not-be-read")
+            .with_subject_token("first.subject.token");
+        first
+            .provide_credential(&ctx)
+            .await?
+            .expect("first credential must load");
+        let first_body = http_send
+            .request_body()
+            .expect("first body must be captured");
+
+        let second = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_role_arn("arn:aws:iam::123456789012:role/test-role")
+            .with_subject_token("second.subject.token");
+        second
+            .provide_credential(&ctx)
+            .await?
+            .expect("second credential must load");
+        let second_body = http_send
+            .request_body()
+            .expect("second body must be captured");
+
+        assert!(first_body.contains("WebIdentityToken=first.subject.token"));
+        assert!(!first_body.contains("second.subject.token"));
+        assert!(second_body.contains("WebIdentityToken=second.subject.token"));
+        assert!(!second_body.contains("first.subject.token"));
+        assert_eq!(
+            http_send.uri().as_deref(),
+            Some("https://sts.amazonaws.com/")
+        );
+        assert_eq!(http_send.method(), Some(http::Method::POST));
+        assert!(!format!("{first:?}").contains("first.subject.token"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn expired_subject_token_is_rejected_before_http() {
+        let http_send = CaptureHttpSend::new("unused");
+        let ctx = Context::new().with_http_send(http_send.clone());
+        let subject_token = SubjectToken::new("expired.subject.token")
+            .with_expires_at(Timestamp::now() - std::time::Duration::from_secs(1));
+        let provider = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_role_arn("arn:aws:iam::123456789012:role/test-role")
+            .with_subject_token(subject_token);
+
+        let err = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("expired token must fail");
+        assert_eq!(err.kind(), reqsign_core::ErrorKind::CredentialInvalid);
+        assert!(http_send.uri().is_none());
+    }
+
+    #[tokio::test]
+    async fn sts_error_cannot_echo_subject_token() {
+        let secret = "echoed.subject.token";
+        let response = format!(
+            "<ErrorResponse><Error><Code>InvalidIdentityToken</Code><Message>{secret}</Message></Error></ErrorResponse>"
+        );
+        let http_send = CaptureHttpSend::with_status(http::StatusCode::BAD_REQUEST, response);
+        let ctx = Context::new().with_http_send(http_send);
+        let provider = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_role_arn("arn:aws:iam::123456789012:role/test-role")
+            .with_subject_token(secret);
+
+        let err = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("STS error must be returned");
+        assert!(!err.to_string().contains(secret));
+        assert!(!format!("{err:?}").contains(secret));
     }
 }
