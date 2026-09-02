@@ -36,6 +36,7 @@ Tests for request signing functionality:
 - `REQSIGN_GOOGLE_TEST_VM_METADATA`: Set to `on` to enable VmMetadataCredentialProvider tests (GCP VMs only)
 - `REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK`: Set to `on` to enable VmMetadataCredentialProvider tests with the local mock server
 - `REQSIGN_GOOGLE_TEST_CAB`: Set to `on` to enable the live CAB interoperability test
+- `REQSIGN_GOOGLE_TEST_SERVICE_ACCOUNT_TOKEN`: Set to `on` to enable the live service-account token provider test
 
 ### Google Cloud Configuration
 - `GOOGLE_APPLICATION_CREDENTIALS`: Path to credential JSON file (supports all credential types)
@@ -75,6 +76,9 @@ cargo test credential_providers::
 
 # Run the live CAB STS and Cloud Storage interoperability test
 REQSIGN_GOOGLE_TEST_CAB=on cargo test --features credential-access-boundary-client-side test_client_side_credential_access_boundary_live_interoperability
+
+# Run the live service-account token provider and server-side CAB interoperability test
+REQSIGN_GOOGLE_TEST_SERVICE_ACCOUNT_TOKEN=on cargo test test_service_account_token_provider_with_server_side_cab_live_interoperability
 ```
 
 ### GitHub Actions
@@ -126,6 +130,8 @@ The DefaultCredentialProvider automatically detects and handles all these types.
 - CAB unit tests use Google's non-secret Java auth-library keyset fixture. The live
   CAB test is opt-in because it requires a current OAuth access token with the Cloud Platform scope
   and a matching Cloud Storage bucket and prefix; it is not enabled by the repository CI secrets.
+- The live service-account token provider test is separately opt-in because it requires
+  service-account JSON and a matching Cloud Storage bucket and prefix.
 
 ## Local STS Mock
 

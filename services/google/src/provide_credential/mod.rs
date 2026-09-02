@@ -36,6 +36,9 @@ pub use static_provider::StaticCredentialProvider;
 mod token;
 pub use token::TokenCredentialProvider;
 
+mod service_account_token;
+pub use service_account_token::ServiceAccountTokenCredentialProvider;
+
 mod authorized_user;
 mod external_account;
 pub use external_account::{ExternalAccountConfig, ExternalAccountCredentialProvider};

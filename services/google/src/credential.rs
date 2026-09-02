@@ -272,8 +272,9 @@ impl KeyTrait for Token {
 ///   and can use cached tokens when available to avoid unnecessary exchanges
 ///
 /// The RequestSigner implementation handles the logic of when to use which credential type
-/// and when to perform token exchanges. Providers should return credentials as they receive them
-/// without trying to perform exchanges themselves.
+/// and when to perform token exchanges. Discovery providers should return credentials as they
+/// receive them without trying to perform exchanges themselves. Explicit conversion providers may
+/// return a new variant, such as a token-only credential produced from a service account.
 #[derive(Clone, Debug, Default)]
 pub struct Credential {
     /// Service account information, if available.

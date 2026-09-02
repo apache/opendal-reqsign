@@ -51,6 +51,6 @@ mod provide_credential;
 pub use provide_credential::{
     DefaultCredentialProvider, DefaultCredentialProviderBuilder, EnvCredentialProvider,
     ExternalAccountConfig, ExternalAccountCredentialProvider, FileCredentialProvider,
-    StaticCredentialProvider, TokenCredentialProvider, VmMetadataCredentialProvider,
-    WellKnownCredentialProvider,
+    ServiceAccountTokenCredentialProvider, StaticCredentialProvider, TokenCredentialProvider,
+    VmMetadataCredentialProvider, WellKnownCredentialProvider,
 };

@@ -690,6 +690,7 @@ mod tests {
     use bytes::Bytes;
     use http::header;
     use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
+    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -764,6 +765,20 @@ mod tests {
             Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(body.as_slice().into())
+                .expect("response must build"))
+        }
+    }
+
+    #[derive(Debug)]
+    struct OAuthTokenHttpSend;
+
+    impl HttpSend for OAuthTokenHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            assert_eq!(req.method(), http::Method::POST);
+            assert_eq!(req.uri(), "https://oauth2.googleapis.com/token");
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(Bytes::from_static(br#"{"access_token":"legacy-token"}"#))
                 .expect("response must build"))
         }
     }
@@ -1043,6 +1058,35 @@ mod tests {
             parts.headers[header::AUTHORIZATION],
             "Bearer test-access-token"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_account_exchange_preserves_optional_expiration_response() -> Result<()> {
+        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
+            .expect("private key must generate")
+            .to_pkcs8_pem(LineEnding::LF)
+            .expect("private key must encode")
+            .to_string();
+        let credential = Credential::with_service_account(ServiceAccount {
+            private_key,
+            client_email: "signer@example.iam.gserviceaccount.com".to_string(),
+        });
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        RequestSigner::new("storage")
+            .sign_request(
+                &Context::new().with_http_send(OAuthTokenHttpSend),
+                &mut parts,
+                Some(&credential),
+                None,
+            )
+            .await?;
+
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer legacy-token");
         Ok(())
     }
 
