@@ -50,6 +50,7 @@ pub use sign_request::RequestSigner;
 mod provide_credential;
 pub use provide_credential::{
     DefaultCredentialProvider, DefaultCredentialProviderBuilder, EnvCredentialProvider,
-    FileCredentialProvider, StaticCredentialProvider, TokenCredentialProvider,
-    VmMetadataCredentialProvider, WellKnownCredentialProvider,
+    ExternalAccountConfig, ExternalAccountCredentialProvider, FileCredentialProvider,
+    StaticCredentialProvider, TokenCredentialProvider, VmMetadataCredentialProvider,
+    WellKnownCredentialProvider,
 };
