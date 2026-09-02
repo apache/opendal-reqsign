@@ -21,21 +21,45 @@ use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{
-    Context, Error, FileSubjectTokenProvider, ProvideCredential, ProvideSubjectToken,
-    ProvideSubjectTokenDyn, Result, StaticSubjectTokenProvider, SubjectToken, utils::Redact,
-};
+use reqsign_core::{Context, Error, ProvideCredential, Result, utils::Redact};
 use serde::Deserialize;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
-use std::sync::Arc;
+
+#[derive(Clone)]
+struct LoadedSubjectToken {
+    token: String,
+    expires_at: Option<Timestamp>,
+}
+
+impl LoadedSubjectToken {
+    fn new(token: impl Into<String>, expires_at: Option<Timestamp>) -> Self {
+        Self {
+            token: token.into(),
+            expires_at,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.token.trim().is_empty() {
+            return Err(Error::credential_invalid("subject token is empty"));
+        }
+        if self
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= Timestamp::now())
+        {
+            return Err(Error::credential_invalid("subject token has expired"));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Default)]
 enum WebIdentityTokenSource {
     #[default]
     Environment,
     File(PathBuf),
-    Provider(Arc<dyn ProvideSubjectTokenDyn>),
+    Direct(LoadedSubjectToken),
 }
 
 /// AssumeRoleWithWebIdentityCredentialProvider will load credential via assume role with web identity.
@@ -63,7 +87,7 @@ impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
         let token_source = match self.token_source {
             WebIdentityTokenSource::Environment => "environment",
             WebIdentityTokenSource::File(_) => "file",
-            WebIdentityTokenSource::Provider(_) => "provider",
+            WebIdentityTokenSource::Direct(_) => "direct",
         };
         f.debug_struct("AssumeRoleWithWebIdentityCredentialProvider")
             .field("role_arn", &self.role_arn)
@@ -115,18 +139,24 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
     /// Set a caller-provided subject token.
     ///
     /// This replaces any previously configured subject-token source.
-    pub fn with_subject_token(mut self, subject_token: impl Into<SubjectToken>) -> Self {
-        self.token_source = WebIdentityTokenSource::Provider(Arc::new(
-            StaticSubjectTokenProvider::from_subject_token(subject_token.into()),
-        ));
+    pub fn with_subject_token(mut self, subject_token: impl Into<String>) -> Self {
+        self.token_source =
+            WebIdentityTokenSource::Direct(LoadedSubjectToken::new(subject_token, None));
         self
     }
 
-    /// Set the provider that supplies caller-bound subject tokens.
+    /// Set a caller-provided subject token with its absolute source expiration.
     ///
     /// This replaces any previously configured subject-token source.
-    pub fn with_subject_token_provider(mut self, provider: impl ProvideSubjectToken) -> Self {
-        self.token_source = WebIdentityTokenSource::Provider(Arc::new(provider));
+    pub fn with_subject_token_and_expiration(
+        mut self,
+        subject_token: impl Into<String>,
+        expires_at: Timestamp,
+    ) -> Self {
+        self.token_source = WebIdentityTokenSource::Direct(LoadedSubjectToken::new(
+            subject_token,
+            Some(expires_at),
+        ));
         self
     }
 
@@ -172,7 +202,7 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
         &self,
         ctx: &Context,
         envs: &std::collections::HashMap<String, String>,
-    ) -> Result<Option<(SubjectToken, String)>> {
+    ) -> Result<Option<(LoadedSubjectToken, String)>> {
         let (subject_token, source_context) = match &self.token_source {
             WebIdentityTokenSource::Environment => {
                 let Some(path) = envs
@@ -181,21 +211,21 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
                 else {
                     return Ok(None);
                 };
-                let token = FileSubjectTokenProvider::new(path)
-                    .provide_subject_token(ctx)
-                    .await
-                    .map_err(|err| {
-                        Error::config_invalid("failed to read web identity token file")
-                            .with_source(err)
-                            .with_context(format!("file: {path}"))
-                            .with_context("hint: check if the token file exists and is readable")
-                    })?;
-                (token, format!("token_file: {path}"))
+                let token = ctx.file_read_as_string(path).await.map_err(|err| {
+                    Error::config_invalid("failed to read web identity token file")
+                        .with_source(err)
+                        .with_context(format!("file: {path}"))
+                        .with_context("hint: check if the token file exists and is readable")
+                })?;
+                (
+                    LoadedSubjectToken::new(token.trim(), None),
+                    format!("token_file: {path}"),
+                )
             }
             WebIdentityTokenSource::File(path) => {
                 let path = path.to_string_lossy();
-                let token = FileSubjectTokenProvider::new(path.as_ref())
-                    .provide_subject_token(ctx)
+                let token = ctx
+                    .file_read_as_string(path.as_ref())
                     .await
                     .map_err(|err| {
                         Error::config_invalid("failed to read web identity token file")
@@ -203,15 +233,18 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
                             .with_context(format!("file: {path}"))
                             .with_context("hint: check if the token file exists and is readable")
                     })?;
-                (token, format!("token_file: {path}"))
+                (
+                    LoadedSubjectToken::new(token.trim(), None),
+                    format!("token_file: {path}"),
+                )
             }
-            WebIdentityTokenSource::Provider(provider) => (
-                provider.provide_subject_token_dyn(ctx).await?,
-                "subject_token_source: provider".to_string(),
+            WebIdentityTokenSource::Direct(subject_token) => (
+                subject_token.clone(),
+                "subject_token_source: direct".to_string(),
             ),
         };
 
-        subject_token.validate_at(Timestamp::now())?;
+        subject_token.validate()?;
         Ok(Some((subject_token, source_context)))
     }
 }
@@ -268,7 +301,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
             serializer
                 .append_pair("Action", "AssumeRoleWithWebIdentity")
                 .append_pair("RoleArn", &role_arn)
-                .append_pair("WebIdentityToken", subject_token.token())
+                .append_pair("WebIdentityToken", &subject_token.token)
                 .append_pair("Version", "2011-06-15")
                 .append_pair("RoleSessionName", &session_name);
 
@@ -313,9 +346,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         let status = resp.status();
 
         if status != http::StatusCode::OK {
-            let content = resp
-                .into_body()
-                .replace(subject_token.token(), "[REDACTED]");
+            let content = resp.into_body().replace(&subject_token.token, "[REDACTED]");
             return Err(
                 parse_sts_error("AssumeRoleWithWebIdentity", status, &content)
                     .with_context(format!("role_arn: {role_arn}"))
@@ -688,11 +719,12 @@ mod tests {
     async fn expired_subject_token_is_rejected_before_http() {
         let http_send = CaptureHttpSend::new("unused");
         let ctx = Context::new().with_http_send(http_send.clone());
-        let subject_token = SubjectToken::new("expired.subject.token")
-            .with_expires_at(Timestamp::now() - std::time::Duration::from_secs(1));
         let provider = AssumeRoleWithWebIdentityCredentialProvider::new()
             .with_role_arn("arn:aws:iam::123456789012:role/test-role")
-            .with_subject_token(subject_token);
+            .with_subject_token_and_expiration(
+                "expired.subject.token",
+                Timestamp::now() - std::time::Duration::from_secs(1),
+            );
 
         let err = provider
             .provide_credential(&ctx)

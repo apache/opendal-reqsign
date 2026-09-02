@@ -17,20 +17,44 @@
 
 use crate::Credential;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{
-    Context, ProvideCredential, ProvideSubjectToken, ProvideSubjectTokenDyn, Result,
-    StaticSubjectTokenProvider, SubjectToken,
-};
+use reqsign_core::{Context, Error, ProvideCredential, Result};
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 use std::time::Duration;
+
+#[derive(Clone)]
+struct LoadedSubjectToken {
+    token: String,
+    expires_at: Option<Timestamp>,
+}
+
+impl LoadedSubjectToken {
+    fn new(token: impl Into<String>, expires_at: Option<Timestamp>) -> Self {
+        Self {
+            token: token.into(),
+            expires_at,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.token.trim().is_empty() {
+            return Err(Error::credential_invalid("subject token is empty"));
+        }
+        if self
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= Timestamp::now())
+        {
+            return Err(Error::credential_invalid("subject token has expired"));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Clone, Default)]
 enum FederatedTokenSource {
     #[default]
     Environment,
     File(String),
-    Provider(Arc<dyn ProvideSubjectTokenDyn>),
+    Direct(LoadedSubjectToken),
 }
 
 /// Load credential from Azure Workload Identity.
@@ -53,7 +77,7 @@ impl Debug for WorkloadIdentityCredentialProvider {
         let token_source = match &self.token_source {
             FederatedTokenSource::Environment => "environment",
             FederatedTokenSource::File(_) => "file",
-            FederatedTokenSource::Provider(_) => "provider",
+            FederatedTokenSource::Direct(_) => "direct",
         };
         f.debug_struct("WorkloadIdentityCredentialProvider")
             .field("tenant_id", &self.tenant_id)
@@ -93,18 +117,22 @@ impl WorkloadIdentityCredentialProvider {
     /// Set a caller-provided subject token.
     ///
     /// This replaces any previously configured subject-token source.
-    pub fn with_subject_token(mut self, subject_token: impl Into<SubjectToken>) -> Self {
-        self.token_source = FederatedTokenSource::Provider(Arc::new(
-            StaticSubjectTokenProvider::from_subject_token(subject_token.into()),
-        ));
+    pub fn with_subject_token(mut self, subject_token: impl Into<String>) -> Self {
+        self.token_source =
+            FederatedTokenSource::Direct(LoadedSubjectToken::new(subject_token, None));
         self
     }
 
-    /// Set the provider that supplies caller-bound subject tokens.
+    /// Set a caller-provided subject token with its absolute source expiration.
     ///
     /// This replaces any previously configured subject-token source.
-    pub fn with_subject_token_provider(mut self, provider: impl ProvideSubjectToken) -> Self {
-        self.token_source = FederatedTokenSource::Provider(Arc::new(provider));
+    pub fn with_subject_token_and_expiration(
+        mut self,
+        subject_token: impl Into<String>,
+        expires_at: Timestamp,
+    ) -> Self {
+        self.token_source =
+            FederatedTokenSource::Direct(LoadedSubjectToken::new(subject_token, Some(expires_at)));
         self
     }
 
@@ -118,7 +146,7 @@ impl WorkloadIdentityCredentialProvider {
         &self,
         ctx: &Context,
         envs: &std::collections::HashMap<String, String>,
-    ) -> Result<Option<SubjectToken>> {
+    ) -> Result<Option<LoadedSubjectToken>> {
         let subject_token = match &self.token_source {
             FederatedTokenSource::Environment => {
                 let Some(path) = envs
@@ -130,15 +158,13 @@ impl WorkloadIdentityCredentialProvider {
                 load_file_subject_token(ctx, path).await?
             }
             FederatedTokenSource::File(path) => load_file_subject_token(ctx, path).await?,
-            FederatedTokenSource::Provider(provider) => {
-                Some(provider.provide_subject_token_dyn(ctx).await?)
-            }
+            FederatedTokenSource::Direct(subject_token) => Some(subject_token.clone()),
         };
 
         let Some(subject_token) = subject_token else {
             return Ok(None);
         };
-        subject_token.validate_at(Timestamp::now())?;
+        subject_token.validate()?;
         Ok(Some(subject_token))
     }
 }
@@ -181,7 +207,7 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
         let token_response = get_workload_identity_token(
             tenant_id,
             client_id,
-            subject_token.token(),
+            &subject_token.token,
             authority_host,
             ctx,
         )
@@ -259,7 +285,7 @@ async fn get_workload_identity_token(
     Ok(token)
 }
 
-async fn load_file_subject_token(ctx: &Context, path: &str) -> Result<Option<SubjectToken>> {
+async fn load_file_subject_token(ctx: &Context, path: &str) -> Result<Option<LoadedSubjectToken>> {
     let content = match ctx.file_read(path).await {
         Ok(content) => String::from_utf8(content).map_err(|err| {
             reqsign_core::Error::unexpected("failed to parse federated token file as UTF-8")
@@ -271,7 +297,7 @@ async fn load_file_subject_token(ctx: &Context, path: &str) -> Result<Option<Sub
     if token.is_empty() {
         return Ok(None);
     }
-    Ok(Some(SubjectToken::new(token)))
+    Ok(Some(LoadedSubjectToken::new(token, None)))
 }
 
 #[cfg(test)]
@@ -371,9 +397,9 @@ mod tests {
         let provider = WorkloadIdentityCredentialProvider::new()
             .with_tenant_id("test-tenant")
             .with_client_id("test-client")
-            .with_subject_token(
-                SubjectToken::new("expired.subject.token")
-                    .with_expires_at(Timestamp::now() - Duration::from_secs(1)),
+            .with_subject_token_and_expiration(
+                "expired.subject.token",
+                Timestamp::now() - Duration::from_secs(1),
             );
 
         let err = provider

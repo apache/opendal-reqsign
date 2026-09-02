@@ -17,7 +17,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
 use std::time::Duration;
 
 use form_urlencoded::Serializer;
@@ -34,10 +33,7 @@ use crate::credential::{
     Credential, ExternalAccount, Token, external_account, parse_service_account_impersonation_url,
 };
 use reqsign_core::time::Timestamp;
-use reqsign_core::{
-    Context, ProvideCredential, ProvideSubjectToken, ProvideSubjectTokenDyn, Result, SignRequest,
-    StaticSubjectTokenProvider, SubjectToken,
-};
+use reqsign_core::{Context, Error, ProvideCredential, Result, SignRequest};
 
 /// The maximum impersonated token lifetime allowed, 1 hour.
 const MAX_LIFETIME: Duration = Duration::from_secs(3600);
@@ -208,7 +204,35 @@ impl ExternalAccountConfig {
 #[derive(Clone)]
 enum ExternalAccountSubjectTokenSource {
     CredentialSource(external_account::Source),
-    Provider(Arc<dyn ProvideSubjectTokenDyn>),
+    Direct(LoadedSubjectToken),
+}
+
+#[derive(Clone)]
+struct LoadedSubjectToken {
+    token: String,
+    expires_at: Option<Timestamp>,
+}
+
+impl LoadedSubjectToken {
+    fn new(token: impl Into<String>, expires_at: Option<Timestamp>) -> Self {
+        Self {
+            token: token.into(),
+            expires_at,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.token.trim().is_empty() {
+            return Err(Error::credential_invalid("subject token is empty"));
+        }
+        if self
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= Timestamp::now())
+        {
+            return Err(Error::credential_invalid("subject token has expired"));
+        }
+        Ok(())
+    }
 }
 
 /// Exchanges an external subject token for a Google access token.
@@ -223,7 +247,7 @@ impl Debug for ExternalAccountCredentialProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let subject_token_source = match &self.subject_token_source {
             ExternalAccountSubjectTokenSource::CredentialSource(_) => "credential_source",
-            ExternalAccountSubjectTokenSource::Provider(_) => "provider",
+            ExternalAccountSubjectTokenSource::Direct(_) => "direct",
         };
         f.debug_struct("ExternalAccountCredentialProvider")
             .field("config", &self.config)
@@ -248,22 +272,28 @@ impl ExternalAccountCredentialProvider {
     /// Create a provider for one caller-bound subject token.
     pub fn from_subject_token(
         config: ExternalAccountConfig,
-        subject_token: impl Into<SubjectToken>,
-    ) -> Self {
-        Self::from_subject_token_provider(
-            config,
-            StaticSubjectTokenProvider::from_subject_token(subject_token.into()),
-        )
-    }
-
-    /// Create a provider backed by a caller-selected subject-token provider.
-    pub fn from_subject_token_provider(
-        config: ExternalAccountConfig,
-        provider: impl ProvideSubjectToken,
+        subject_token: impl Into<String>,
     ) -> Self {
         Self {
             config,
-            subject_token_source: ExternalAccountSubjectTokenSource::Provider(Arc::new(provider)),
+            subject_token_source: ExternalAccountSubjectTokenSource::Direct(
+                LoadedSubjectToken::new(subject_token, None),
+            ),
+            scope: None,
+        }
+    }
+
+    /// Create a provider for a caller-bound subject token with absolute expiration.
+    pub fn from_subject_token_and_expiration(
+        config: ExternalAccountConfig,
+        subject_token: impl Into<String>,
+        expires_at: Timestamp,
+    ) -> Self {
+        Self {
+            config,
+            subject_token_source: ExternalAccountSubjectTokenSource::Direct(
+                LoadedSubjectToken::new(subject_token, Some(expires_at)),
+            ),
             scope: None,
         }
     }
@@ -297,14 +327,12 @@ impl ExternalAccountCredentialProvider {
 
     #[cfg(test)]
     async fn load_oidc_token(&self, ctx: &Context) -> Result<String> {
-        Ok(self.load_subject_token(ctx).await?.token().to_string())
+        Ok(self.load_subject_token(ctx).await?.token)
     }
 
-    async fn load_subject_token(&self, ctx: &Context) -> Result<SubjectToken> {
+    async fn load_subject_token(&self, ctx: &Context) -> Result<LoadedSubjectToken> {
         let subject_token = match &self.subject_token_source {
-            ExternalAccountSubjectTokenSource::Provider(provider) => {
-                provider.provide_subject_token_dyn(ctx).await?
-            }
+            ExternalAccountSubjectTokenSource::Direct(subject_token) => subject_token.clone(),
             ExternalAccountSubjectTokenSource::CredentialSource(source) => {
                 let token = match source {
                     external_account::Source::Aws(source) => {
@@ -320,10 +348,10 @@ impl ExternalAccountCredentialProvider {
                         self.load_executable_sourced_token(ctx, source).await?
                     }
                 };
-                SubjectToken::new(token)
+                LoadedSubjectToken::new(token, None)
             }
         };
-        subject_token.validate_at(Timestamp::now())?;
+        subject_token.validate()?;
         Ok(subject_token)
     }
 
@@ -1067,7 +1095,7 @@ impl ProvideCredential for ExternalAccountCredentialProvider {
         let subject_token = self.load_subject_token(ctx).await?;
 
         // Exchange for STS token
-        let sts_token = self.exchange_sts_token(ctx, subject_token.token()).await?;
+        let sts_token = self.exchange_sts_token(ctx, &subject_token.token).await?;
 
         // Try to impersonate service account if configured
         let final_token = if let Some(token) = self
@@ -1724,10 +1752,10 @@ mod tests {
             "urn:ietf:params:oauth:token-type:jwt",
             "https://sts.googleapis.com/v1/token",
         );
-        let provider = ExternalAccountCredentialProvider::from_subject_token(
+        let provider = ExternalAccountCredentialProvider::from_subject_token_and_expiration(
             config,
-            SubjectToken::new("expired.subject.token")
-                .with_expires_at(Timestamp::now() - Duration::from_secs(1)),
+            "expired.subject.token",
+            Timestamp::now() - Duration::from_secs(1),
         );
         let ctx = Context::new().with_http_send(PanicHttpSend);
 
