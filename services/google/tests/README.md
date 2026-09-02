@@ -42,9 +42,7 @@ Tests for request signing functionality:
 - `REQSIGN_GOOGLE_CREDENTIAL`: Base64-encoded service account JSON (for StaticCredentialProvider)
 - `REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE`: OAuth2 scope for GCS (e.g., `https://www.googleapis.com/auth/devstorage.read_write`)
 - `REQSIGN_GOOGLE_CLOUD_STORAGE_URL`: GCS bucket URL (e.g., `https://storage.googleapis.com/storage/v1/b/your-bucket`)
-- `REQSIGN_GOOGLE_CAB_SOURCE_TOKEN`: Service-account OAuth access token with the Cloud Platform scope
-- `REQSIGN_GOOGLE_CAB_SOURCE_EXPIRES_AT`: Absolute RFC 3339 expiration of the source token
-- `REQSIGN_GOOGLE_CAB_BUCKET`: Bucket used by the client-issued CAB live test
+- `REQSIGN_GOOGLE_CAB_BUCKET`: Bucket used by the CAB live tests
 - `REQSIGN_GOOGLE_CAB_OBJECT_PREFIX`: Non-empty object prefix used by the CAB list test
 - `GOOGLE_IMPERSONATED_CREDENTIALS`: Path to impersonated service account credential file
 - `GOOGLE_WORKLOAD_IDENTITY_PROVIDER`: Workload Identity Provider ID (for GitHub Actions)
@@ -73,7 +71,10 @@ REQSIGN_GOOGLE_TEST_DEFAULT=on cargo test test_default_credential_provider
 # Run all credential provider tests
 cargo test credential_providers::
 
-# Run the live CAB STS and Cloud Storage interoperability test
+# Run the live server-side CAB and Cloud Storage interoperability test
+REQSIGN_GOOGLE_TEST_CAB=on cargo test test_server_side_credential_access_boundary_live_interoperability
+
+# Run the live client-side CAB and Cloud Storage interoperability test
 REQSIGN_GOOGLE_TEST_CAB=on cargo test --features credential-access-boundary-client-side test_client_side_credential_access_boundary_live_interoperability
 ```
 
@@ -124,8 +125,8 @@ The DefaultCredentialProvider automatically detects and handles all these types.
 - All tests are designed to be idempotent and safe to run repeatedly
 - Some credential provider tests use test data that will fail token exchange - this is expected
 - CAB unit tests use Google's non-secret Java auth-library keyset fixture. The live
-  CAB test is opt-in because it requires a current OAuth access token with the Cloud Platform scope
-  and a matching Cloud Storage bucket and prefix; it is not enabled by the repository CI secrets.
+  CAB tests are opt-in because they require service-account JSON, a matching Cloud Storage bucket,
+  and a non-empty object prefix; they are not enabled by the repository CI secrets.
 
 ## Local STS Mock
 

@@ -36,6 +36,10 @@ pub use static_provider::StaticCredentialProvider;
 mod token;
 pub use token::TokenCredentialProvider;
 
+mod service_account_token;
+pub use service_account_token::ServiceAccountTokenCredentialProvider;
+pub(crate) use service_account_token::{exchange_service_account_token, resolve_scope};
+
 // Internal providers - not exported
 mod authorized_user;
 mod external_account;
