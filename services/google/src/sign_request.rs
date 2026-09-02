@@ -31,7 +31,7 @@ use reqsign_core::{
 
 use crate::constants::{GOOG_QUERY_ENCODE_SET, GOOG_URI_ENCODE_SET, TOKEN_OPERATION_HEADROOM};
 use crate::credential::{Credential, ServiceAccount, Token};
-use crate::provide_credential::{exchange_service_account_token, resolve_scope};
+use crate::provide_credential::exchange_service_account_token;
 
 /// RequestSigner for Google service requests.
 #[derive(Debug)]
@@ -95,8 +95,7 @@ impl RequestSigner {
     /// This method is used internally when a token is needed but only a service account
     /// is available. It creates a JWT and exchanges it for an OAuth2 access token.
     async fn exchange_token(&self, ctx: &Context, sa: &ServiceAccount) -> Result<Token> {
-        let scope = resolve_scope(ctx, self.scope.as_deref());
-        exchange_service_account_token(ctx, sa, &scope).await
+        exchange_service_account_token(ctx, sa, self.scope.as_deref()).await
     }
 
     fn build_token_auth(

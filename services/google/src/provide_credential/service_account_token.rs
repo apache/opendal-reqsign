@@ -16,7 +16,6 @@
 // under the License.
 
 use std::fmt::{self, Debug, Formatter};
-use std::sync::Arc;
 use std::time::Duration;
 
 use form_urlencoded::Serializer;
@@ -88,10 +87,9 @@ struct OAuthErrorResponse {
     error: Option<String>,
 }
 
-#[derive(Clone)]
 enum Source {
     ServiceAccount(ServiceAccount),
-    Provider(Arc<dyn ProvideCredentialDyn<Credential = Credential>>),
+    Provider(Box<dyn ProvideCredentialDyn<Credential = Credential>>),
 }
 
 /// Exchanges a service-account credential for an OAuth access token.
@@ -138,7 +136,6 @@ enum Source {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone)]
 pub struct ServiceAccountTokenCredentialProvider {
     source: Source,
     scope: Option<String>,
@@ -170,7 +167,7 @@ impl ServiceAccountTokenCredentialProvider {
         provider: impl ProvideCredential<Credential = Credential> + 'static,
     ) -> Self {
         Self {
-            source: Source::Provider(Arc::new(provider)),
+            source: Source::Provider(Box::new(provider)),
             scope: None,
         }
     }
@@ -216,15 +213,15 @@ impl ProvideCredential for ServiceAccountTokenCredentialProvider {
         let Some(service_account) = self.service_account(ctx).await? else {
             return Ok(None);
         };
-        let scope = resolve_scope(ctx, self.scope.as_deref());
-        let token = exchange_service_account_token(ctx, &service_account, &scope).await?;
+        let token =
+            exchange_service_account_token(ctx, &service_account, self.scope.as_deref()).await?;
         Ok(Some(
             Credential::with_token(token).with_signer_email(service_account.client_email),
         ))
     }
 }
 
-pub(crate) fn resolve_scope(ctx: &Context, scope: Option<&str>) -> String {
+fn resolve_scope(ctx: &Context, scope: Option<&str>) -> String {
     scope
         .map(ToOwned::to_owned)
         .or_else(|| ctx.env_var(GOOGLE_SCOPE))
@@ -234,7 +231,7 @@ pub(crate) fn resolve_scope(ctx: &Context, scope: Option<&str>) -> String {
 pub(crate) async fn exchange_service_account_token(
     ctx: &Context,
     service_account: &ServiceAccount,
-    scope: &str,
+    scope: Option<&str>,
 ) -> Result<Token> {
     if !service_account.is_valid() {
         return Err(Error::credential_invalid(
@@ -242,8 +239,9 @@ pub(crate) async fn exchange_service_account_token(
         ));
     }
 
+    let scope = resolve_scope(ctx, scope);
     debug!("exchanging service account for token with scope: {scope}");
-    let request = build_token_request(service_account, scope, Timestamp::now())?;
+    let request = build_token_request(service_account, &scope, Timestamp::now())?;
     let request_started_at = Timestamp::now();
     let response = ctx.http_send(request).await.map_err(|err| {
         Error::new(err.kind(), "service account OAuth token request failed")
@@ -255,7 +253,12 @@ pub(crate) async fn exchange_service_account_token(
         return Err(oauth_error(response.status(), response.body()));
     }
     let token = parse_token_response(response.body(), request_started_at)?;
-    validate_token(&token, completed_at)?;
+    let required_until = checked_expiration(completed_at, TOKEN_OPERATION_HEADROOM)?;
+    if !token.is_valid_at(required_until) {
+        return Err(Error::credential_invalid(
+            "service account OAuth token is not valid long enough for Google signing",
+        ));
+    }
     Ok(token)
 }
 
@@ -299,16 +302,6 @@ fn parse_token_response(body: &[u8], request_started_at: Timestamp) -> Result<To
         access_token: response.access_token,
         expires_at: Some(expires_at),
     })
-}
-
-fn validate_token(token: &Token, completed_at: Timestamp) -> Result<()> {
-    let required_until = checked_expiration(completed_at, TOKEN_OPERATION_HEADROOM)?;
-    if !token.is_valid_at(required_until) {
-        return Err(Error::credential_invalid(
-            "service account OAuth token is not valid long enough for Google signing",
-        ));
-    }
-    Ok(())
 }
 
 fn checked_expiration(started_at: Timestamp, expires_in: Duration) -> Result<Timestamp> {
