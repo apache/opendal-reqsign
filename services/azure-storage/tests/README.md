@@ -104,6 +104,8 @@ the VM and uploaded binary in an unconditional cleanup step.
 Azure Pipelines runs `AzurePipelinesCredentialProvider` through an Azure Resource
 Manager workload-identity service connection. The repository-level
 `azure-pipelines.yml` schedules this test weekly; it can also be queued manually.
+The pipeline uses a dedicated Azure VM Scale Set agent pool with one-node maximum
+capacity, zero standby agents, and automatic recycling after every job.
 
 ## 1Password Configuration
 
