@@ -31,15 +31,6 @@ concurrency:
 
 env:
   RUST_BACKTRACE: "1"
-  AZURE_SUBSCRIPTION_ID: 9e6b5234-646f-4f48-b5cf-9761a56f0917
-  AZURE_STORAGE_ACCOUNT: opendalci
-  AZURE_STORAGE_CONTAINER: reqsign-live-test
-  AZURE_IMDS_CLIENT_ID: c4544d03-a76a-4908-b5c0-047b8c7e432c
-  AZURE_IMDS_IDENTITY_ID: /subscriptions/9e6b5234-646f-4f48-b5cf-9761a56f0917/resourceGroups/opendal/providers/Microsoft.ManagedIdentity/userAssignedIdentities/reqsign-test
-  AZURE_RUNTIME_RESOURCE_GROUP: reqsign-ci-runtime
-  AZURE_DEVOPS_ORGANIZATION: opendal
-  AZURE_DEVOPS_PROJECT: reqsign
-  AZURE_DEVOPS_PIPELINE_ID: "1"
 
 permissions: {}
 
@@ -77,6 +68,8 @@ jobs:
     needs: check_secrets
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
+    env:
+      AZURE_SUBSCRIPTION_ID: 9e6b5234-646f-4f48-b5cf-9761a56f0917
     permissions:
       contents: read
       id-token: write
@@ -125,6 +118,8 @@ jobs:
     needs: check_secrets
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
+    env:
+      AZURE_SUBSCRIPTION_ID: 9e6b5234-646f-4f48-b5cf-9761a56f0917
     permissions:
       contents: read
       id-token: write
@@ -236,6 +231,8 @@ jobs:
     needs: check_secrets
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
+    env:
+      AZURE_SUBSCRIPTION_ID: 9e6b5234-646f-4f48-b5cf-9761a56f0917
     permissions:
       contents: read
       id-token: write
@@ -314,6 +311,8 @@ jobs:
     needs: check_secrets
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
+    env:
+      AZURE_SUBSCRIPTION_ID: 9e6b5234-646f-4f48-b5cf-9761a56f0917
     permissions:
       contents: read
       id-token: write
@@ -350,6 +349,13 @@ jobs:
     needs: check_secrets
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
+    env:
+      AZURE_SUBSCRIPTION_ID: 9e6b5234-646f-4f48-b5cf-9761a56f0917
+      AZURE_STORAGE_ACCOUNT: opendalci
+      AZURE_STORAGE_CONTAINER: reqsign-live-test
+      AZURE_IMDS_CLIENT_ID: c4544d03-a76a-4908-b5c0-047b8c7e432c
+      AZURE_IMDS_IDENTITY_ID: /subscriptions/9e6b5234-646f-4f48-b5cf-9761a56f0917/resourceGroups/opendal/providers/Microsoft.ManagedIdentity/userAssignedIdentities/reqsign-test
+      AZURE_RUNTIME_RESOURCE_GROUP: reqsign-ci-runtime
     permissions:
       contents: read
       id-token: write
@@ -496,6 +502,11 @@ jobs:
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      AZURE_SUBSCRIPTION_ID: 9e6b5234-646f-4f48-b5cf-9761a56f0917
+      AZURE_DEVOPS_ORGANIZATION: opendal
+      AZURE_DEVOPS_PROJECT: reqsign
+      AZURE_DEVOPS_PIPELINE_ID: "1"
     permissions:
       contents: read
       id-token: write
