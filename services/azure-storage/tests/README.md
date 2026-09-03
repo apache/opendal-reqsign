@@ -1,186 +1,128 @@
 # Azure Storage Tests
 
-This directory contains comprehensive tests for the Azure Storage service implementation in reqsign.
+The Azure Storage test suite separates deterministic protocol parsing from live
+credential-provider acceptance tests. Unit tests parse sanitized responses that
+were captured from Azure. Integration tests obtain credentials from the real
+provider and use `RequestSigner` to read a fixed private blob.
 
 ## Test Structure
 
-```
+```text
 tests/
-├── credential_providers/     # Tests for different credential providers
-│   ├── static_provider.rs   # SharedKey and SAS token tests
-│   ├── env.rs               # Environment variable credential tests
-│   ├── default.rs           # Default credential chain tests
-│   ├── imds.rs              # Managed Identity (IMDS) tests
-│   ├── workload_identity.rs # Kubernetes Workload Identity tests
-│   ├── client_secret.rs    # Service Principal with secret tests
-│   ├── client_certificate.rs # Service Principal with certificate tests
-│   ├── azure_cli.rs        # Azure CLI credential tests
-│   └── azure_pipelines.rs  # Azure Pipelines OIDC tests
-├── signing/                 # Signature algorithm tests
-│   ├── shared_key.rs       # SharedKey signature tests
-│   └── sas_token.rs        # SAS token handling tests
-└── mocks/                   # Mock servers for testing
-    └── imds_mock.py         # Mock IMDS endpoint
+├── credential_providers/     # Live tests for every credential provider
+│   ├── static_provider.rs
+│   ├── env.rs
+│   ├── default.rs
+│   ├── imds.rs
+│   ├── workload_identity.rs
+│   ├── client_secret.rs
+│   ├── client_certificate.rs
+│   ├── azure_cli.rs
+│   └── azure_pipelines.rs
+├── fixtures/                 # Sanitized responses captured from Azure
+│   ├── entra_token_response.json
+│   ├── azure_cli_token_response.json
+│   └── imds_token_response.json
+└── signing/                  # Shared Key and SAS signing tests
 ```
 
-## Running Tests Locally
+The credential-provider tests do not use HTTP mocks. A live test succeeds only
+after Azure Blob Storage returns the expected object body.
 
-### Quick Start
+## Local Tests
 
-1. Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
+Run the deterministic suite without Azure credentials:
 
-2. Configure your Azure credentials in `.env`
-
-3. Run the test script:
-   ```bash
-   ./scripts/test-azure-storage-local.sh
-   ```
-
-### Manual Test Execution
-
-Run all tests:
 ```bash
-cd services/azure-storage
-cargo test --no-fail-fast
+cargo test -p reqsign-azure-storage --lib --tests --no-fail-fast
 ```
 
-Run specific test categories:
+Live tests are disabled unless their provider-specific environment variable is
+set to `on`. For example:
+
 ```bash
-# Signing tests only
-cargo test signing:: --no-fail-fast
-
-# Specific credential provider
-cargo test credential_providers::env:: --no-fail-fast
-
-# Unit tests only
-cargo test --lib --no-fail-fast
+REQSIGN_AZURE_STORAGE_TEST_CLI=on \
+REQSIGN_AZURE_STORAGE_URL=https://example.blob.core.windows.net/container/blob \
+cargo test -p reqsign-azure-storage --test main \
+  credential_providers::azure_cli::test_azure_cli_provider -- --exact
 ```
 
-## Environment Variables
+## Live Test Configuration
 
-### Core Configuration
+Every live provider test requires `REQSIGN_AZURE_STORAGE_URL`. The URL must
+identify a blob that contains `reqsign-live-azure-ok\n`.
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `REQSIGN_AZURE_STORAGE_TEST` | Enable signing tests (`on`/`off`) | Yes |
-| `REQSIGN_AZURE_STORAGE_URL` | Storage account URL (e.g., `https://myaccount.blob.core.windows.net/container`) | Yes |
-| `REQSIGN_AZURE_STORAGE_ACCOUNT_NAME` | Storage account name | Yes |
-| `REQSIGN_AZURE_STORAGE_ACCOUNT_KEY` | Storage account key (base64) | Yes |
-| `REQSIGN_AZURE_STORAGE_SAS_TOKEN` | Optional SAS token for testing | No |
+| Variable | Provider |
+| --- | --- |
+| `REQSIGN_AZURE_STORAGE_TEST` | `StaticCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_ENV` | `EnvCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_DEFAULT` | `DefaultCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_IMDS` | `ImdsCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_WORKLOAD_IDENTITY` | `WorkloadIdentityCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_CLI` | `AzureCliCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_CLIENT_SECRET` | `ClientSecretCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_CLIENT_CERTIFICATE` | `ClientCertificateCredentialProvider` |
+| `REQSIGN_AZURE_STORAGE_TEST_PIPELINES` | `AzurePipelinesCredentialProvider` |
 
-### Provider-Specific Flags
+The source providers use these values:
 
-Enable specific credential provider tests:
+| Variable | Credential |
+| --- | --- |
+| `REQSIGN_AZURE_STORAGE_ACCOUNT_NAME` | Static Shared Key account name |
+| `REQSIGN_AZURE_STORAGE_ACCOUNT_KEY` | Static Shared Key account key |
+| `REQSIGN_AZURE_STORAGE_SAS_TOKEN` | Static SAS token |
+| `REQSIGN_AZURE_STORAGE_BEARER_TOKEN` | Static bearer token |
+| `AZURE_STORAGE_ACCOUNT_NAME` | Environment Shared Key account name |
+| `AZURE_STORAGE_ACCOUNT_KEY` | Environment Shared Key account key |
+| `AZURE_STORAGE_SAS_TOKEN` | Environment SAS token |
+| `AZURE_STORAGE_BEARER_TOKEN` | Environment bearer token |
 
-| Variable | Provider | Default |
-|----------|----------|---------|
-| `REQSIGN_AZURE_STORAGE_TEST_ENV` | EnvCredentialProvider | `off` |
-| `REQSIGN_AZURE_STORAGE_TEST_IMDS` | ImdsCredentialProvider | `off` |
-| `REQSIGN_AZURE_STORAGE_TEST_WORKLOAD_IDENTITY` | WorkloadIdentityCredentialProvider | `off` |
-| `REQSIGN_AZURE_STORAGE_TEST_CLI` | AzureCliCredentialProvider | `off` |
-| `REQSIGN_AZURE_STORAGE_TEST_CLIENT_SECRET` | ClientSecretCredentialProvider | `off` |
-| `REQSIGN_AZURE_STORAGE_TEST_CLIENT_CERTIFICATE` | ClientCertificateCredentialProvider | `off` |
-| `REQSIGN_AZURE_STORAGE_TEST_PIPELINES` | AzurePipelinesCredentialProvider | `off` |
+The Entra providers use the standard Azure variables, including
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+`AZURE_CLIENT_CERTIFICATE_PATH`, and `AZURE_FEDERATED_TOKEN_FILE`.
+`AzurePipelinesCredentialProvider` receives
+`AZURESUBSCRIPTION_CLIENT_ID`, `AZURESUBSCRIPTION_TENANT_ID`,
+`AZURESUBSCRIPTION_SERVICE_CONNECTION_ID`, and `SYSTEM_ACCESSTOKEN` from an
+`AzureCLI@2` task.
 
-### Azure Native Environment Variables
+## CI Coverage
 
-The following Azure-native environment variables are also supported:
+GitHub Actions runs deterministic unit tests for all changes. Trusted
+same-repository changes additionally run live tests for:
 
-| Variable | Description |
-|----------|-------------|
-| `AZURE_STORAGE_ACCOUNT_NAME` | Storage account name |
-| `AZURE_STORAGE_ACCOUNT_KEY` | Storage account key |
-| `AZURE_STORAGE_SAS_TOKEN` | SAS token |
-| `AZURE_TENANT_ID` | Azure AD tenant ID |
-| `AZURE_CLIENT_ID` | Service principal client ID |
-| `AZURE_CLIENT_SECRET` | Service principal secret |
-| `AZURE_CLIENT_CERTIFICATE_PATH` | Path to client certificate |
-| `AZURE_FEDERATED_TOKEN_FILE` | Path to federated token (K8s) |
+- Static Shared Key, SAS, and bearer credentials.
+- Environment Shared Key, SAS, and bearer credentials.
+- Client secret and client certificate credentials.
+- Azure CLI and GitHub workload identity credentials.
+- The default credential chain.
+- IMDS on an ephemeral private Azure VM with a user-assigned managed identity.
 
-## Mock Servers
+The IMDS job uploads the test binary to a private blob, creates a VM without a
+public IP, runs the exact provider test through Azure Run Command, and removes
+the VM and uploaded binary in an unconditional cleanup step.
 
-The test suite includes mock servers for testing without Azure dependencies:
-
-### IMDS Mock Server
-
-Simulates the Azure Instance Metadata Service:
-```bash
-python3 tests/mocks/imds_mock.py 8080
-```
-
-Then run tests with:
-```bash
-export REQSIGN_AZURE_STORAGE_TEST_IMDS=on
-export AZURE_IMDS_ENDPOINT=http://localhost:8080/metadata/identity/oauth2/token
-cargo test credential_providers::imds:: --no-fail-fast
-```
-
-## GitHub Actions
-
-Tests are automatically run in CI with the following jobs:
-
-1. **unit_test**: Always runs, no secrets needed
-2. **check_secrets**: Determines if integration tests can run
-3. **signing_test**: Tests signature algorithms
-4. **test_env_provider**: Tests environment variable credentials
-5. **test_static_provider**: Tests static credentials
-6. **test_client_secret_provider**: Tests service principal with secret
-7. **test_client_certificate_provider**: Tests service principal with certificate
-8. **test_azure_cli_provider**: Tests Azure CLI integration
-9. **test_imds_provider_mock**: Tests IMDS with mock server
+Azure Pipelines runs `AzurePipelinesCredentialProvider` through an Azure Resource
+Manager workload-identity service connection. The repository-level
+`azure-pipelines.yml` schedules this test weekly; it can also be queued manually.
 
 ## 1Password Configuration
 
-For CI/CD, secrets are stored in 1Password under the `reqsign/azure-storage` vault:
+GitHub Actions reads the existing `reqsign/azure-storage` item through
+1Password Connect. The workflow uses these existing fields without renaming or
+creating fields:
 
-- `account_name`: Storage account name
-- `account_key`: Storage account access key
-- `sas_token`: Pre-generated SAS token
-- `url`: Storage account URL
-- `tenant_id`: Azure AD tenant ID
-- `client_id`: Service principal client ID
-- `client_secret`: Service principal secret
-- `certificate_path`: Path to client certificate
-- `certificate_password`: Certificate password
+- `url`
+- `account_name`
+- `account_key`
+- `sas_token`
+- `tenant_id`
+- `client_id`
+- `client_secret`
+- `certificate_pem_base64`
 
-## Troubleshooting
+## Updating Fixtures
 
-### Tests are skipped
-
-Check that environment variables are set correctly:
-```bash
-env | grep REQSIGN_AZURE_STORAGE
-env | grep AZURE_
-```
-
-### IMDS tests fail locally
-
-IMDS tests require running on an Azure VM or using the mock server. Use the mock server for local testing.
-
-### Azure CLI tests fail
-
-Ensure Azure CLI is installed and logged in:
-```bash
-az login
-az account show
-```
-
-### Certificate tests fail
-
-Verify the certificate file exists and has correct permissions:
-```bash
-ls -la $AZURE_CLIENT_CERTIFICATE_PATH
-openssl pkcs12 -info -in $AZURE_CLIENT_CERTIFICATE_PATH
-```
-
-## Adding New Tests
-
-1. Add test file in appropriate directory (`credential_providers/` or `signing/`)
-2. Include module in `mod.rs`
-3. Add environment variable flag if needed
-4. Update GitHub Actions workflow
-5. Update this README
-6. Add secrets to 1Password if required
+Fixtures must come from the corresponding real Azure endpoint or command. Mask
+access tokens, client IDs, tenant IDs, subscription IDs, and user-identifying
+fields before committing the response. Preserve field names, JSON value types,
+and time formats so the parser test continues to represent the service contract.

@@ -16,6 +16,9 @@
 // under the License.
 
 use crate::Credential;
+use crate::provide_credential::entra::{
+    EntraTokenResponse, parse_token_response, token_request_error,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 use std::time::Duration;
@@ -124,19 +127,13 @@ impl ProvideCredential for ClientSecretCredentialProvider {
     }
 }
 
-#[derive(serde::Deserialize)]
-struct ClientSecretTokenResponse {
-    access_token: String,
-    expires_in: u64,
-}
-
 async fn get_client_secret_token(
     tenant_id: &str,
     client_id: &str,
     client_secret: &str,
     authority_host: &str,
     ctx: &Context,
-) -> Result<Option<ClientSecretTokenResponse>> {
+) -> Result<Option<EntraTokenResponse>> {
     let url = format!(
         "{}/{}/oauth2/v2.0/token",
         authority_host.trim_end_matches('/'),
@@ -162,15 +159,12 @@ async fn get_client_secret_token(
     let resp = ctx.http_send(req).await?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let body = String::from_utf8_lossy(resp.body());
-        return Err(reqsign_core::Error::unexpected(format!(
-            "Client secret request failed with status {status}: {body}"
-        )));
+        return Err(token_request_error(
+            "Microsoft Entra client secret token request",
+            resp.status(),
+        ));
     }
 
-    let token: ClientSecretTokenResponse = serde_json::from_slice(resp.body()).map_err(|e| {
-        reqsign_core::Error::unexpected("failed to parse client secret response").with_source(e)
-    })?;
+    let token = parse_token_response(resp.body(), "client secret token response")?;
     Ok(Some(token))
 }

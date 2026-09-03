@@ -16,6 +16,9 @@
 // under the License.
 
 use crate::credential::Credential;
+use crate::provide_credential::entra::{
+    EntraTokenResponse, parse_token_response, token_request_error,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
@@ -61,13 +64,12 @@ impl AzurePipelinesCredentialProvider {
         ctx: &Context,
         oidc_request_uri: &str,
         system_access_token: &str,
-        service_connection_id: Option<&String>,
+        service_connection_id: &str,
     ) -> Result<String, reqsign_core::Error> {
         // Build the request URL
-        let mut url = format!("{oidc_request_uri}?api-version=7.1");
-        if let Some(sc_id) = service_connection_id {
-            url = format!("{url}&serviceConnectionId={sc_id}");
-        }
+        let url = format!(
+            "{oidc_request_uri}?api-version=7.1&serviceConnectionId={service_connection_id}"
+        );
 
         // Create the request
         let req = http::Request::builder()
@@ -85,11 +87,10 @@ impl AzurePipelinesCredentialProvider {
         let resp = ctx.http_send(req).await?;
 
         if resp.status() != http::StatusCode::OK {
-            let body = resp.into_body();
-            return Err(reqsign_core::Error::credential_invalid(format!(
-                "Failed to get OIDC token: {}",
-                String::from_utf8_lossy(&body)
-            )));
+            return Err(token_request_error(
+                "Azure Pipelines OIDC token request",
+                resp.status(),
+            ));
         }
 
         // Parse the response
@@ -108,7 +109,7 @@ impl AzurePipelinesCredentialProvider {
         tenant_id: &str,
         client_id: &str,
         oidc_token: &str,
-    ) -> Result<TokenResponse, reqsign_core::Error> {
+    ) -> Result<EntraTokenResponse, reqsign_core::Error> {
         let url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");
 
         let mut params = HashMap::new();
@@ -137,19 +138,13 @@ impl AzurePipelinesCredentialProvider {
         let resp = ctx.http_send(req).await?;
 
         if resp.status() != http::StatusCode::OK {
-            let body = resp.into_body();
-            return Err(reqsign_core::Error::credential_invalid(format!(
-                "Failed to exchange token: {}",
-                String::from_utf8_lossy(&body)
-            )));
+            return Err(token_request_error(
+                "Microsoft Entra Azure Pipelines token request",
+                resp.status(),
+            ));
         }
 
-        let body = resp.into_body();
-        let token_response: TokenResponse = serde_json::from_slice(&body).map_err(|e| {
-            reqsign_core::Error::unexpected(format!("Failed to parse token response: {e}"))
-        })?;
-
-        Ok(token_response)
+        parse_token_response(resp.body(), "Azure Pipelines token response")
     }
 }
 
@@ -159,13 +154,6 @@ struct OidcTokenResponse {
     oidc_token: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    expires_in: u64,
-    #[allow(dead_code)]
-    token_type: String,
-}
 impl ProvideCredential for AzurePipelinesCredentialProvider {
     type Credential = Credential;
 
@@ -206,13 +194,15 @@ impl ProvideCredential for AzurePipelinesCredentialProvider {
             .service_connection_id
             .as_ref()
             .or_else(|| envs.get("ARM_OIDC_AZURE_SERVICE_CONNECTION_ID"))
-            .or_else(|| envs.get("AZURE_SERVICE_CONNECTION_ID"));
+            .or_else(|| envs.get("AZURE_SERVICE_CONNECTION_ID"))
+            .filter(|id| !id.is_empty());
 
         // Check if all required parameters are present
-        let (tenant_id, client_id) = match (tenant_id, client_id) {
-            (Some(t), Some(c)) => (t, c),
-            _ => return Ok(None),
-        };
+        let (tenant_id, client_id, service_connection_id) =
+            match (tenant_id, client_id, service_connection_id) {
+                (Some(t), Some(c), Some(s)) => (t, c, s),
+                _ => return Ok(None),
+            };
 
         // Get OIDC token
         let oidc_token = self

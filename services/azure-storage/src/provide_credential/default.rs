@@ -286,11 +286,7 @@ mod tests {
             ]),
         };
 
-        // Create a mock context - in real usage Context would be created with proper FileRead and HttpSend
-        let ctx = reqsign_core::Context::new()
-            .with_file_read(MockFileRead)
-            .with_http_send(MockHttpSend)
-            .with_env(env);
+        let ctx = reqsign_core::Context::new().with_env(env);
 
         let loader = DefaultCredentialProvider::new();
 
@@ -317,10 +313,7 @@ mod tests {
             )]),
         };
 
-        let ctx = reqsign_core::Context::new()
-            .with_file_read(MockFileRead)
-            .with_http_send(MockHttpSend)
-            .with_env(env);
+        let ctx = reqsign_core::Context::new().with_env(env);
 
         let loader = DefaultCredentialProvider::new();
 
@@ -330,26 +323,6 @@ mod tests {
                 assert_eq!(token, "sv=2021-01-01&ss=b&srt=c&sp=rwdlaciytfx");
             }
             _ => panic!("Expected SasToken credential"),
-        }
-    }
-
-    // Mock implementations for testing
-    #[derive(Debug)]
-    struct MockFileRead;
-    impl reqsign_core::FileRead for MockFileRead {
-        async fn file_read(&self, _path: &str) -> Result<Vec<u8>> {
-            Ok(Vec::new())
-        }
-    }
-
-    #[derive(Debug)]
-    struct MockHttpSend;
-    impl reqsign_core::HttpSend for MockHttpSend {
-        async fn http_send(
-            &self,
-            _req: http::Request<bytes::Bytes>,
-        ) -> Result<http::Response<bytes::Bytes>> {
-            Ok(http::Response::new(bytes::Bytes::new()))
         }
     }
 }
