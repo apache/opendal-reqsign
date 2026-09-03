@@ -87,8 +87,10 @@ The Entra providers use the standard Azure variables, including
 
 ## CI Coverage
 
-GitHub Actions runs deterministic unit tests for all changes. Trusted
-same-repository changes additionally run live tests for:
+GitHub Actions runs deterministic unit tests for all changes. Each credential
+provider has an independent live-test job, matching the AWS workflow's failure
+isolation and summary structure. Trusted same-repository changes run live tests
+for:
 
 - Static Shared Key, SAS, and bearer credentials.
 - Environment Shared Key, SAS, and bearer credentials.
@@ -96,6 +98,7 @@ same-repository changes additionally run live tests for:
 - Azure CLI and GitHub workload identity credentials.
 - The default credential chain.
 - IMDS on an ephemeral private Azure VM with a user-assigned managed identity.
+- Shared Key and SAS request signing against Azure Blob Storage.
 
 The IMDS job uploads the test binary to a private blob, creates a VM without a
 public IP, runs the exact provider test through Azure Run Command, and removes
@@ -108,6 +111,9 @@ workload-identity service connection for the provider test. Azure DevOps has no
 repository or scheduled trigger for this pipeline. It uses a dedicated Azure VM
 Scale Set agent pool with one-node maximum capacity, zero standby agents, and
 automatic recycling after every job.
+
+The final summary reports and enforces every provider and signing job
+independently for trusted changes.
 
 ## 1Password Configuration
 

@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use bytes::Bytes;
 use reqsign_azure_storage::{RequestSigner, StaticCredentialProvider};
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -24,24 +25,25 @@ fn is_test_enabled() -> bool {
     std::env::var("REQSIGN_AZURE_STORAGE_TEST").unwrap_or_default() == "on"
 }
 
+fn required_env(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
+}
+
+fn load_sas_token() -> String {
+    required_env("REQSIGN_AZURE_STORAGE_SAS_TOKEN")
+        .trim_start_matches('?')
+        .to_string()
+}
+
 #[tokio::test]
-async fn test_sas_token_signing() {
+async fn test_sas_token_signing() -> anyhow::Result<()> {
     if !is_test_enabled() {
         eprintln!("Skipping test: REQSIGN_AZURE_STORAGE_TEST is not enabled");
-        return;
+        return Ok(());
     }
 
-    let url = std::env::var("REQSIGN_AZURE_STORAGE_URL")
-        .unwrap_or_else(|_| "https://testaccount.blob.core.windows.net".to_string());
-
-    // SAS token can be provided or we use a dummy one for testing.
-    // Azure portal copies often include a leading '?'; normalize before use.
-    let sas_token = std::env::var("REQSIGN_AZURE_STORAGE_SAS_TOKEN")
-        .unwrap_or_else(|_| {
-            "sv=2021-06-08&ss=b&srt=sco&sp=rwx&se=2025-01-01T00:00:00Z&sig=test".to_string()
-        })
-        .trim_start_matches('?')
-        .to_string();
+    let url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let sas_token = load_sas_token();
 
     let ctx = Context::new()
         .with_file_read(TokioFileRead)
@@ -50,17 +52,14 @@ async fn test_sas_token_signing() {
 
     let loader = StaticCredentialProvider::new_sas_token(&sas_token);
     let builder = RequestSigner::new();
-    let signer = Signer::new(ctx, loader, builder);
+    let signer = Signer::new(ctx.clone(), loader, builder);
 
-    // Test GET request with SAS token
-    let mut parts = http::Request::get(&url)
+    let request = http::Request::get(&url)
         .header("x-ms-version", "2021-12-02")
-        .body(())
-        .unwrap()
-        .into_parts()
-        .0;
+        .body(Bytes::new())?;
+    let (mut parts, body) = request.into_parts();
 
-    signer.sign(&mut parts, None).await.unwrap();
+    signer.sign(&mut parts, None).await?;
 
     // With SAS token, no Authorization header should be added
     assert!(!parts.headers.contains_key("authorization"));
@@ -73,6 +72,20 @@ async fn test_sas_token_signing() {
     } else {
         assert!(uri.contains(&format!("?{sas_token}")) || sas_token.is_empty());
     }
+
+    let response = ctx
+        .http_send(http::Request::from_parts(parts, body))
+        .await?;
+    anyhow::ensure!(
+        response.status() == http::StatusCode::OK,
+        "Azure Blob probe returned HTTP {}",
+        response.status()
+    );
+    anyhow::ensure!(
+        response.body().as_ref() == b"reqsign-live-azure-ok\n",
+        "Azure Blob probe returned an unexpected body"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -82,12 +95,8 @@ async fn test_sas_token_with_existing_query() {
         return;
     }
 
-    let base_url = std::env::var("REQSIGN_AZURE_STORAGE_URL")
-        .unwrap_or_else(|_| "https://testaccount.blob.core.windows.net".to_string());
-
-    let sas_token = std::env::var("REQSIGN_AZURE_STORAGE_SAS_TOKEN").unwrap_or_else(|_| {
-        "sv=2021-06-08&ss=b&srt=sco&sp=rwx&se=2025-01-01T00:00:00Z&sig=test".to_string()
-    });
+    let base_url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let sas_token = load_sas_token();
 
     let ctx = Context::new()
         .with_file_read(TokioFileRead)
@@ -126,12 +135,8 @@ async fn test_sas_token_preserves_headers() {
         return;
     }
 
-    let url = std::env::var("REQSIGN_AZURE_STORAGE_URL")
-        .unwrap_or_else(|_| "https://testaccount.blob.core.windows.net".to_string());
-
-    let sas_token = std::env::var("REQSIGN_AZURE_STORAGE_SAS_TOKEN").unwrap_or_else(|_| {
-        "sv=2021-06-08&ss=b&srt=sco&sp=rwx&se=2025-01-01T00:00:00Z&sig=test".to_string()
-    });
+    let url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let sas_token = load_sas_token();
 
     let ctx = Context::new()
         .with_file_read(TokioFileRead)
