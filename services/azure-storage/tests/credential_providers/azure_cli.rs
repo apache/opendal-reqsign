@@ -16,15 +16,10 @@
 // under the License.
 
 #[cfg(not(target_arch = "wasm32"))]
-use reqsign_azure_storage::{AzureCliCredentialProvider, Credential};
+use reqsign_azure_storage::AzureCliCredentialProvider;
+
 #[cfg(not(target_arch = "wasm32"))]
-use reqsign_command_execute_tokio::TokioCommandExecute;
-#[cfg(not(target_arch = "wasm32"))]
-use reqsign_core::{Context, OsEnv, ProvideCredential};
-#[cfg(not(target_arch = "wasm32"))]
-use reqsign_file_read_tokio::TokioFileRead;
-#[cfg(not(target_arch = "wasm32"))]
-use reqsign_http_send_reqwest::ReqwestHttpSend;
+use super::{assert_provider_reads_probe, live_context};
 
 #[cfg(not(target_arch = "wasm32"))]
 fn is_test_enabled() -> bool {
@@ -33,38 +28,11 @@ fn is_test_enabled() -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
-async fn test_azure_cli_provider() {
+async fn test_azure_cli_provider() -> anyhow::Result<()> {
     if !is_test_enabled() {
         eprintln!("Skipping test: REQSIGN_AZURE_STORAGE_TEST_CLI is not enabled");
-        return;
+        return Ok(());
     }
 
-    let ctx = Context::new()
-        .with_file_read(TokioFileRead)
-        .with_http_send(ReqwestHttpSend::default())
-        .with_command_execute(TokioCommandExecute)
-        .with_env(OsEnv);
-
-    let loader = AzureCliCredentialProvider::new();
-
-    // This test requires Azure CLI to be installed and logged in
-    let result = loader.provide_credential(&ctx).await;
-
-    // Better error reporting
-    let cred = match result {
-        Ok(Some(cred)) => cred,
-        Ok(None) => panic!("Azure CLI provider returned None when test is enabled"),
-        Err(e) => panic!("Azure CLI provider failed with error: {e:?}"),
-    };
-
-    match cred {
-        Credential::BearerToken {
-            token,
-            expires_in: _,
-        } => {
-            assert!(!token.is_empty());
-            eprintln!("Successfully obtained bearer token from Azure CLI");
-        }
-        _ => panic!("Expected BearerToken credential from Azure CLI"),
-    }
+    assert_provider_reads_probe(AzureCliCredentialProvider::new(), live_context()).await
 }

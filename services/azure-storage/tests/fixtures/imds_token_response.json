@@ -1,0 +1,10 @@
+{
+  "access_token": "REDACTED",
+  "client_id": "00000000-0000-0000-0000-000000000000",
+  "expires_in": "86400",
+  "expires_on": "1788505349",
+  "ext_expires_in": "86399",
+  "not_before": "1788418649",
+  "resource": "https://storage.azure.com/",
+  "token_type": "Bearer"
+}

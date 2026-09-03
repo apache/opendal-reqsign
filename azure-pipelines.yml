@@ -1,0 +1,89 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+trigger: none
+pr: none
+
+parameters:
+  - name: githubSha
+    type: string
+    default: ""
+  - name: githubRef
+    type: string
+    default: ""
+
+pool:
+  name: reqsign-azure-vmss
+
+steps:
+  - checkout: self
+    persistCredentials: false
+
+  - bash: |
+      set -euo pipefail
+      [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+      case "$GITHUB_REF" in
+        refs/heads/*|refs/tags/*|refs/pull/*/merge) ;;
+        *)
+          echo "Unsupported GitHub ref: $GITHUB_REF" >&2
+          exit 1
+          ;;
+      esac
+
+      git fetch --no-tags --depth=1 \
+        https://github.com/apache/opendal-reqsign.git \
+        "$GITHUB_REF"
+      fetched_sha=$(git rev-parse 'FETCH_HEAD^{commit}')
+      test "$fetched_sha" = "$GITHUB_SHA"
+      git checkout --detach "$fetched_sha"
+    displayName: Check out the GitHub Actions revision
+    env:
+      GITHUB_SHA: ${{ parameters.githubSha }}
+      GITHUB_REF: ${{ parameters.githubRef }}
+
+  - bash: |
+      sudo apt-get update
+      sudo apt-get install --yes build-essential pkg-config libssl-dev
+      if ! command -v az >/dev/null; then
+        curl --fail --silent --show-error --location https://aka.ms/InstallAzureCLIDeb | sudo bash
+      fi
+      if ! command -v cargo >/dev/null; then
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs |
+          sh -s -- -y --profile minimal
+        echo "##vso[task.prependpath]$HOME/.cargo/bin"
+      fi
+    displayName: Install Azure CLI and Rust
+
+  - task: AzureCLI@2
+    displayName: Test AzurePipelinesCredentialProvider against Azure Blob Storage
+    inputs:
+      azureSubscription: reqsign-azure-wif
+      scriptType: bash
+      scriptLocation: inlineScript
+      inlineScript: |
+        test -n "$AZURESUBSCRIPTION_CLIENT_ID"
+        test -n "$AZURESUBSCRIPTION_TENANT_ID"
+        test -n "$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
+        test -n "$SYSTEM_ACCESSTOKEN"
+        export REQSIGN_AZURE_STORAGE_TEST_PIPELINES=on
+        test "$REQSIGN_AZURE_STORAGE_TEST_PIPELINES" = "on"
+        cargo test -p reqsign-azure-storage --test main \
+          credential_providers::azure_pipelines::test_azure_pipelines_provider \
+          -- --exact --no-capture
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      REQSIGN_AZURE_STORAGE_URL: https://opendalci.blob.core.windows.net/reqsign-live-test/probe.txt

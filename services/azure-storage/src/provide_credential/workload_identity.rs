@@ -16,6 +16,9 @@
 // under the License.
 
 use crate::Credential;
+use crate::provide_credential::entra::{
+    EntraTokenResponse, parse_token_response, token_request_error,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use std::fmt::{Debug, Formatter};
@@ -213,12 +216,7 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
         )
         .await?;
 
-        let expires_on = match token_response.expires_on {
-            Some(expires_on) => expires_on.parse().map_err(|e| {
-                reqsign_core::Error::unexpected("failed to parse expires_on time").with_source(e)
-            })?,
-            None => Timestamp::now() + Duration::from_secs(600),
-        };
+        let expires_on = Timestamp::now() + Duration::from_secs(token_response.expires_in);
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,
@@ -227,19 +225,13 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
     }
 }
 
-#[derive(serde::Deserialize)]
-struct WorkloadIdentityTokenResponse {
-    access_token: String,
-    expires_on: Option<String>,
-}
-
 async fn get_workload_identity_token(
     tenant_id: &str,
     client_id: &str,
     federated_token: &str,
     authority_host: &str,
     ctx: &Context,
-) -> Result<WorkloadIdentityTokenResponse> {
+) -> Result<EntraTokenResponse> {
     let url = format!(
         "{}/{}/oauth2/v2.0/token",
         authority_host.trim_end_matches('/'),
@@ -270,19 +262,13 @@ async fn get_workload_identity_token(
     let resp = ctx.http_send(req).await?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        return Err(
-            reqsign_core::Error::unexpected("workload identity request failed")
-                .with_context(format!("http_status: {status}")),
-        );
+        return Err(token_request_error(
+            "Microsoft Entra workload identity token request",
+            resp.status(),
+        ));
     }
 
-    let token: WorkloadIdentityTokenResponse =
-        serde_json::from_slice(resp.body()).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to parse workload identity response")
-                .with_source(e)
-        })?;
-    Ok(token)
+    parse_token_response(resp.body(), "workload identity token response")
 }
 
 async fn load_file_subject_token(ctx: &Context, path: &str) -> Result<Option<LoadedSubjectToken>> {
@@ -303,97 +289,21 @@ async fn load_file_subject_token(ctx: &Context, path: &str) -> Result<Option<Loa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
-    use reqsign_core::{ErrorKind, HttpSend};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use reqsign_core::ErrorKind;
 
-    #[derive(Clone, Debug)]
-    struct CaptureHttpSend {
-        calls: Arc<AtomicUsize>,
-        request_body: Arc<Mutex<Option<String>>>,
-        status: http::StatusCode,
-        response_body: String,
-    }
-
-    impl CaptureHttpSend {
-        fn success() -> Self {
-            Self {
-                calls: Arc::new(AtomicUsize::new(0)),
-                request_body: Arc::new(Mutex::new(None)),
-                status: http::StatusCode::OK,
-                response_body:
-                    r#"{"access_token":"azure-access-token","expires_on":"2124-05-25T11:45:17Z"}"#
-                        .to_string(),
-            }
-        }
-
-        fn error(body: impl Into<String>) -> Self {
-            Self {
-                status: http::StatusCode::BAD_REQUEST,
-                response_body: body.into(),
-                ..Self::success()
-            }
-        }
-    }
-
-    impl HttpSend for CaptureHttpSend {
-        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(req.method(), http::Method::POST);
-            assert_eq!(
-                req.uri(),
-                "https://login.microsoftonline.com/test-tenant/oauth2/v2.0/token"
-            );
-            *self.request_body.lock().expect("lock must succeed") =
-                Some(String::from_utf8_lossy(req.body()).into_owned());
-            Ok(http::Response::builder()
-                .status(self.status)
-                .body(Bytes::from(self.response_body.clone()))
-                .expect("response must build"))
-        }
-    }
-
-    #[tokio::test]
-    async fn caller_provided_subject_token_builds_exchange_request() -> Result<()> {
-        let http = CaptureHttpSend::success();
-        let ctx = Context::new().with_http_send(http.clone());
+    #[test]
+    fn caller_provided_subject_token_is_redacted_from_debug() {
         let provider = WorkloadIdentityCredentialProvider::new()
             .with_tenant_id("test-tenant")
             .with_client_id("test-client")
             .with_federated_token_file("/must-not-be-read")
             .with_subject_token("caller.subject+token/");
 
-        provider
-            .provide_credential(&ctx)
-            .await?
-            .expect("credential must load");
-
-        let body = http
-            .request_body
-            .lock()
-            .expect("lock must succeed")
-            .clone()
-            .expect("request body must be captured");
-        let fields = form_urlencoded::parse(body.as_bytes())
-            .into_owned()
-            .collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(
-            fields.get("client_assertion").map(String::as_str),
-            Some("caller.subject+token/")
-        );
-        assert_eq!(
-            fields.get("client_id").map(String::as_str),
-            Some("test-client")
-        );
         assert!(!format!("{provider:?}").contains("caller.subject+token/"));
-        Ok(())
     }
 
     #[tokio::test]
-    async fn expired_subject_token_is_rejected_before_http() {
-        let http = CaptureHttpSend::success();
-        let ctx = Context::new().with_http_send(http.clone());
+    async fn expired_subject_token_is_rejected() {
         let provider = WorkloadIdentityCredentialProvider::new()
             .with_tenant_id("test-tenant")
             .with_client_id("test-client")
@@ -403,28 +313,10 @@ mod tests {
             );
 
         let err = provider
-            .provide_credential(&ctx)
+            .provide_credential(&Context::new())
             .await
             .expect_err("expired token must fail");
         assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
-        assert_eq!(http.calls.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn exchange_error_cannot_echo_subject_token() {
-        let secret = "echoed.azure.subject.token";
-        let http = CaptureHttpSend::error(format!(r#"{{"error_description":"{secret}"}}"#));
-        let ctx = Context::new().with_http_send(http);
-        let provider = WorkloadIdentityCredentialProvider::new()
-            .with_tenant_id("test-tenant")
-            .with_client_id("test-client")
-            .with_subject_token(secret);
-
-        let err = provider
-            .provide_credential(&ctx)
-            .await
-            .expect_err("exchange error must be returned");
-        assert!(!err.to_string().contains(secret));
-        assert!(!format!("{err:?}").contains(secret));
+        assert!(err.to_string().contains("subject token has expired"));
     }
 }

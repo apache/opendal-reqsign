@@ -16,13 +16,10 @@
 // under the License.
 
 #[cfg(not(target_arch = "wasm32"))]
-use reqsign_azure_storage::{ClientCertificateCredentialProvider, Credential};
+use reqsign_azure_storage::ClientCertificateCredentialProvider;
+
 #[cfg(not(target_arch = "wasm32"))]
-use reqsign_core::{Context, OsEnv, ProvideCredential};
-#[cfg(not(target_arch = "wasm32"))]
-use reqsign_file_read_tokio::TokioFileRead;
-#[cfg(not(target_arch = "wasm32"))]
-use reqsign_http_send_reqwest::ReqwestHttpSend;
+use super::{assert_provider_reads_probe, live_context};
 
 #[cfg(not(target_arch = "wasm32"))]
 fn is_test_enabled() -> bool {
@@ -31,10 +28,10 @@ fn is_test_enabled() -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
-async fn test_client_certificate_provider() {
+async fn test_client_certificate_provider() -> anyhow::Result<()> {
     if !is_test_enabled() {
         eprintln!("Skipping test: REQSIGN_AZURE_STORAGE_TEST_CLIENT_CERTIFICATE is not enabled");
-        return;
+        return Ok(());
     }
 
     let _tenant_id = std::env::var("AZURE_TENANT_ID")
@@ -45,34 +42,5 @@ async fn test_client_certificate_provider() {
         .expect("AZURE_CLIENT_CERTIFICATE_PATH must be set for client certificate test");
     let _cert_password = std::env::var("AZURE_CLIENT_CERTIFICATE_PASSWORD").ok();
 
-    let ctx = Context::new()
-        .with_file_read(TokioFileRead)
-        .with_http_send(ReqwestHttpSend::default())
-        .with_env(OsEnv);
-
-    let loader = ClientCertificateCredentialProvider::new();
-
-    let result = loader.provide_credential(&ctx).await;
-
-    // Better error reporting
-    let cred = match result {
-        Ok(Some(cred)) => cred,
-        Ok(None) => panic!("Client certificate provider returned None when test is enabled"),
-        Err(e) => {
-            panic!("Client certificate provider failed with error: {e:?}\nError details: {e}")
-        }
-    };
-
-    match cred {
-        Credential::BearerToken {
-            token,
-            expires_in: _,
-        } => {
-            assert!(!token.is_empty());
-            // Token should be a valid JWT
-            assert!(token.starts_with("eyJ"));
-            eprintln!("Successfully obtained bearer token using client certificate");
-        }
-        _ => panic!("Expected BearerToken credential from client certificate provider"),
-    }
+    assert_provider_reads_probe(ClientCertificateCredentialProvider::new(), live_context()).await
 }

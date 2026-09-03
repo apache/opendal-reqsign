@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use bytes::Bytes;
 use reqsign_azure_storage::{RequestSigner, StaticCredentialProvider};
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -24,14 +25,18 @@ fn is_test_enabled() -> bool {
     std::env::var("REQSIGN_AZURE_STORAGE_TEST").unwrap_or_default() == "on"
 }
 
+fn required_env(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
+}
+
 fn get_test_config() -> Option<(String, String, String, String, String)> {
     if !is_test_enabled() {
         return None;
     }
 
-    let url = std::env::var("REQSIGN_AZURE_STORAGE_URL").ok()?;
-    let account_name = std::env::var("REQSIGN_AZURE_STORAGE_ACCOUNT_NAME").ok()?;
-    let account_key = std::env::var("REQSIGN_AZURE_STORAGE_ACCOUNT_KEY").ok()?;
+    let url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let account_name = required_env("REQSIGN_AZURE_STORAGE_ACCOUNT_NAME");
+    let account_key = required_env("REQSIGN_AZURE_STORAGE_ACCOUNT_KEY");
     let service =
         std::env::var("REQSIGN_AZURE_STORAGE_SERVICE").unwrap_or_else(|_| "blob".to_string());
     let container =
@@ -41,10 +46,10 @@ fn get_test_config() -> Option<(String, String, String, String, String)> {
 }
 
 #[tokio::test]
-async fn test_shared_key_signing_get() {
+async fn test_shared_key_signing_get() -> anyhow::Result<()> {
     let Some((url, account_name, account_key, _, _)) = get_test_config() else {
         eprintln!("Skipping test: REQSIGN_AZURE_STORAGE_TEST is not enabled");
-        return;
+        return Ok(());
     };
 
     let ctx = Context::new()
@@ -54,17 +59,14 @@ async fn test_shared_key_signing_get() {
 
     let loader = StaticCredentialProvider::new_shared_key(&account_name, &account_key);
     let builder = RequestSigner::new();
-    let signer = Signer::new(ctx, loader, builder);
+    let signer = Signer::new(ctx.clone(), loader, builder);
 
-    // Test GET request
-    let mut parts = http::Request::get(&url)
+    let request = http::Request::get(&url)
         .header("x-ms-version", "2021-12-02")
-        .body(())
-        .unwrap()
-        .into_parts()
-        .0;
+        .body(Bytes::new())?;
+    let (mut parts, body) = request.into_parts();
 
-    signer.sign(&mut parts, None).await.unwrap();
+    signer.sign(&mut parts, None).await?;
 
     // Verify required headers were added
     assert!(parts.headers.contains_key("authorization"));
@@ -79,6 +81,20 @@ async fn test_shared_key_signing_get() {
         .unwrap();
     assert!(auth.starts_with("SharedKey"));
     assert!(auth.contains(&account_name));
+
+    let response = ctx
+        .http_send(http::Request::from_parts(parts, body))
+        .await?;
+    anyhow::ensure!(
+        response.status() == http::StatusCode::OK,
+        "Azure Blob probe returned HTTP {}",
+        response.status()
+    );
+    anyhow::ensure!(
+        response.body().as_ref() == b"reqsign-live-azure-ok\n",
+        "Azure Blob probe returned an unexpected body"
+    );
+    Ok(())
 }
 
 #[tokio::test]
