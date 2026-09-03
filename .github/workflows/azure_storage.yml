@@ -543,12 +543,26 @@ jobs:
             --arg github_sha "$GITHUB_SHA" \
             --arg github_ref "$GITHUB_REF" \
             '{templateParameters: {githubSha: $github_sha, githubRef: $github_ref}}')
-          response=$(curl --fail-with-body --silent --show-error \
+          response_file="$RUNNER_TEMP/azure-pipelines-queue-response.json"
+          if ! http_status=$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
             --request POST \
             --header "Authorization: Bearer $access_token" \
             --header "Content-Type: application/json" \
             --data "$request_body" \
-            "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs?api-version=7.1")
+            "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs?api-version=7.1"); then
+            echo "Failed to send the Azure Pipelines queue request" >&2
+            exit 1
+          fi
+          if (( http_status < 200 || http_status >= 300 )); then
+            message=$(jq --raw-output '.message // .error.message // "No error message returned"' \
+              "$response_file" 2>/dev/null || echo "Non-JSON error response")
+            message=$(tr '\r\n' '  ' <<< "$message" | cut -c1-1000)
+            echo "Azure Pipelines queue request failed with HTTP $http_status: $message" >&2
+            exit 1
+          fi
+          response=$(<"$response_file")
 
           run_id=$(jq --raw-output '.id // empty' <<< "$response")
           run_url=$(jq --raw-output '._links.web.href // empty' <<< "$response")
