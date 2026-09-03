@@ -37,6 +37,9 @@ env:
   AZURE_IMDS_CLIENT_ID: c4544d03-a76a-4908-b5c0-047b8c7e432c
   AZURE_IMDS_IDENTITY_ID: /subscriptions/9e6b5234-646f-4f48-b5cf-9761a56f0917/resourceGroups/opendal/providers/Microsoft.ManagedIdentity/userAssignedIdentities/reqsign-test
   AZURE_RUNTIME_RESOURCE_GROUP: reqsign-ci-runtime
+  AZURE_DEVOPS_ORGANIZATION: opendal
+  AZURE_DEVOPS_PROJECT: reqsign
+  AZURE_DEVOPS_PIPELINE_ID: "1"
 
 permissions: {}
 
@@ -338,6 +341,110 @@ jobs:
               --only-show-errors
           fi
 
+  azure_pipelines_live_test:
+    name: AzurePipelinesCredentialProvider live test
+    needs: check_secrets
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Configure 1Password Connect
+        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load Azure control-plane configuration
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: true
+        env:
+          AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
+          AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
+      - name: Log in to Azure with GitHub OIDC
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Queue Azure Pipelines provider test
+        id: queue
+        run: |
+          access_token=$(az account get-access-token \
+            --resource https://app.vssps.visualstudio.com/ \
+            --query accessToken \
+            --output tsv)
+          test -n "$access_token"
+          echo "::add-mask::$access_token"
+
+          request_body=$(jq --null-input \
+            --arg github_sha "$GITHUB_SHA" \
+            --arg github_ref "$GITHUB_REF" \
+            '{templateParameters: {githubSha: $github_sha, githubRef: $github_ref}}')
+          response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $access_token" \
+            --header "Content-Type: application/json" \
+            --data "$request_body" \
+            "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs?api-version=7.1")
+
+          run_id=$(jq --raw-output '.id // empty' <<< "$response")
+          run_url=$(jq --raw-output '._links.web.href // empty' <<< "$response")
+          test -n "$run_id"
+          test -n "$run_url"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "run_url=$run_url" >> "$GITHUB_OUTPUT"
+          echo "Queued Azure Pipelines run: $run_url"
+      - name: Wait for Azure Pipelines provider test
+        env:
+          RUN_ID: ${{ steps.queue.outputs.run_id }}
+          RUN_URL: ${{ steps.queue.outputs.run_url }}
+        run: |
+          deadline=$((SECONDS + 3300))
+          while (( SECONDS < deadline )); do
+            access_token=$(az account get-access-token \
+              --resource https://app.vssps.visualstudio.com/ \
+              --query accessToken \
+              --output tsv)
+            response=$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer $access_token" \
+              "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${RUN_ID}?api-version=7.1")
+            state=$(jq --raw-output '.state' <<< "$response")
+            result=$(jq --raw-output '.result // empty' <<< "$response")
+            if [[ "$state" == "completed" ]]; then
+              echo "Azure Pipelines run completed with result '$result': $RUN_URL"
+              test "$result" = "succeeded"
+              exit
+            fi
+            sleep 15
+          done
+          echo "Azure Pipelines run did not complete before the timeout: $RUN_URL" >&2
+          exit 1
+      - name: Cancel unfinished Azure Pipelines run
+        if: always() && steps.queue.outputs.run_id != ''
+        env:
+          RUN_ID: ${{ steps.queue.outputs.run_id }}
+        run: |
+          access_token=$(az account get-access-token \
+            --resource https://app.vssps.visualstudio.com/ \
+            --query accessToken \
+            --output tsv)
+          state=$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer $access_token" \
+            "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${RUN_ID}?api-version=7.1" |
+            jq --raw-output '.state')
+          if [[ "$state" != "completed" ]]; then
+            curl --fail-with-body --silent --show-error \
+              --request PATCH \
+              --header "Authorization: Bearer $access_token" \
+              --header "Content-Type: application/json" \
+              --data '{"status":"cancelling"}' \
+              "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/build/builds/${RUN_ID}?api-version=7.1" \
+              >/dev/null
+          fi
+
   test_summary:
     name: Test Summary
     needs:
@@ -345,6 +452,7 @@ jobs:
       - check_secrets
       - provider_live_test
       - imds_live_test
+      - azure_pipelines_live_test
     if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
@@ -354,6 +462,7 @@ jobs:
           TRUSTED: ${{ needs.check_secrets.outputs.trusted }}
           PROVIDER_RESULT: ${{ needs.provider_live_test.result }}
           IMDS_RESULT: ${{ needs.imds_live_test.result }}
+          AZURE_PIPELINES_RESULT: ${{ needs.azure_pipelines_live_test.result }}
         run: |
           {
             echo "## Azure Storage credential provider tests"
@@ -363,11 +472,12 @@ jobs:
             echo "| Unit and redacted real-response fixtures | $UNIT_RESULT |"
             echo "| Static, Env, Client Secret, Client Certificate, CLI, Workload Identity, Default | $PROVIDER_RESULT |"
             echo "| IMDS on an ephemeral Azure VM | $IMDS_RESULT |"
-            echo "| Azure Pipelines | Runs in azure-pipelines.yml |"
+            echo "| Azure Pipelines, queued by GitHub Actions | $AZURE_PIPELINES_RESULT |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           test "$UNIT_RESULT" = "success"
           if [[ "$TRUSTED" == "true" ]]; then
             test "$PROVIDER_RESULT" = "success"
             test "$IMDS_RESULT" = "success"
+            test "$AZURE_PIPELINES_RESULT" = "success"
           fi

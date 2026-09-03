@@ -101,11 +101,13 @@ The IMDS job uploads the test binary to a private blob, creates a VM without a
 public IP, runs the exact provider test through Azure Run Command, and removes
 the VM and uploaded binary in an unconditional cleanup step.
 
-Azure Pipelines runs `AzurePipelinesCredentialProvider` through an Azure Resource
-Manager workload-identity service connection. The repository-level
-`azure-pipelines.yml` schedules this test weekly; it can also be queued manually.
-The pipeline uses a dedicated Azure VM Scale Set agent pool with one-node maximum
-capacity, zero standby agents, and automatic recycling after every job.
+GitHub Actions queues `AzurePipelinesCredentialProvider` through the Azure
+DevOps REST API and waits for the result as part of the GitHub check. The queued
+run receives the exact GitHub ref and commit, then uses an Azure Resource Manager
+workload-identity service connection for the provider test. Azure DevOps has no
+repository or scheduled trigger for this pipeline. It uses a dedicated Azure VM
+Scale Set agent pool with one-node maximum capacity, zero standby agents, and
+automatic recycling after every job.
 
 ## 1Password Configuration
 

@@ -18,13 +18,13 @@
 trigger: none
 pr: none
 
-schedules:
-  - cron: "0 3 * * 1"
-    displayName: Weekly Azure Pipelines credential test
-    branches:
-      include:
-        - main
-    always: true
+parameters:
+  - name: githubSha
+    type: string
+    default: ""
+  - name: githubRef
+    type: string
+    default: ""
 
 pool:
   name: reqsign-azure-vmss
@@ -34,12 +34,26 @@ steps:
     persistCredentials: false
 
   - bash: |
-      if git fetch --depth=1 https://github.com/apache/opendal-reqsign.git main; then
-        if git cat-file -e FETCH_HEAD:azure-pipelines.yml 2>/dev/null; then
-          git checkout --detach FETCH_HEAD
-        fi
-      fi
-    displayName: Use canonical main after Azure Pipelines is configured
+      set -euo pipefail
+      [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+      case "$GITHUB_REF" in
+        refs/heads/*|refs/tags/*|refs/pull/*/merge) ;;
+        *)
+          echo "Unsupported GitHub ref: $GITHUB_REF" >&2
+          exit 1
+          ;;
+      esac
+
+      git fetch --no-tags --depth=1 \
+        https://github.com/apache/opendal-reqsign.git \
+        "$GITHUB_REF"
+      fetched_sha=$(git rev-parse 'FETCH_HEAD^{commit}')
+      test "$fetched_sha" = "$GITHUB_SHA"
+      git checkout --detach "$fetched_sha"
+    displayName: Check out the GitHub Actions revision
+    env:
+      GITHUB_SHA: ${{ parameters.githubSha }}
+      GITHUB_REF: ${{ parameters.githubRef }}
 
   - bash: |
       sudo apt-get update
