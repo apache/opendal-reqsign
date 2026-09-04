@@ -45,7 +45,7 @@ reqsign-volcengine-tos = { version = "3.1.2", path = "services/volcengine-tos" }
 # Crates.io dependencies
 aes-gcm = "0.11"
 anyhow = "1"
-asyncband = { version = "0.7", features = ["mutex"] }
+asyncband = { version = "0.7.1", features = ["mutex"] }
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 bytes = "1"
 criterion = { version = "0.8.1", features = ["async_tokio", "html_reports"] }
