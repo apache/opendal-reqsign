@@ -33,6 +33,7 @@ jwt = ["dep:rsa", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 anyhow = { workspace = true }
+asyncband = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
@@ -41,7 +42,6 @@ hmac = { workspace = true }
 http = { workspace = true }
 jiff = { workspace = true }
 log = { workspace = true }
-mea = { workspace = true }
 percent-encoding = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
