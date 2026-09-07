@@ -442,6 +442,7 @@ jobs:
              create_vm eastus reqsign-ci-vnet Standard_D2s_v6 || \
              create_vm eastus2 reqsign-ci-vnet-eastus2 Standard_B1s || \
              create_vm eastus2 reqsign-ci-vnet-eastus2 Standard_B2s || \
+             create_vm eastus2 reqsign-ci-vnet-eastus2 Standard_D2s_v7 || \
              create_vm eastus2 reqsign-ci-vnet-eastus2 Standard_D2s_v6; then
             echo "name=$vm_name" >> "$GITHUB_OUTPUT"
           else
