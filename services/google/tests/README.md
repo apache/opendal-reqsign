@@ -17,12 +17,18 @@ trigger.
   and every live test.
 - Every push to `main` runs the deterministic suite and every live test again.
 
+The live workflow follows the same failure-isolation model as the AWS and
+Azure workflows: every credential provider or distinct signing path has its
+own job. All live jobs depend on one shared probe-preparation job, and the
+summary reports and enforces every job result independently.
+
 Live tests cover:
 
 - `StaticCredentialProvider`, `FileCredentialProvider`,
   `EnvCredentialProvider`, `WellKnownCredentialProvider`, and
   `DefaultCredentialProvider` with a service-account credential.
-- Authorized-user ADC refresh through Google OAuth.
+- Authorized-user ADC refresh through Google OAuth, from both an explicit
+  credential path and the gcloud well-known location.
 - GitHub OIDC workload identity through Security Token Service and IAM
   Credentials, including caller-provided subject tokens.
 - `TokenCredentialProvider` with a live workload-identity access token.
