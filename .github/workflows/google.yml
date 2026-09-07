@@ -71,9 +71,60 @@ jobs:
             echo "trusted=false" >> "$GITHUB_OUTPUT"
           fi
 
+  prepare_live_resources:
+    name: Prepare Google Cloud live probes
+    needs: check_secrets
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Configure 1Password Connect
+        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load workload identity configuration
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: true
+        env:
+          GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
+          GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
+      - name: Authenticate probe writer through workload identity
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 900s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+          workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
+      - name: Create and verify fixed Cloud Storage probes
+        env:
+          GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          for object in live%2Fcredential-ok live%2Fcab%2Fallowed%2Fcredential-ok; do
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $GOOGLE_ACCESS_TOKEN" \
+              --header "Content-Type: text/plain" \
+              --data-binary $'reqsign-live-google-ok\n' \
+              "https://storage.googleapis.com/upload/storage/v1/b/reqsign/o?uploadType=media&name=$object" \
+              >/dev/null
+          done
+
+          test "$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer $GOOGLE_ACCESS_TOKEN" \
+            "$REQSIGN_GOOGLE_CLOUD_STORAGE_PROBE_URL")" = "reqsign-live-google-ok"
+
   test_service_account_providers:
     name: Service account providers live test
-    needs: check_secrets
+    needs:
+      - check_secrets
+      - prepare_live_resources
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -127,7 +178,9 @@ jobs:
 
   test_authorized_user_provider:
     name: Authorized user provider live test
-    needs: check_secrets
+    needs:
+      - check_secrets
+      - prepare_live_resources
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -161,7 +214,9 @@ jobs:
 
   test_workload_identity_and_token_providers:
     name: Workload identity, token, CAB, and IAM Credentials live test
-    needs: check_secrets
+    needs:
+      - check_secrets
+      - prepare_live_resources
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -232,7 +287,9 @@ jobs:
 
   test_impersonated_adc_provider:
     name: Impersonated ADC provider live test
-    needs: check_secrets
+    needs:
+      - check_secrets
+      - prepare_live_resources
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -266,7 +323,9 @@ jobs:
 
   test_vm_metadata_provider:
     name: VM metadata provider live test
-    needs: check_secrets
+    needs:
+      - check_secrets
+      - prepare_live_resources
     if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -394,6 +453,7 @@ jobs:
     needs:
       - unit_test
       - check_secrets
+      - prepare_live_resources
       - test_service_account_providers
       - test_authorized_user_provider
       - test_workload_identity_and_token_providers
@@ -406,6 +466,7 @@ jobs:
         env:
           UNIT_RESULT: ${{ needs.unit_test.result }}
           TRUSTED: ${{ needs.check_secrets.outputs.trusted }}
+          PREPARE_RESULT: ${{ needs.prepare_live_resources.result }}
           SERVICE_ACCOUNT_RESULT: ${{ needs.test_service_account_providers.result }}
           AUTHORIZED_USER_RESULT: ${{ needs.test_authorized_user_provider.result }}
           WORKLOAD_IDENTITY_RESULT: ${{ needs.test_workload_identity_and_token_providers.result }}
@@ -419,6 +480,7 @@ jobs:
             echo "|----------|-------------------------|--------|"
             echo "| Unit tests and redacted real-response replays | Local | $UNIT_RESULT |"
             if [[ "$TRUSTED" == "true" ]]; then
+              echo "| Fixed Cloud Storage probes | Workload Identity and Cloud Storage | $PREPARE_RESULT |"
               echo "| Static, file, environment, well-known, and default providers | OAuth and Cloud Storage | $SERVICE_ACCOUNT_RESULT |"
               echo "| ServiceAccountTokenCredentialProvider and server-side CAB | OAuth, STS, and Cloud Storage | $SERVICE_ACCOUNT_RESULT |"
               echo "| Authorized user provider | OAuth and Cloud Storage | $AUTHORIZED_USER_RESULT |"
@@ -433,6 +495,7 @@ jobs:
 
           test "$UNIT_RESULT" = "success"
           if [[ "$TRUSTED" == "true" ]]; then
+            test "$PREPARE_RESULT" = "success"
             test "$SERVICE_ACCOUNT_RESULT" = "success"
             test "$AUTHORIZED_USER_RESULT" = "success"
             test "$WORKLOAD_IDENTITY_RESULT" = "success"

@@ -52,6 +52,11 @@ short-lived private object, and starts an `e2-micro` VM without a public IP.
 The VM has a 15-minute maximum runtime and automatic deletion. The workflow
 also removes the VM and binary in an unconditional cleanup step.
 
+Each trusted run recreates and verifies the two fixed probe objects through
+workload identity before any provider test starts. This keeps the test oracle
+stable if an object is removed outside CI while still failing against the real
+Cloud Storage control and data planes.
+
 ## Live Test Variables
 
 | Variable | Purpose |
