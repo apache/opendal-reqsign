@@ -147,7 +147,7 @@ mod tests {
             Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(
-                    br#"{"access_token":"test-access-token","expires_in":3600}"#
+                    include_bytes!("../../tests/fixtures/vm_metadata_token_response.json")
                         .as_slice()
                         .into(),
                 )
@@ -167,6 +167,10 @@ mod tests {
             .expect("credential must exist");
 
         assert!(cred.has_token());
+        assert_eq!(
+            cred.token.as_ref().map(|token| token.access_token.as_str()),
+            Some("REDACTED")
+        );
         assert!(cred.signer_email.is_none());
         assert_eq!(
             http.uris.lock().unwrap().as_slice(),
@@ -190,6 +194,10 @@ mod tests {
             .expect("credential must exist");
 
         assert!(cred.has_token());
+        assert_eq!(
+            cred.token.as_ref().map(|token| token.access_token.as_str()),
+            Some("REDACTED")
+        );
         assert_eq!(
             cred.signer_email.as_deref(),
             Some("custom@test-project.iam.gserviceaccount.com")

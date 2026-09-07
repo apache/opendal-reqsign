@@ -15,60 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context_with_env;
+use super::{assert_provider_reads_probe, create_test_context_with_env};
 use log::warn;
-use reqsign_core::{ProvideCredential, Result};
-use reqsign_google::DefaultCredentialProvider;
+use reqsign_core::Result;
+use reqsign_google::{
+    DefaultCredentialProvider, ExternalAccountConfig, ExternalAccountCredentialProvider,
+};
 use std::collections::HashMap;
 use std::env;
-
-#[tokio::test]
-async fn test_external_account_credential_provider() -> Result<()> {
-    if env::var("REQSIGN_GOOGLE_TEST_EXTERNAL_ACCOUNT").unwrap_or_default() != "on" {
-        warn!("REQSIGN_GOOGLE_TEST_EXTERNAL_ACCOUNT is not set, skipped");
-        return Ok(());
-    }
-
-    // This test requires a valid external account credential file
-    let cred_path = env::var("REQSIGN_GOOGLE_EXTERNAL_ACCOUNT_CREDENTIALS")
-        .expect("REQSIGN_GOOGLE_EXTERNAL_ACCOUNT_CREDENTIALS must be set for this test");
-
-    // Verify the file exists and is an external_account type.
-    // google-github-actions/auth writes compact JSON (`"type":"external_account"`).
-    let content = std::fs::read_to_string(&cred_path)
-        .expect("Failed to read external account credential file");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&content).expect("credential file must be valid JSON");
-    assert_eq!(
-        parsed.get("type").and_then(|v| v.as_str()),
-        Some("external_account"),
-        "Credential file must be external_account type, got: {content}"
-    );
-
-    let ctx = create_test_context_with_env(HashMap::from_iter([
-        ("GOOGLE_APPLICATION_CREDENTIALS".to_string(), cred_path),
-        (
-            "GOOGLE_SCOPE".to_string(),
-            "https://www.googleapis.com/auth/devstorage.read_write".to_string(),
-        ),
-    ]));
-
-    let provider = DefaultCredentialProvider::new();
-
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided for external account");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    assert!(
-        !credential.has_service_account(),
-        "Should not have service account"
-    );
-
-    Ok(())
-}
 
 #[tokio::test]
 async fn test_external_account_with_workload_identity() -> Result<()> {
@@ -93,27 +47,41 @@ async fn test_external_account_with_workload_identity() -> Result<()> {
         "Credential file must be external_account type for workload identity, got: {content}"
     );
 
+    let scope = env::var("REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE")
+        .unwrap_or_else(|_| "https://www.googleapis.com/auth/devstorage.read_only".to_string());
     let ctx = create_test_context_with_env(HashMap::from_iter([
         ("GOOGLE_APPLICATION_CREDENTIALS".to_string(), cred_path),
-        (
-            "GOOGLE_SCOPE".to_string(),
-            "https://www.googleapis.com/auth/devstorage.read_write".to_string(),
-        ),
+        ("GOOGLE_SCOPE".to_string(), scope),
     ]));
 
-    let provider = DefaultCredentialProvider::new();
+    assert_provider_reads_probe(DefaultCredentialProvider::new(), ctx).await
+}
 
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided for workload identity");
+#[tokio::test]
+async fn test_external_account_with_caller_subject_token_live() -> Result<()> {
+    if env::var("REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY").unwrap_or_default() != "on" {
+        warn!("REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY is not set, skipped");
+        return Ok(());
+    }
 
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    assert!(
-        !credential.has_service_account(),
-        "Should not have service account"
-    );
+    let subject_token =
+        env::var("REQSIGN_GOOGLE_SUBJECT_TOKEN").expect("REQSIGN_GOOGLE_SUBJECT_TOKEN must be set");
+    let audience = env::var("REQSIGN_GOOGLE_WORKLOAD_IDENTITY_AUDIENCE")
+        .expect("REQSIGN_GOOGLE_WORKLOAD_IDENTITY_AUDIENCE must be set");
+    let service_account =
+        env::var("GOOGLE_SERVICE_ACCOUNT").expect("GOOGLE_SERVICE_ACCOUNT must be set");
+    let scope = env::var("REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE")
+        .unwrap_or_else(|_| "https://www.googleapis.com/auth/devstorage.read_only".to_string());
+    let config = ExternalAccountConfig::new(
+        audience,
+        "urn:ietf:params:oauth:token-type:jwt",
+        "https://sts.googleapis.com/v1/token",
+    )
+    .with_service_account_impersonation_url(format!(
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{service_account}:generateAccessToken"
+    ));
+    let provider = ExternalAccountCredentialProvider::from_subject_token(config, subject_token)
+        .with_scope(scope);
 
-    Ok(())
+    assert_provider_reads_probe(provider, super::create_test_context()).await
 }

@@ -1,144 +1,126 @@
-# Google Cloud Service Tests
+# Google Cloud Tests
 
-This directory contains integration tests for the Google Cloud service implementation in reqsign.
+The Google test suite separates deterministic protocol coverage from live
+credential-provider acceptance. Deterministic tests replay sanitized responses
+captured from Google services. Live tests obtain a real credential and use it
+to read a fixed private Cloud Storage object containing
+`reqsign-live-google-ok\n`.
 
-## Test Structure
+## CI Contract
 
-The tests are organized into two main categories:
+The workflow runs on pull requests and pushes to `main`; it has no scheduled
+trigger.
 
-### 1. Credential Providers (`credential_providers/`)
-Tests for various Google Cloud credential providers:
-- **DefaultCredentialProvider**: Tests the default credential chain (GOOGLE_APPLICATION_CREDENTIALS environment variable)
-- **StaticCredentialProvider**: Tests loading credentials from base64-encoded JSON
-- **AuthorizedUserCredentialProvider**: Tests OAuth2 user credentials (refresh token exchange)
-- **ExternalAccountCredentialProvider**: Tests external account credentials (Workload Identity Federation)
-- **ImpersonatedServiceAccountCredentialProvider**: Tests service account impersonation
-- **VmMetadataCredentialProvider**: Tests fetching credentials from GCP VM metadata service (only available on GCP VMs)
+- Pull requests without 1Password Connect secrets, including fork and
+  Dependabot pull requests, run unit tests and sanitized response replays.
+- Pull requests that receive the Connect secrets run the deterministic suite
+  and every live test.
+- Every push to `main` runs the deterministic suite and every live test again.
 
-### 2. Signing Tests (`signing/`)
-Tests for request signing functionality:
-- **Standard signing**: Tests OAuth2 bearer token signing for GCS API requests
-- **Signed URLs**: Tests generating pre-signed URLs for GCS objects
+Live tests cover:
 
-## Environment Variables
+- `StaticCredentialProvider`, `FileCredentialProvider`,
+  `EnvCredentialProvider`, `WellKnownCredentialProvider`, and
+  `DefaultCredentialProvider` with a service-account credential.
+- Authorized-user ADC refresh through Google OAuth.
+- GitHub OIDC workload identity through Security Token Service and IAM
+  Credentials, including caller-provided subject tokens.
+- `TokenCredentialProvider` with a live workload-identity access token.
+- Both the ADC-shaped and typed service-account impersonation providers.
+- IAM Credentials `generateAccessToken` and `signBlob`.
+- Server-side and client-side Credential Access Boundary flows.
+- `VmMetadataCredentialProvider` on an ephemeral private Compute Engine VM.
+- OAuth bearer signing and service-account signed URLs against Cloud Storage.
 
-### Core Test Control
-- `REQSIGN_GOOGLE_TEST`: Set to `on` to enable signing tests
-- `REQSIGN_GOOGLE_TEST_DEFAULT`: Set to `on` to enable DefaultCredentialProvider tests
-- `REQSIGN_GOOGLE_TEST_STATIC`: Set to `on` to enable StaticCredentialProvider tests
-- `REQSIGN_GOOGLE_TEST_AUTHORIZED_USER`: Set to `on` to enable AuthorizedUserCredentialProvider tests
-- `REQSIGN_GOOGLE_TEST_AUTHORIZED_USER_GCLOUD`: Set to `on` to test gcloud authorized user credentials
-- `REQSIGN_GOOGLE_TEST_EXTERNAL_ACCOUNT`: Set to `on` to enable ExternalAccountCredentialProvider tests with test data
-- `REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY`: Set to `on` to enable real Workload Identity tests
-- `REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT`: Set to `on` to enable ImpersonatedServiceAccountCredentialProvider tests
-- `REQSIGN_GOOGLE_TEST_IMPERSONATION_REAL`: Set to `on` to test with real impersonation credentials
-- `REQSIGN_GOOGLE_TEST_IMPERSONATION_DELEGATES`: Set to `on` to test impersonation with delegation chain
-- `REQSIGN_GOOGLE_TEST_VM_METADATA`: Set to `on` to enable VmMetadataCredentialProvider tests (GCP VMs only)
-- `REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK`: Set to `on` to enable VmMetadataCredentialProvider tests with the local mock server
-- `REQSIGN_GOOGLE_TEST_CAB`: Set to `on` to enable the live CAB interoperability test
-- `REQSIGN_GOOGLE_TEST_SERVICE_ACCOUNT_TOKEN`: Set to `on` to enable the live service-account token provider test
+Each provider must read the fixed probe successfully. Merely obtaining or
+parsing a token is not live acceptance.
 
-### Google Cloud Configuration
-- `GOOGLE_APPLICATION_CREDENTIALS`: Path to credential JSON file (supports all credential types)
-- `REQSIGN_GOOGLE_CREDENTIAL`: Base64-encoded service account JSON (for StaticCredentialProvider)
-- `REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE`: OAuth2 scope for GCS (e.g., `https://www.googleapis.com/auth/devstorage.read_write`)
-- `REQSIGN_GOOGLE_CLOUD_STORAGE_URL`: GCS bucket URL (e.g., `https://storage.googleapis.com/storage/v1/b/your-bucket`)
-- `REQSIGN_GOOGLE_CAB_SOURCE_TOKEN`: Service-account OAuth access token with the Cloud Platform scope
-- `REQSIGN_GOOGLE_CAB_SOURCE_EXPIRES_AT`: Absolute RFC 3339 expiration of the source token
-- `REQSIGN_GOOGLE_CAB_BUCKET`: Bucket used by the client-issued CAB live test
-- `REQSIGN_GOOGLE_CAB_OBJECT_PREFIX`: Non-empty object prefix used by the CAB list test
-- `GOOGLE_IMPERSONATED_CREDENTIALS`: Path to impersonated service account credential file
-- `GOOGLE_WORKLOAD_IDENTITY_PROVIDER`: Workload Identity Provider ID (for GitHub Actions)
-- `GOOGLE_SERVICE_ACCOUNT`: Service account email for Workload Identity
+## Personal Google Cloud Resources
 
-## Running Tests
+All live resources belong to the personal `reqsign` project:
 
-### Local Development
+- Bucket: `gs://reqsign`
+- Probe: `gs://reqsign/live/credential-ok`
+- CAB probe: `gs://reqsign/live/cab/allowed/credential-ok`
+- Metadata identity: `reqsign-metadata@reqsign.iam.gserviceaccount.com`
+- Impersonation target:
+  `reqsign-impersonated@reqsign.iam.gserviceaccount.com`
+- Runtime region: `us-east1`
 
-1. Copy `.env.example` to `.env` in the repository root
-2. Configure your Google Cloud credentials in the `.env` file
-3. Run tests using the provided script:
-   ```bash
-   cd services/google
-   ./scripts/test.sh
-   ```
+The metadata job builds the integration-test binary on GitHub, uploads it as a
+short-lived private object, and starts an `e2-micro` VM without a public IP.
+The VM has a 15-minute maximum runtime and automatic deletion. The workflow
+also removes the VM and binary in an unconditional cleanup step.
 
-Or run specific test suites:
-```bash
-# Run only signing tests
-REQSIGN_GOOGLE_TEST=on cargo test signing::
+## Live Test Variables
 
-# Run only DefaultCredentialProvider tests
-REQSIGN_GOOGLE_TEST_DEFAULT=on cargo test test_default_credential_provider
+| Variable | Purpose |
+| --- | --- |
+| `REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE` | OAuth scope used by Storage requests |
+| `REQSIGN_GOOGLE_CLOUD_STORAGE_PROBE_URL` | JSON API media URL for the fixed probe |
+| `REQSIGN_GOOGLE_CLOUD_STORAGE_SIGNED_PROBE_URL` | XML API URL for signed URL validation |
+| `REQSIGN_GOOGLE_CREDENTIAL` | Base64 service-account JSON |
+| `GOOGLE_APPLICATION_CREDENTIALS` | ADC credential file path |
+| `REQSIGN_GOOGLE_AUTHORIZED_USER_CREDENTIALS` | Authorized-user ADC file path |
+| `REQSIGN_GOOGLE_ACCESS_TOKEN` | Live token for token and typed impersonation providers |
+| `REQSIGN_GOOGLE_SUBJECT_TOKEN` | Caller-provided GitHub OIDC token |
+| `REQSIGN_GOOGLE_WORKLOAD_IDENTITY_AUDIENCE` | Google STS audience |
+| `GOOGLE_SERVICE_ACCOUNT` | WIF service account |
+| `REQSIGN_GOOGLE_IMPERSONATED_SERVICE_ACCOUNT` | Typed impersonation target |
+| `REQSIGN_GOOGLE_CAB_BUCKET` | CAB test bucket |
+| `REQSIGN_GOOGLE_CAB_OBJECT_PREFIX` | Allowed CAB object prefix |
 
-# Run all credential provider tests
-cargo test credential_providers::
-
-# Run the live CAB STS and Cloud Storage interoperability test
-REQSIGN_GOOGLE_TEST_CAB=on cargo test --features credential-access-boundary-client-side test_client_side_credential_access_boundary_live_interoperability
-
-# Run the live service-account token provider and server-side CAB interoperability test
-REQSIGN_GOOGLE_TEST_SERVICE_ACCOUNT_TOKEN=on cargo test test_service_account_token_provider_with_server_side_cab_live_interoperability
-```
-
-### GitHub Actions
-
-The tests are automatically run in GitHub Actions with the following setup:
-- Unit tests run on all PRs (no secrets required)
-- Integration tests only run on the main repository (not on forks)
-- Credentials are managed through 1Password Connect
+Provider-specific `REQSIGN_GOOGLE_TEST_*` variables gate live tests. CI sets
+them only on the exact live test step so deterministic runs never reach Google.
 
 ## 1Password Configuration
 
-The following secrets need to be configured in 1Password under the `reqsign/google` item:
+GitHub Actions reads the existing `reqsign/google` item through 1Password
+Connect. The workflow uses these fields:
 
-| Field | Description | Example |
-|-------|-------------|---------|
-| `credential_json` | Service account JSON content | `{"type": "service_account", ...}` |
-| `credential_base64` | Base64-encoded service account JSON | `eyJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsIC4uLn0=` |
-| `storage_scope` | OAuth2 scope for GCS | `https://www.googleapis.com/auth/devstorage.read_write` |
-| `storage_url` | GCS bucket URL for testing | `https://storage.googleapis.com/storage/v1/b/test-bucket` |
+- `credential_base64`
+- `authorized_user_base64`
+- `impersonated_sa_base64`
+- `workload_identity_provider`
+- `service_account_email`
 
-## Creating Test Credentials
+No Google credential is available to fork or Dependabot pull-request jobs.
 
-1. Create a service account in Google Cloud Console
-2. Grant the service account appropriate permissions (e.g., Storage Object Admin)
-3. Create and download a JSON key for the service account
-4. For base64 encoding: `base64 -i service-account.json | tr -d '\n'`
+## Running Tests
 
-## Credential Types Support
-
-Google Cloud supports multiple credential types:
-
-1. **Service Account**: Standard service account with private key
-2. **Authorized User**: OAuth2 user credentials from `gcloud auth application-default login`
-3. **External Account**: Workload Identity Federation (GitHub Actions, AWS, Azure, etc.)
-4. **Impersonated Service Account**: Service account impersonation with delegation chain
-5. **VM Metadata**: Credentials from GCP VM metadata service
-
-The DefaultCredentialProvider automatically detects and handles all these types.
-
-## Notes
-
-- The VmMetadataCredentialProvider tests are disabled by default in CI as they require running on actual GCP VMs
-- CI runs a separate VmMetadataCredentialProvider test via the mock metadata server
-- External Account tests can run in GitHub Actions with proper Workload Identity setup
-- Impersonation tests require proper IAM permissions for the source credentials
-- Tests use real GCS API endpoints to verify signature validity
-- All tests are designed to be idempotent and safe to run repeatedly
-- Some credential provider tests use test data that will fail token exchange - this is expected
-- CAB unit tests use Google's non-secret Java auth-library keyset fixture. The live
-  CAB test is opt-in because it requires a current OAuth access token with the Cloud Platform scope
-  and a matching Cloud Storage bucket and prefix; it is not enabled by the repository CI secrets.
-- The live service-account token provider test is separately opt-in because it requires
-  service-account JSON and a matching Cloud Storage bucket and prefix.
-
-## Local STS Mock
-
-For local development without real Google Cloud credentials, you can run a simple STS mock:
+Run deterministic tests and response replays:
 
 ```bash
-python3 services/google/tests/mocks/sts_mock_server.py 5000
+cargo test -p reqsign-google --lib --tests --all-features --no-fail-fast
 ```
 
-The example credential file `services/google/testdata/test_external_account.json` is configured to use this mock.
+Live tests are disabled unless their exact gate variable is `on`. For example:
+
+```bash
+REQSIGN_GOOGLE_TEST_STATIC=on \
+REQSIGN_GOOGLE_CREDENTIAL="$SERVICE_ACCOUNT_JSON_BASE64" \
+REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE=https://www.googleapis.com/auth/devstorage.read_only \
+REQSIGN_GOOGLE_CLOUD_STORAGE_PROBE_URL='https://storage.googleapis.com/storage/v1/b/reqsign/o/live%2Fcredential-ok?alt=media' \
+cargo test -p reqsign-google --test main \
+  credential_providers::static_provider:: -- --no-capture
+```
+
+## Updating Response Replays
+
+Files under `tests/fixtures/` must come from the corresponding real Google
+endpoint. Replace access tokens, refresh tokens, JWTs, private keys, session
+keys, account emails, and project identifiers before committing. Preserve
+field names, JSON types, optional-field presence, and time formats.
+
+A fixture update is accepted only after the same live path succeeds against
+Google Cloud Storage. Synthetic malformed, timeout, and transport cases may be
+derived from a captured response, but must not become the source for a success
+fixture.
+
+The repository currently contains captured success responses for authorized
+user OAuth, Compute Engine metadata, IAM Credentials `generateAccessToken`, and
+server-side CAB STS. Service-account OAuth, direct GitHub workload-identity
+STS, client-side CAB STS, and IAM Credentials `signBlob` still require captured
+success fixtures. Keep their live tests authoritative until those responses
+have been captured and sanitized; do not replace them with fabricated success
+fixtures.

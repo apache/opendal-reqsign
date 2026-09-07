@@ -609,11 +609,35 @@ mod tests {
         value.parse().expect("timestamp must parse")
     }
 
+    #[test]
+    fn parses_redacted_real_generate_access_token_response() {
+        let response: GenerateAccessTokenResponse = serde_json::from_slice(include_bytes!(
+            "../tests/fixtures/iam_generate_access_token_response.json"
+        ))
+        .expect("real IAM Credentials response fixture must parse");
+
+        assert_eq!(response.access_token, "REDACTED");
+        assert_eq!(response.expire_time, "2026-09-03T13:30:38Z");
+    }
+
     fn response(status: http::StatusCode, body: &str) -> http::Response<Bytes> {
         http::Response::builder()
             .status(status)
             .body(Bytes::copy_from_slice(body.as_bytes()))
             .expect("response must build")
+    }
+
+    fn iam_success_response(access_token: &str, expire_time: &str) -> http::Response<Bytes> {
+        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../tests/fixtures/iam_generate_access_token_response.json"
+        ))
+        .expect("real IAM Credentials response fixture must parse");
+        value["accessToken"] = access_token.into();
+        value["expireTime"] = expire_time.into();
+        response(
+            http::StatusCode::OK,
+            &serde_json::to_string(&value).expect("IAM response fixture must serialize"),
+        )
     }
 
     fn source(expires_at: &str) -> Credential {
@@ -641,9 +665,9 @@ mod tests {
     async fn constructs_canonical_request_and_preserves_authoritative_expiration() -> Result<()> {
         let now = timestamp("2026-09-02T00:00:00Z");
         let expires_at = timestamp("2026-09-02T01:00:00Z");
-        let http = MockHttpSend::new([response(
-            http::StatusCode::OK,
-            r#"{"accessToken":"impersonated-secret-token","expireTime":"2026-09-02T01:00:00Z"}"#,
+        let http = MockHttpSend::new([iam_success_response(
+            "impersonated-secret-token",
+            "2026-09-02T01:00:00Z",
         )]);
         let granter = ServiceAccountImpersonationGranter::new(grant()).with_time(now);
 
@@ -808,14 +832,8 @@ mod tests {
         let now = timestamp("2026-09-02T00:00:00Z");
         let response_time = timestamp("2026-09-02T00:00:20Z");
         let http = MockHttpSend::new([
-            response(
-                http::StatusCode::OK,
-                r#"{"accessToken":"impersonated-token","expireTime":"2026-09-02T01:00:00Z"}"#,
-            ),
-            response(
-                http::StatusCode::OK,
-                r#"{"accessToken":"impersonated-token","expireTime":"2026-09-02T00:00:25Z"}"#,
-            ),
+            iam_success_response("impersonated-token", "2026-09-02T01:00:00Z"),
+            iam_success_response("impersonated-token", "2026-09-02T00:00:25Z"),
         ]);
         let context = Context::new().with_http_send(http);
 
@@ -880,14 +898,8 @@ mod tests {
             credential: Some(source("2100-01-01T00:00:00Z")),
         };
         let http = MockHttpSend::new([
-            response(
-                http::StatusCode::OK,
-                r#"{"accessToken":"first-token","expireTime":"2100-01-01T00:00:00Z"}"#,
-            ),
-            response(
-                http::StatusCode::OK,
-                r#"{"accessToken":"second-token","expireTime":"2100-01-01T00:00:00Z"}"#,
-            ),
+            iam_success_response("first-token", "2100-01-01T00:00:00Z"),
+            iam_success_response("second-token", "2100-01-01T00:00:00Z"),
         ]);
         let context = Context::new().with_http_send(http.clone());
         let granter = Granter::new(
@@ -909,9 +921,9 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(http.request_count(), 2);
 
-        let wrapper_http = MockHttpSend::new([response(
-            http::StatusCode::OK,
-            r#"{"accessToken":"provider-token","expireTime":"2100-01-01T00:00:00Z"}"#,
+        let wrapper_http = MockHttpSend::new([iam_success_response(
+            "provider-token",
+            "2100-01-01T00:00:00Z",
         )]);
         let wrapper = ServiceAccountImpersonationCredentialProvider::new(
             CountingProvider {
