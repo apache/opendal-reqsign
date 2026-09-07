@@ -23,7 +23,7 @@ resolver = "3"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/apache/opendal-reqsign"
-rust-version = "1.85.0"
+rust-version = "1.86.0"
 
 [workspace.dependencies]
 # Workspace dependencies
@@ -45,6 +45,7 @@ reqsign-volcengine-tos = { version = "3.1.2", path = "services/volcengine-tos" }
 # Crates.io dependencies
 aes-gcm = "0.11"
 anyhow = "1"
+asyncband = { version = "0.7.1", features = ["mutex"] }
 base64 = { version = "0.23", default-features = false, features = ["std"] }
 bytes = "1"
 criterion = { version = "0.8.1", features = ["async_tokio", "html_reports"] }
@@ -57,7 +58,6 @@ hmac = "0.13"
 http = "1"
 jiff = "0.2"
 log = "0.4"
-mea = "0.6.4"
 pem = "4.0"
 percent-encoding = "2"
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
