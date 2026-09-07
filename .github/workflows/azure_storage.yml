@@ -396,7 +396,7 @@ jobs:
         env:
           TEST_EXECUTABLE: ${{ steps.build.outputs.executable }}
         run: |
-          artifact_name="ci-artifacts/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/azure-imds-live-test"
+          artifact_name="ci-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-azure-imds-live-test"
           az storage blob upload \
             --auth-mode login \
             --account-name "$AZURE_STORAGE_ACCOUNT" \
