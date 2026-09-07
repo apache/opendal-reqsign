@@ -254,7 +254,7 @@ jobs:
         with:
           create_credentials_file: true
           token_format: access_token
-          access_token_lifetime: 1800s
+          access_token_lifetime: 3600s
           access_token_scopes: https://www.googleapis.com/auth/cloud-platform
           workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
@@ -282,7 +282,7 @@ jobs:
           REQSIGN_GOOGLE_CAB_SOURCE_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: |
           export REQSIGN_GOOGLE_CAB_SOURCE_EXPIRES_AT
-          REQSIGN_GOOGLE_CAB_SOURCE_EXPIRES_AT=$(date --utc --date='+25 minutes' '+%Y-%m-%dT%H:%M:%SZ')
+          REQSIGN_GOOGLE_CAB_SOURCE_EXPIRES_AT=$(date --utc --date='+50 minutes' '+%Y-%m-%dT%H:%M:%SZ')
           cargo test -p reqsign-google --features credential-access-boundary-client-side --test credential_access_boundary -- --no-capture
 
   test_impersonated_adc_provider:
