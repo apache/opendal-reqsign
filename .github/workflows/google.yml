@@ -80,8 +80,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -131,8 +131,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -160,8 +160,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -196,8 +196,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -232,8 +232,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -267,8 +267,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -303,8 +303,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -332,8 +332,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -374,8 +374,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -427,8 +427,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -470,8 +470,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -513,8 +513,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -555,8 +555,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -584,8 +584,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
@@ -627,8 +627,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Configure 1Password Connect
-        uses: 1Password/load-secrets-action/configure@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
