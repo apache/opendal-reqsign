@@ -15,13 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-/// BoxedFuture is the type alias of [`futures::future::BoxFuture`].
-#[cfg(not(target_arch = "wasm32"))]
-pub type BoxedFuture<'a, T> = futures::future::BoxFuture<'a, T>;
+use std::pin::Pin;
 
-/// BoxedFuture is the type alias of [`futures::future::LocalBoxFuture`].
+/// An owned dynamically typed [`Future`] for use in cases where you can't statically type your
+/// result or need to add some indirection.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// `BoxFuture`, but without the `Send` requirement.
 #[cfg(target_arch = "wasm32")]
-pub type BoxedFuture<'a, T> = futures::future::LocalBoxFuture<'a, T>;
+pub type BoxedFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 /// MaybeSend is a marker to determine whether a type is `Send` or not.
 ///

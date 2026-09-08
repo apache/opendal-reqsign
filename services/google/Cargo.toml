@@ -30,7 +30,6 @@ rust-version.workspace = true
 all-features = true
 
 [features]
-default = []
 credential-access-boundary-client-side = [
   "dep:aes-gcm",
   "dep:asyncband",
@@ -38,6 +37,7 @@ credential-access-boundary-client-side = [
   "dep:prost",
   "dep:zeroize",
 ]
+default = []
 
 [dependencies]
 aes-gcm = { workspace = true, features = ["zeroize"], optional = true }
