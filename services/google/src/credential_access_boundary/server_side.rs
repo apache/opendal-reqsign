@@ -469,18 +469,36 @@ mod tests {
     }
 
     fn success_response(access_token: &str, expires_in: Option<u64>) -> http::Response<Bytes> {
-        let mut value = serde_json::json!({
-            "access_token": access_token,
-            "issued_token_type": ACCESS_TOKEN_TYPE,
-            "token_type": "Bearer"
-        });
+        let mut value: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/server_side_cab_sts_response.json"
+        ))
+        .expect("real server-side CAB STS response fixture must parse");
+        value["access_token"] = access_token.into();
         if let Some(expires_in) = expires_in {
             value["expires_in"] = expires_in.into();
+        } else {
+            value
+                .as_object_mut()
+                .expect("STS response fixture must be an object")
+                .remove("expires_in");
         }
         response(
             http::StatusCode::OK,
             serde_json::to_vec(&value).expect("response JSON must serialize"),
         )
+    }
+
+    #[test]
+    fn parses_redacted_real_server_side_sts_response() {
+        let response: StsTokenResponse = serde_json::from_slice(include_bytes!(
+            "../../tests/fixtures/server_side_cab_sts_response.json"
+        ))
+        .expect("real server-side CAB STS response fixture must parse");
+
+        assert_eq!(response.access_token, "REDACTED");
+        assert_eq!(response.issued_token_type, ACCESS_TOKEN_TYPE);
+        assert_eq!(response.token_type, "Bearer");
+        assert_eq!(response.expires_in, None);
     }
 
     fn viewer_bucket_grant() -> CredentialAccessBoundaryGrant {

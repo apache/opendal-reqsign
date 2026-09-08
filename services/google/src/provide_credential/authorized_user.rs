@@ -41,6 +41,12 @@ struct RefreshTokenResponse {
     expires_in: Option<u64>,
 }
 
+fn parse_refresh_token_response(body: &[u8]) -> Result<RefreshTokenResponse> {
+    serde_json::from_slice(body).map_err(|e| {
+        reqsign_core::Error::unexpected("failed to parse token response").with_source(e)
+    })
+}
+
 /// AuthorizedUserCredentialProvider exchanges OAuth2 user credentials for access tokens.
 #[derive(Debug, Clone)]
 pub struct AuthorizedUserCredentialProvider {
@@ -88,10 +94,7 @@ impl ProvideCredential for AuthorizedUserCredentialProvider {
             )));
         }
 
-        let token_resp: RefreshTokenResponse =
-            serde_json::from_slice(resp.body()).map_err(|e| {
-                reqsign_core::Error::unexpected("failed to parse token response").with_source(e)
-            })?;
+        let token_resp = parse_refresh_token_response(resp.body())?;
 
         let expires_at = token_resp
             .expires_in
@@ -101,5 +104,21 @@ impl ProvideCredential for AuthorizedUserCredentialProvider {
             access_token: token_resp.access_token,
             expires_at,
         })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_redacted_real_authorized_user_response() {
+        let response = parse_refresh_token_response(include_bytes!(
+            "../../tests/fixtures/authorized_user_token_response.json"
+        ))
+        .expect("real authorized-user token response fixture must parse");
+
+        assert_eq!(response.access_token, "REDACTED");
+        assert_eq!(response.expires_in, Some(3599));
     }
 }

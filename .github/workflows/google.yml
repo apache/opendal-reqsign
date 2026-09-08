@@ -30,117 +30,102 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_LOG: DEBUG
-  RUST_BACKTRACE: full
+  RUST_BACKTRACE: "1"
+  REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE: https://www.googleapis.com/auth/devstorage.read_only
+  REQSIGN_GOOGLE_CLOUD_STORAGE_URL: https://storage.googleapis.com/storage/v1/b/reqsign
+  REQSIGN_GOOGLE_CLOUD_STORAGE_PROBE_URL: https://storage.googleapis.com/storage/v1/b/reqsign/o/live%2Fcredential-ok?alt=media
+  REQSIGN_GOOGLE_CLOUD_STORAGE_SIGNED_PROBE_URL: https://storage.googleapis.com/reqsign/live/credential-ok
+  REQSIGN_GOOGLE_CAB_BUCKET: reqsign
+  REQSIGN_GOOGLE_CAB_OBJECT_PREFIX: live/cab/allowed/
+  REQSIGN_GOOGLE_IMPERSONATED_SERVICE_ACCOUNT: reqsign-impersonated@reqsign.iam.gserviceaccount.com
 
 permissions: {}
 
 jobs:
-  # Unit tests - always run, no secrets needed
   unit_test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Run unit tests
-        working-directory: ./services/google
+      - name: Run deterministic tests and redacted real-response replays
         run: |
-          echo "::group::Running unit tests"
-          cargo test --lib --all-features --no-fail-fast
-          cargo test --doc --all-features --no-fail-fast
-          echo "::endgroup::"
+          cargo test -p reqsign-google --lib --tests --all-features --no-fail-fast
+          cargo test -p reqsign-google --doc --all-features --no-fail-fast
 
-  # Check if we can run integration tests
   check_secrets:
     runs-on: ubuntu-latest
     outputs:
-      has_secrets: ${{ steps.check.outputs.has_secrets }}
+      trusted: ${{ steps.check.outputs.trusted }}
     steps:
-      - name: Check if secrets are available
+      - name: Check whether live credentials are available
         id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          ACTOR: ${{ github.actor }}
         run: |
-          if [[ "${{ github.event_name }}" == "push" || ( "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.fork }}" == "false" && "${{ github.actor }}" != "dependabot[bot]" ) ]]; then
-            echo "has_secrets=true" >> $GITHUB_OUTPUT
-            echo "::notice::Integration tests will be executed (base repository and non-dependabot PR)"
+          if [[ "$EVENT_NAME" == "push" || ( "$EVENT_NAME" == "pull_request" && "$IS_FORK" == "false" && "$ACTOR" != "dependabot[bot]" ) ]]; then
+            echo "trusted=true" >> "$GITHUB_OUTPUT"
           else
-            echo "has_secrets=false" >> $GITHUB_OUTPUT
-            echo "::warning::Integration tests will be skipped (forked repository, dependabot PR, or no secrets available)"
+            echo "trusted=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Signing tests - test signature algorithm with static credentials
-  signing_test:
+  prepare_live_resources:
+    name: Prepare Google Cloud live probes
     needs: check_secrets
-    if: needs.check_secrets.outputs.has_secrets == 'true'
+    if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       - name: Setup 1Password Connect
         uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
-      - name: Load secrets
+      - name: Load workload identity configuration
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         with:
           export-env: true
         env:
-          REQSIGN_GOOGLE_CREDENTIAL: op://reqsign/google/credential_base64
-          REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE: op://reqsign/google/storage_scope
-          REQSIGN_GOOGLE_CLOUD_STORAGE_URL: op://reqsign/google/storage_url
-      - name: Test signing
-        working-directory: ./services/google
-        env:
-          # Gate flags must live on the test step. 1Password export-env only
-          # forwards op:// secrets, so literals set on Load secrets are dropped.
-          REQSIGN_GOOGLE_TEST: on
-        run: |
-          test "${REQSIGN_GOOGLE_TEST}" = "on"
-          echo "::group::Running signing tests"
-          cargo test signing:: --no-fail-fast -- --no-capture
-          echo "::endgroup::"
-
-  # DefaultCredentialProvider test
-  test_default_provider:
-    needs: check_secrets
-    if: needs.check_secrets.outputs.has_secrets == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
+          GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
+      - name: Authenticate probe writer through workload identity
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          persist-credentials: false
-      - name: Setup 1Password Connect
-        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
-        with:
-          connect-host: ${{ secrets.OP_CONNECT_HOST }}
-          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
-      - name: Load secrets
-        id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 900s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+          workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
+      - name: Create and verify fixed Cloud Storage probes
         env:
-          GOOGLE_APPLICATION_CREDENTIALS_BASE64: op://reqsign/google/credential_base64
-      - name: Setup test credentials file
+          GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: |
-          echo "${STEPS_LOAD_SECRETS_OUTPUTS_GOOGLE_APPLICATION_CREDENTIALS_BASE64}" | base64 -d > /tmp/gcp_credentials.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_credentials.json" >> $GITHUB_ENV
-        env:
-          STEPS_LOAD_SECRETS_OUTPUTS_GOOGLE_APPLICATION_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_APPLICATION_CREDENTIALS_BASE64 }}
-      - name: Test DefaultCredentialProvider
-        working-directory: ./services/google
-        env:
-          REQSIGN_GOOGLE_TEST_DEFAULT: on
-        run: |
-          test "${REQSIGN_GOOGLE_TEST_DEFAULT}" = "on"
-          echo "::group::Testing DefaultCredentialProvider"
-          cargo test test_default_credential_provider --no-fail-fast -- --no-capture
-          echo "::endgroup::"
+          for object in live%2Fcredential-ok live%2Fcab%2Fallowed%2Fcredential-ok; do
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $GOOGLE_ACCESS_TOKEN" \
+              --header "Content-Type: text/plain" \
+              --data-binary $'reqsign-live-google-ok\n' \
+              "https://storage.googleapis.com/upload/storage/v1/b/reqsign/o?uploadType=media&name=$object" \
+              >/dev/null
+          done
 
-  # StaticCredentialProvider test
+          test "$(curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer $GOOGLE_ACCESS_TOKEN" \
+            "$REQSIGN_GOOGLE_CLOUD_STORAGE_PROBE_URL")" = "reqsign-live-google-ok"
+
   test_static_provider:
-    needs: check_secrets
-    if: needs.check_secrets.outputs.has_secrets == 'true'
+    name: StaticCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,62 +136,236 @@ jobs:
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
-      - name: Load secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
-        with:
-          export-env: true
-        env:
-          REQSIGN_GOOGLE_CREDENTIAL: op://reqsign/google/credential_base64
-          REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE: op://reqsign/google/storage_scope
-      - name: Test StaticCredentialProvider
-        working-directory: ./services/google
-        env:
-          REQSIGN_GOOGLE_TEST_STATIC: on
-        run: |
-          test "${REQSIGN_GOOGLE_TEST_STATIC}" = "on"
-          echo "::group::Testing StaticCredentialProvider"
-          cargo test test_static_credential_provider --no-fail-fast -- --no-capture
-          echo "::endgroup::"
-
-  # AuthorizedUserCredentialProvider test
-  test_authorized_user_provider:
-    needs: check_secrets
-    if: needs.check_secrets.outputs.has_secrets == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Setup 1Password Connect
-        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
-        with:
-          connect-host: ${{ secrets.OP_CONNECT_HOST }}
-          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
-      - name: Load secrets
+      - name: Load Google service-account credential
         id: load_secrets
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         env:
-          AUTHORIZED_USER_CREDENTIALS_BASE64: op://reqsign/google/authorized_user_base64
-      - name: Setup test credentials file
-        run: |
-          echo "${STEPS_LOAD_SECRETS_OUTPUTS_AUTHORIZED_USER_CREDENTIALS_BASE64}" | base64 -d > /tmp/authorized_user.json
-          echo "REQSIGN_GOOGLE_AUTHORIZED_USER_CREDENTIALS=/tmp/authorized_user.json" >> $GITHUB_ENV
+          GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
+      - name: Test StaticCredentialProvider against Cloud Storage
         env:
-          STEPS_LOAD_SECRETS_OUTPUTS_AUTHORIZED_USER_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.AUTHORIZED_USER_CREDENTIALS_BASE64 }}
-      - name: Test AuthorizedUserCredentialProvider
-        working-directory: ./services/google
-        env:
-          REQSIGN_GOOGLE_TEST_AUTHORIZED_USER: on
+          GOOGLE_CREDENTIAL_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_CREDENTIAL_BASE64 }}
+          REQSIGN_GOOGLE_TEST_STATIC: "on"
         run: |
-          test "${REQSIGN_GOOGLE_TEST_AUTHORIZED_USER}" = "on"
-          echo "::group::Testing AuthorizedUserCredentialProvider"
-          cargo test test_authorized_user_credential_provider --no-fail-fast -- --no-capture
-          echo "::endgroup::"
+          export REQSIGN_GOOGLE_CREDENTIAL="$GOOGLE_CREDENTIAL_BASE64"
+          cargo test -p reqsign-google --test main credential_providers::static_provider:: -- --no-capture
 
-  # ExternalAccountCredentialProvider test (Workload Identity)
-  test_external_account_provider:
-    needs: check_secrets
-    if: needs.check_secrets.outputs.has_secrets == 'true'
+  test_file_provider:
+    name: FileCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load Google service-account credential
+        id: load_secrets
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        env:
+          GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
+      - name: Set up service-account credential file
+        env:
+          GOOGLE_CREDENTIAL_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_CREDENTIAL_BASE64 }}
+        run: |
+          credential_path="$RUNNER_TEMP/google-service-account.json"
+          printf '%s' "$GOOGLE_CREDENTIAL_BASE64" | base64 --decode > "$credential_path"
+          test -s "$credential_path"
+          chmod 600 "$credential_path"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$credential_path" >> "$GITHUB_ENV"
+      - name: Test FileCredentialProvider against Cloud Storage
+        env:
+          REQSIGN_GOOGLE_TEST_FILE: "on"
+        run: |
+          cargo test -p reqsign-google --test main credential_providers::file::test_file_credential_provider_live -- --exact --no-capture
+
+  test_env_provider:
+    name: EnvCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load Google service-account credential
+        id: load_secrets
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        env:
+          GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
+      - name: Set up environment credential file
+        env:
+          GOOGLE_CREDENTIAL_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_CREDENTIAL_BASE64 }}
+        run: |
+          credential_path="$RUNNER_TEMP/google-service-account.json"
+          printf '%s' "$GOOGLE_CREDENTIAL_BASE64" | base64 --decode > "$credential_path"
+          test -s "$credential_path"
+          chmod 600 "$credential_path"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$credential_path" >> "$GITHUB_ENV"
+      - name: Test EnvCredentialProvider against Cloud Storage
+        env:
+          REQSIGN_GOOGLE_TEST_ENV: "on"
+        run: |
+          cargo test -p reqsign-google --test main credential_providers::env::test_env_credential_provider_live -- --exact --no-capture
+
+  test_well_known_provider:
+    name: WellKnownCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load Google service-account credential
+        id: load_secrets
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        env:
+          GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
+      - name: Set up well-known service-account credential
+        env:
+          GOOGLE_CREDENTIAL_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_CREDENTIAL_BASE64 }}
+        run: |
+          mkdir -p "$HOME/.config/gcloud"
+          printf '%s' "$GOOGLE_CREDENTIAL_BASE64" | base64 --decode > "$HOME/.config/gcloud/application_default_credentials.json"
+          test -s "$HOME/.config/gcloud/application_default_credentials.json"
+          chmod 600 "$HOME/.config/gcloud/application_default_credentials.json"
+      - name: Test WellKnownCredentialProvider against Cloud Storage
+        env:
+          REQSIGN_GOOGLE_TEST_WELL_KNOWN: "on"
+        run: |
+          cargo test -p reqsign-google --test main credential_providers::env::test_well_known_credential_provider_live -- --exact --no-capture
+
+  test_default_provider:
+    name: DefaultCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load Google service-account credential
+        id: load_secrets
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        env:
+          GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
+      - name: Set up default credential file
+        env:
+          GOOGLE_CREDENTIAL_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_CREDENTIAL_BASE64 }}
+        run: |
+          credential_path="$RUNNER_TEMP/google-service-account.json"
+          printf '%s' "$GOOGLE_CREDENTIAL_BASE64" | base64 --decode > "$credential_path"
+          test -s "$credential_path"
+          chmod 600 "$credential_path"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$credential_path" >> "$GITHUB_ENV"
+      - name: Test DefaultCredentialProvider against Cloud Storage
+        env:
+          REQSIGN_GOOGLE_TEST_DEFAULT: "on"
+        run: |
+          cargo test -p reqsign-google --test main credential_providers::default::test_default_credential_provider -- --exact --no-capture
+
+  test_service_account_token_provider:
+    name: ServiceAccountTokenCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load Google service-account credential
+        id: load_secrets
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        env:
+          GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
+      - name: Test ServiceAccountTokenCredentialProvider and server-side CAB
+        env:
+          GOOGLE_CREDENTIAL_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_CREDENTIAL_BASE64 }}
+          REQSIGN_GOOGLE_TEST_SERVICE_ACCOUNT_TOKEN: "on"
+        run: |
+          export REQSIGN_GOOGLE_CREDENTIAL="$GOOGLE_CREDENTIAL_BASE64"
+          cargo test -p reqsign-google --test service_account_token -- --no-capture
+
+  test_authorized_user_provider:
+    name: Authorized user provider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load authorized-user credential
+        id: load_secrets
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        env:
+          GOOGLE_AUTHORIZED_USER_BASE64: op://reqsign/google/authorized_user_base64
+      - name: Set up authorized-user credential
+        env:
+          GOOGLE_AUTHORIZED_USER_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_AUTHORIZED_USER_BASE64 }}
+        run: |
+          credential_path="$RUNNER_TEMP/google-authorized-user.json"
+          printf '%s' "$GOOGLE_AUTHORIZED_USER_BASE64" | base64 --decode > "$credential_path"
+          test -s "$credential_path"
+          chmod 600 "$credential_path"
+          mkdir -p "$HOME/.config/gcloud"
+          cp "$credential_path" "$HOME/.config/gcloud/application_default_credentials.json"
+          echo "REQSIGN_GOOGLE_AUTHORIZED_USER_CREDENTIALS=$credential_path" >> "$GITHUB_ENV"
+      - name: Test AuthorizedUserCredentialProvider against Cloud Storage
+        env:
+          REQSIGN_GOOGLE_TEST_AUTHORIZED_USER: "on"
+          REQSIGN_GOOGLE_TEST_AUTHORIZED_USER_GCLOUD: "on"
+        run: |
+          cargo test -p reqsign-google --test main credential_providers::authorized_user:: -- --no-capture
+
+  test_workload_identity_provider:
+    name: Workload Identity provider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -220,35 +379,177 @@ jobs:
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
-      - name: Load secrets
+      - name: Load workload identity configuration
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         with:
           export-env: true
         env:
           GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
           GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
-      - name: Setup Workload Identity with Google Auth
+      - name: Load caller-bound GitHub OIDC subject token
+        run: |
+          audience="//iam.googleapis.com/${GOOGLE_WORKLOAD_IDENTITY_PROVIDER}"
+          encoded_audience=$(jq --null-input --raw-output --arg value "$audience" '$value | @uri')
+          subject_token=$(curl --fail-with-body --silent --show-error --header "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${encoded_audience}" |
+            jq --exit-status --raw-output '.value')
+          test -n "$subject_token"
+          echo "::add-mask::$subject_token"
+          echo "REQSIGN_GOOGLE_SUBJECT_TOKEN=$subject_token" >> "$GITHUB_ENV"
+          echo "REQSIGN_GOOGLE_WORKLOAD_IDENTITY_AUDIENCE=$audience" >> "$GITHUB_ENV"
+      - name: Authenticate to Google Cloud through workload identity
+        id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           create_credentials_file: true
+          token_format: access_token
+          access_token_lifetime: 3600s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
           workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
-      - name: Test ExternalAccountCredentialProvider
-        working-directory: ./services/google
+      - name: Test Workload Identity and caller-provided subject tokens
         env:
-          REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY: on
+          REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY: "on"
+          REQSIGN_GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
         run: |
-          test "${REQSIGN_GOOGLE_TEST_WORKLOAD_IDENTITY}" = "on"
-          echo "::group::Testing ExternalAccountCredentialProvider"
-          # The google-github-actions/auth action sets GOOGLE_APPLICATION_CREDENTIALS
-          # reqsign should be able to use this external_account configuration
-          cargo test test_external_account_with_workload_identity --no-fail-fast -- --no-capture
-          echo "::endgroup::"
+          cargo test -p reqsign-google --test main credential_providers::external_account:: -- --no-capture
 
-  # ImpersonatedServiceAccountCredentialProvider test
-  test_impersonated_service_account_provider:
-    needs: check_secrets
-    if: needs.check_secrets.outputs.has_secrets == 'true'
+  test_token_provider:
+    name: TokenCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load workload identity configuration
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: true
+        env:
+          GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
+          GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
+      - name: Authenticate to Google Cloud through workload identity
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 3600s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+          workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
+      - name: Test TokenCredentialProvider against Cloud Storage
+        env:
+          REQSIGN_GOOGLE_TEST_TOKEN: "on"
+          REQSIGN_GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          cargo test -p reqsign-google --test main credential_providers::token::test_token_credential_provider_live -- --exact --no-capture
+
+  test_service_account_impersonation_provider:
+    name: ServiceAccountImpersonationCredentialProvider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load workload identity configuration
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: true
+        env:
+          GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
+          GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
+      - name: Authenticate to Google Cloud through workload identity
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 3600s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+          workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
+      - name: Test typed service-account impersonation and IAM signBlob
+        env:
+          REQSIGN_GOOGLE_TEST_SERVICE_ACCOUNT_IMPERSONATION: "on"
+          REQSIGN_GOOGLE_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          cargo test -p reqsign-google --test main credential_providers::service_account_impersonation:: -- --no-capture
+
+  test_client_side_cab:
+    name: Client-side Credential Access Boundary live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load workload identity configuration
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: true
+        env:
+          GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
+          GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
+      - name: Authenticate to Google Cloud through workload identity
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          create_credentials_file: false
+          token_format: access_token
+          access_token_lifetime: 3600s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+          workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
+      - name: Test client-side Credential Access Boundary
+        env:
+          REQSIGN_GOOGLE_TEST_CAB: "on"
+          REQSIGN_GOOGLE_CAB_SOURCE_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: |
+          export REQSIGN_GOOGLE_CAB_SOURCE_EXPIRES_AT
+          REQSIGN_GOOGLE_CAB_SOURCE_EXPIRES_AT=$(date --utc --date='+50 minutes' '+%Y-%m-%dT%H:%M:%SZ')
+          cargo test -p reqsign-google --features credential-access-boundary-client-side --test credential_access_boundary -- --no-capture
+
+  signing_test:
+    name: Google request signing live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -259,177 +560,267 @@ jobs:
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
-      - name: Load secrets
+      - name: Load Google service-account credential
         id: load_secrets
         uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
         env:
-          IMPERSONATED_SA_CREDENTIALS_BASE64: op://reqsign/google/impersonated_sa_base64
-      - name: Setup test credentials file
-        run: |
-          echo "${STEPS_LOAD_SECRETS_OUTPUTS_IMPERSONATED_SA_CREDENTIALS_BASE64}" | base64 -d > /tmp/impersonated_sa.json
-          echo "REQSIGN_GOOGLE_IMPERSONATED_SERVICE_ACCOUNT_CREDENTIALS=/tmp/impersonated_sa.json" >> $GITHUB_ENV
+          GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
+      - name: Test standard and service-account signed URL signing
         env:
-          STEPS_LOAD_SECRETS_OUTPUTS_IMPERSONATED_SA_CREDENTIALS_BASE64: ${{ steps.load_secrets.outputs.IMPERSONATED_SA_CREDENTIALS_BASE64 }}
-      - name: Test ImpersonatedServiceAccountCredentialProvider
-        working-directory: ./services/google
-        env:
-          REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT: on
+          GOOGLE_CREDENTIAL_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_CREDENTIAL_BASE64 }}
+          REQSIGN_GOOGLE_TEST: "on"
         run: |
-          test "${REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT}" = "on"
-          echo "::group::Testing ImpersonatedServiceAccountCredentialProvider"
-          cargo test test_impersonated_service_account_credential_provider --no-fail-fast -- --no-capture
-          echo "::endgroup::"
+          export REQSIGN_GOOGLE_CREDENTIAL="$GOOGLE_CREDENTIAL_BASE64"
+          cargo test -p reqsign-google --test main signing:: -- --no-capture
 
-  # VmMetadataCredentialProvider test
-  test_vm_metadata_provider:
-    needs: check_secrets
-    if: needs.check_secrets.outputs.has_secrets == 'true'
+  test_impersonated_adc_provider:
+    name: Impersonated ADC provider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Start mock metadata server
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load impersonated ADC credential
+        id: load_secrets
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        env:
+          GOOGLE_IMPERSONATED_ADC_BASE64: op://reqsign/google/impersonated_sa_base64
+      - name: Set up impersonated ADC credential
+        env:
+          GOOGLE_IMPERSONATED_ADC_BASE64: ${{ steps.load_secrets.outputs.GOOGLE_IMPERSONATED_ADC_BASE64 }}
         run: |
-          python3 services/google/tests/mocks/vm_metadata_mock_server.py 8080 &
-          echo "MOCK_PID=$!" >> $GITHUB_ENV
-          sleep 2
-          # Verify the mock server is running
-          curl -f -H "Metadata-Flavor: Google" http://127.0.0.1:8080/computeMetadata/v1/instance/service-accounts/ || exit 1
-      - name: Test VmMetadataCredentialProvider with mock
-        working-directory: ./services/google
+          credential_path="$RUNNER_TEMP/google-impersonated-adc.json"
+          printf '%s' "$GOOGLE_IMPERSONATED_ADC_BASE64" | base64 --decode > "$credential_path"
+          test -s "$credential_path"
+          chmod 600 "$credential_path"
+          echo "REQSIGN_GOOGLE_IMPERSONATED_SERVICE_ACCOUNT_CREDENTIALS=$credential_path" >> "$GITHUB_ENV"
+      - name: Test ImpersonatedServiceAccountCredentialProvider against Cloud Storage
+        env:
+          REQSIGN_GOOGLE_TEST_IMPERSONATED_SERVICE_ACCOUNT: "on"
         run: |
-          echo "::group::Testing VmMetadataCredentialProvider with mock"
-          export REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK=on
-          export GCE_METADATA_HOST=127.0.0.1:8080
-          cargo test test_vm_metadata_credential_provider_with_mock --no-fail-fast -- --no-capture
-          echo "::endgroup::"
-      - name: Stop mock server
+          cargo test -p reqsign-google --test main credential_providers::impersonated_service_account::test_impersonated_service_account_credential_provider -- --exact --no-capture
+
+  test_vm_metadata_provider:
+    name: VM metadata provider live test
+    needs:
+      - check_secrets
+      - prepare_live_resources
+    if: needs.check_secrets.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GOOGLE_PROJECT_ID: reqsign
+      GOOGLE_METADATA_SERVICE_ACCOUNT: reqsign-metadata@reqsign.iam.gserviceaccount.com
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup 1Password Connect
+        uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
+        with:
+          connect-host: ${{ secrets.OP_CONNECT_HOST }}
+          connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
+      - name: Load Google control-plane configuration
+        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: true
+        env:
+          GOOGLE_WORKLOAD_IDENTITY_PROVIDER: op://reqsign/google/workload_identity_provider
+          GOOGLE_SERVICE_ACCOUNT: op://reqsign/google/service_account_email
+      - name: Authenticate Google control plane through workload identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          create_credentials_file: true
+          workload_identity_provider: ${{ env.GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GOOGLE_SERVICE_ACCOUNT }}
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+        with:
+          project_id: ${{ env.GOOGLE_PROJECT_ID }}
+      - name: Build VM metadata live test binary
+        id: build
+        run: |
+          messages="$RUNNER_TEMP/google-metadata-cargo-messages.json"
+          cargo test -p reqsign-google --test main --no-run --message-format=json > "$messages"
+          executable=$(jq --raw-output 'select(.profile.test == true and .target.name == "main") | .executable' "$messages" | tail -n 1)
+          test -n "$executable"
+          test -x "$executable"
+          echo "executable=$executable" >> "$GITHUB_OUTPUT"
+      - name: Upload VM metadata live test binary
+        id: artifact
+        env:
+          TEST_EXECUTABLE: ${{ steps.build.outputs.executable }}
+        run: |
+          artifact_name="ci-artifact-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gcloud storage cp "$TEST_EXECUTABLE" "gs://reqsign/$artifact_name" --quiet
+          echo "name=$artifact_name" >> "$GITHUB_OUTPUT"
+      - name: Create private Compute Engine VM
+        id: vm
+        env:
+          ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
+        run: |
+          vm_name="reqsign-metadata-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          startup_script="$RUNNER_TEMP/google-metadata-startup.sh"
+          cat > "$startup_script" <<SCRIPT
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec > >(tee /dev/ttyS0) 2>&1
+          token_response=\$(curl --connect-timeout 15 --fail --silent --show-error \
+            --header 'Metadata-Flavor: Google' \
+            'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token?scopes=https://www.googleapis.com/auth/cloud-platform')
+          storage_token=\$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["access_token"])' "\$token_response")
+          curl --connect-timeout 15 --fail --silent --show-error \
+            --header "Authorization: Bearer \$storage_token" \
+            "https://storage.googleapis.com/storage/v1/b/reqsign/o/${ARTIFACT_NAME}?alt=media" \
+            --output /tmp/reqsign-google-metadata-live-test
+          chmod 700 /tmp/reqsign-google-metadata-live-test
+          REQSIGN_GOOGLE_TEST_VM_METADATA=on \
+          REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE='https://www.googleapis.com/auth/devstorage.read_only' \
+          REQSIGN_GOOGLE_CLOUD_STORAGE_PROBE_URL='https://storage.googleapis.com/storage/v1/b/reqsign/o/live%2Fcredential-ok?alt=media' \
+            /tmp/reqsign-google-metadata-live-test credential_providers::vm_metadata:: --nocapture
+          echo REQSIGN_GOOGLE_METADATA_TEST_SUCCEEDED
+          SCRIPT
+
+          for zone in us-east1-b us-east1-c us-east1-d; do
+            if gcloud compute instances create "$vm_name" --project="$GOOGLE_PROJECT_ID" --zone="$zone" --machine-type=e2-micro --subnet=default --no-address --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud --service-account="$GOOGLE_METADATA_SERVICE_ACCOUNT" --scopes=https://www.googleapis.com/auth/cloud-platform --metadata-from-file=startup-script="$startup_script" --max-run-duration=15m --instance-termination-action=DELETE --boot-disk-auto-delete --labels=project=reqsign,purpose=live-test,github-run-id="$GITHUB_RUN_ID" --quiet; then
+              echo "name=$vm_name" >> "$GITHUB_OUTPUT"
+              echo "zone=$zone" >> "$GITHUB_OUTPUT"
+              exit
+            fi
+          done
+          echo "No configured Compute Engine zone had capacity" >&2
+          exit 1
+      - name: Wait for VM metadata live test
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+          VM_ZONE: ${{ steps.vm.outputs.zone }}
+        run: |
+          deadline=$((SECONDS + 900))
+          while (( SECONDS < deadline )); do
+            output=$(gcloud compute instances get-serial-port-output "$VM_NAME" --zone="$VM_ZONE" --port=1 --start=0 2>/dev/null || true)
+            if grep --quiet REQSIGN_GOOGLE_METADATA_TEST_SUCCEEDED <<< "$output"; then
+              exit
+            fi
+            if grep --quiet 'FAILED' <<< "$output"; then
+              printf '%s\n' "$output"
+              exit 1
+            fi
+            sleep 10
+          done
+          gcloud compute instances get-serial-port-output "$VM_NAME" --zone="$VM_ZONE" --port=1 --start=0 || true
+          echo "VM metadata live test did not finish before the timeout" >&2
+          exit 1
+      - name: Delete ephemeral Google resources
         if: always()
+        env:
+          ARTIFACT_NAME: ${{ steps.artifact.outputs.name }}
+          VM_NAME: ${{ steps.vm.outputs.name }}
+          VM_ZONE: ${{ steps.vm.outputs.zone }}
         run: |
-          if [ ! -z "$MOCK_PID" ]; then
-            kill $MOCK_PID || true
+          if [[ -n "$VM_NAME" ]] && [[ -n "$VM_ZONE" ]] && gcloud compute instances describe "$VM_NAME" --zone="$VM_ZONE" >/dev/null 2>&1; then
+            gcloud compute instances delete "$VM_NAME" --zone="$VM_ZONE" --quiet
+          fi
+          if [[ -n "$ARTIFACT_NAME" ]]; then
+            gcloud storage rm "gs://reqsign/$ARTIFACT_NAME" --quiet
           fi
 
-  # Summary
-  test_summary:
+  summary:
+    name: Test Summary
     needs:
-      [
-        unit_test,
-        signing_test,
-        test_default_provider,
-        test_static_provider,
-        test_authorized_user_provider,
-        test_external_account_provider,
-        test_impersonated_service_account_provider,
-        test_vm_metadata_provider,
-      ]
-    if: always()
+      - unit_test
+      - check_secrets
+      - prepare_live_resources
+      - test_static_provider
+      - test_file_provider
+      - test_env_provider
+      - test_well_known_provider
+      - test_default_provider
+      - test_service_account_token_provider
+      - test_authorized_user_provider
+      - test_workload_identity_provider
+      - test_token_provider
+      - test_service_account_impersonation_provider
+      - test_client_side_cab
+      - signing_test
+      - test_impersonated_adc_provider
+      - test_vm_metadata_provider
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     steps:
-      - name: Test Summary
-        run: |
-          echo "## Google Cloud Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Unit tests status
-          if [[ "${NEEDS_UNIT_TEST_RESULT}" == "success" ]]; then
-            echo "✅ Unit tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_UNIT_TEST_RESULT}" == "skipped" ]]; then
-            echo "⏭️ Unit tests skipped" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Unit tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Integration tests status
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Integration Tests" >> $GITHUB_STEP_SUMMARY
-
-          if [[ "${NEEDS_SIGNING_TEST_RESULT}" == "success" ]]; then
-            echo "✅ Signing tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_SIGNING_TEST_RESULT}" == "skipped" ]]; then
-            echo "⏭️ Signing tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Signing tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "success" ]]; then
-            echo "✅ DefaultCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "skipped" ]]; then
-            echo "⏭️ DefaultCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ DefaultCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "success" ]]; then
-            echo "✅ StaticCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "skipped" ]]; then
-            echo "⏭️ StaticCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ StaticCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "success" ]]; then
-            echo "✅ AuthorizedUserCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "skipped" ]]; then
-            echo "⏭️ AuthorizedUserCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ AuthorizedUserCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "success" ]]; then
-            echo "✅ ExternalAccountCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]]; then
-            echo "⏭️ ExternalAccountCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ ExternalAccountCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "success" ]]; then
-            echo "✅ ImpersonatedServiceAccountCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]]; then
-            echo "⏭️ ImpersonatedServiceAccountCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ ImpersonatedServiceAccountCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "success" ]]; then
-            echo "✅ VmMetadataCredentialProvider tests passed" >> $GITHUB_STEP_SUMMARY
-          elif [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "skipped" ]]; then
-            echo "⏭️ VmMetadataCredentialProvider tests skipped (no secrets)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ VmMetadataCredentialProvider tests failed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Overall status
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [[ "${NEEDS_UNIT_TEST_RESULT}" == "success" ]] && \
-             ( [[ "${NEEDS_SIGNING_TEST_RESULT}" == "success" ]] || [[ "${NEEDS_SIGNING_TEST_RESULT}" == "skipped" ]] ) && \
-             ( [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_DEFAULT_PROVIDER_RESULT}" == "skipped" ]] ) && \
-             ( [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_STATIC_PROVIDER_RESULT}" == "skipped" ]] ) && \
-             ( [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT}" == "skipped" ]] ) && \
-             ( [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]] ) && \
-             ( [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT}" == "skipped" ]] ) && \
-             ( [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "success" ]] || [[ "${NEEDS_TEST_VM_METADATA_PROVIDER_RESULT}" == "skipped" ]] ); then
-            echo "### ✅ All tests completed successfully" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### ❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
+      - name: Summarize Google credential coverage
         env:
-          NEEDS_UNIT_TEST_RESULT: ${{ needs.unit_test.result }}
+          UNIT_RESULT: ${{ needs.unit_test.result }}
+          TRUSTED: ${{ needs.check_secrets.outputs.trusted }}
+          PREPARE_RESULT: ${{ needs.prepare_live_resources.result }}
+          STATIC_RESULT: ${{ needs.test_static_provider.result }}
+          FILE_RESULT: ${{ needs.test_file_provider.result }}
+          ENV_RESULT: ${{ needs.test_env_provider.result }}
+          WELL_KNOWN_RESULT: ${{ needs.test_well_known_provider.result }}
+          DEFAULT_RESULT: ${{ needs.test_default_provider.result }}
+          SERVICE_ACCOUNT_TOKEN_RESULT: ${{ needs.test_service_account_token_provider.result }}
+          AUTHORIZED_USER_RESULT: ${{ needs.test_authorized_user_provider.result }}
+          WORKLOAD_IDENTITY_RESULT: ${{ needs.test_workload_identity_provider.result }}
+          TOKEN_RESULT: ${{ needs.test_token_provider.result }}
+          SERVICE_ACCOUNT_IMPERSONATION_RESULT: ${{ needs.test_service_account_impersonation_provider.result }}
+          CLIENT_SIDE_CAB_RESULT: ${{ needs.test_client_side_cab.result }}
+          SIGNING_RESULT: ${{ needs.signing_test.result }}
+          IMPERSONATED_ADC_RESULT: ${{ needs.test_impersonated_adc_provider.result }}
+          VM_METADATA_RESULT: ${{ needs.test_vm_metadata_provider.result }}
+        run: |
+          {
+            echo "## Google Cloud Test Summary"
+            echo
+            echo "| Coverage | Real service acceptance | Result |"
+            echo "|----------|-------------------------|--------|"
+            echo "| Unit tests and redacted real-response replays | Local | $UNIT_RESULT |"
+            if [[ "$TRUSTED" == "true" ]]; then
+              echo "| Fixed Cloud Storage probes | Workload Identity and Cloud Storage | $PREPARE_RESULT |"
+              echo "| StaticCredentialProvider | OAuth and Cloud Storage | $STATIC_RESULT |"
+              echo "| FileCredentialProvider | OAuth and Cloud Storage | $FILE_RESULT |"
+              echo "| EnvCredentialProvider | OAuth and Cloud Storage | $ENV_RESULT |"
+              echo "| WellKnownCredentialProvider | OAuth and Cloud Storage | $WELL_KNOWN_RESULT |"
+              echo "| DefaultCredentialProvider | OAuth and Cloud Storage | $DEFAULT_RESULT |"
+              echo "| ServiceAccountTokenCredentialProvider and server-side CAB | OAuth, STS, and Cloud Storage | $SERVICE_ACCOUNT_TOKEN_RESULT |"
+              echo "| Authorized user provider | OAuth and Cloud Storage | $AUTHORIZED_USER_RESULT |"
+              echo "| Workload Identity provider | GitHub OIDC, STS, IAM Credentials, and Cloud Storage | $WORKLOAD_IDENTITY_RESULT |"
+              echo "| TokenCredentialProvider | Workload Identity and Cloud Storage | $TOKEN_RESULT |"
+              echo "| ServiceAccountImpersonationCredentialProvider and IAM signBlob | IAM Credentials and Cloud Storage | $SERVICE_ACCOUNT_IMPERSONATION_RESULT |"
+              echo "| Client-side Credential Access Boundary | STS and Cloud Storage | $CLIENT_SIDE_CAB_RESULT |"
+              echo "| Impersonated ADC provider | OAuth, IAM Credentials, and Cloud Storage | $IMPERSONATED_ADC_RESULT |"
+              echo "| VmMetadataCredentialProvider | Compute Engine metadata and Cloud Storage | $VM_METADATA_RESULT |"
+              echo "| Google request signing | OAuth, signed URLs, and Cloud Storage | $SIGNING_RESULT |"
+            else
+              echo "| Live service integration tests | Skipped because Connect secrets are unavailable | skipped |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          NEEDS_SIGNING_TEST_RESULT: ${{ needs.signing_test.result }}
-
-          NEEDS_TEST_DEFAULT_PROVIDER_RESULT: ${{ needs.test_default_provider.result }}
-
-          NEEDS_TEST_STATIC_PROVIDER_RESULT: ${{ needs.test_static_provider.result }}
-
-          NEEDS_TEST_AUTHORIZED_USER_PROVIDER_RESULT: ${{ needs.test_authorized_user_provider.result }}
-
-          NEEDS_TEST_EXTERNAL_ACCOUNT_PROVIDER_RESULT: ${{ needs.test_external_account_provider.result }}
-
-          NEEDS_TEST_IMPERSONATED_SERVICE_ACCOUNT_PROVIDER_RESULT: ${{ needs.test_impersonated_service_account_provider.result }}
-
-          NEEDS_TEST_VM_METADATA_PROVIDER_RESULT: ${{ needs.test_vm_metadata_provider.result }}
+          test "$UNIT_RESULT" = "success"
+          if [[ "$TRUSTED" == "true" ]]; then
+            test "$PREPARE_RESULT" = "success"
+            test "$STATIC_RESULT" = "success"
+            test "$FILE_RESULT" = "success"
+            test "$ENV_RESULT" = "success"
+            test "$WELL_KNOWN_RESULT" = "success"
+            test "$DEFAULT_RESULT" = "success"
+            test "$SERVICE_ACCOUNT_TOKEN_RESULT" = "success"
+            test "$AUTHORIZED_USER_RESULT" = "success"
+            test "$WORKLOAD_IDENTITY_RESULT" = "success"
+            test "$TOKEN_RESULT" = "success"
+            test "$SERVICE_ACCOUNT_IMPERSONATION_RESULT" = "success"
+            test "$CLIENT_SIDE_CAB_RESULT" = "success"
+            test "$IMPERSONATED_ADC_RESULT" = "success"
+            test "$VM_METADATA_RESULT" = "success"
+            test "$SIGNING_RESULT" = "success"
+          fi

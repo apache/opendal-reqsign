@@ -189,20 +189,34 @@ mod tests {
 
     impl HttpSend for MockHttpSend {
         async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
-            let body = match req.uri().to_string().as_str() {
-                "https://oauth2.googleapis.com/token" => {
-                    br#"{"access_token":"source-token","expires_in":3600}"#.as_slice()
-                }
+            let mut body: serde_json::Value = match req.uri().to_string().as_str() {
+                "https://oauth2.googleapis.com/token" => serde_json::from_slice(include_bytes!(
+                    "../../tests/fixtures/authorized_user_token_response.json"
+                ))
+                .expect("real authorized-user response fixture must parse"),
                 "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/target%40example.com:generateAccessToken" => {
-                    br#"{"accessToken":"impersonated-token","expireTime":"2100-01-01T00:00:00Z"}"#
-                        .as_slice()
+                    serde_json::from_slice(include_bytes!(
+                        "../../tests/fixtures/iam_generate_access_token_response.json"
+                    ))
+                    .expect("real IAM Credentials response fixture must parse")
                 }
                 uri => panic!("unexpected request: {uri}"),
             };
+            if req.uri() == "https://oauth2.googleapis.com/token" {
+                body["access_token"] = "source-token".into();
+                body["expires_in"] = 3600.into();
+            } else {
+                body["accessToken"] = "impersonated-token".into();
+                body["expireTime"] = "2100-01-01T00:00:00Z".into();
+            }
 
             Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
-                .body(body.into())
+                .body(
+                    serde_json::to_vec(&body)
+                        .expect("response fixture must serialize")
+                        .into(),
+                )
                 .expect("response must build"))
         }
     }

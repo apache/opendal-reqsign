@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context;
+use super::{assert_provider_reads_probe, create_test_context};
+use log::warn;
 use reqsign_core::{ProvideCredential, Result};
 use reqsign_google::FileCredentialProvider;
 use std::env;
@@ -61,4 +62,16 @@ async fn test_file_credential_provider_missing_file() {
         .await
         .expect_err("missing file must fail");
     assert_eq!(reqsign_core::ErrorKind::Unexpected, err.kind());
+}
+
+#[tokio::test]
+async fn test_file_credential_provider_live() -> Result<()> {
+    if env::var("REQSIGN_GOOGLE_TEST_FILE").unwrap_or_default() != "on" {
+        warn!("REQSIGN_GOOGLE_TEST_FILE is not set, skipped");
+        return Ok(());
+    }
+
+    let path = env::var("GOOGLE_APPLICATION_CREDENTIALS")
+        .expect("GOOGLE_APPLICATION_CREDENTIALS must be set");
+    assert_provider_reads_probe(FileCredentialProvider::new(path), create_test_context()).await
 }
