@@ -28,6 +28,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+asyncband = { workspace = true, features = ["singleflight"] }
 base64 = { workspace = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true }
