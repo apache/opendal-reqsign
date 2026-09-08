@@ -36,7 +36,6 @@ anyhow = { workspace = true }
 asyncband = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
-futures = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 http = { workspace = true }
@@ -51,12 +50,13 @@ rsa = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
-[dev-dependencies]
-asyncband = { workspace = true, features = ["oneshot"] }
-
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.0", features = [
   "Win32_Foundation",
   "Win32_UI_Shell",
   "Win32_System_Com",
 ] }
+
+[dev-dependencies]
+asyncband = { workspace = true, features = ["oneshot"] }
+futures = { workspace = true }

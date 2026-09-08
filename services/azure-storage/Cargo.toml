@@ -42,8 +42,8 @@ sha1 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pem = { workspace = true }
-rsa = { workspace = true }
 reqsign-core = { workspace = true, features = ["jwt"] }
+rsa = { workspace = true }
 
 [dev-dependencies]
 asyncband = { workspace = true, features = ["semaphore"] }
