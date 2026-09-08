@@ -51,6 +51,9 @@ rsa = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
+[dev-dependencies]
+asyncband = { workspace = true, features = ["oneshot"] }
+
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.0", features = [
   "Win32_Foundation",

@@ -22,6 +22,7 @@ use crate::user_delegation::{
     UserDelegationKeyRequest, UserDelegationSasResource, UserDelegationSharedAccessSignature,
     ceil_to_wire_second, floor_to_wire_second, get_user_delegation_key, user_delegation_key_covers,
 };
+use asyncband::singleflight::Group;
 use percent_encoding::percent_encode;
 use reqsign_core::hash::hex_sha256;
 use reqsign_core::time::Timestamp;
@@ -423,6 +424,13 @@ struct UserDelegationKeyCacheKey {
     service_version: &'static str,
 }
 
+#[derive(PartialEq, Eq, Hash)]
+struct UserDelegationKeyRequestKey {
+    cache_key: UserDelegationKeyCacheKey,
+    start: Timestamp,
+    expiry: Timestamp,
+}
+
 #[derive(Clone)]
 struct ParsedEndpoint {
     scheme: String,
@@ -444,7 +452,10 @@ struct OperationTimes {
 /// values produced with [`UserDelegationSasGranter::with_grant`] share a
 /// source-aware user delegation key cache. The cache is partitioned by account,
 /// endpoint, source bearer authority, and service version, and is bounded to a
-/// fixed number of live entries. No singleflight behavior is promised.
+/// fixed number of live entries. Concurrent cache misses with the same cache
+/// identity and requested key start and expiry share an in-flight key request.
+/// Failed or cancelled key requests allow a waiting caller to retry. Each grant
+/// checks that the shared key covers its own SAS interval after waiting.
 ///
 /// Azure SAS wire timestamps have whole-second precision. Explicit start times
 /// are rounded forward, expirations are rounded backward, and the returned
@@ -458,6 +469,7 @@ pub struct UserDelegationSasGranter {
     ip: Option<String>,
     protocol: SasProtocol,
     key_cache: Arc<Mutex<UserDelegationKeyCache<UserDelegationKeyCacheKey>>>,
+    key_requests: Arc<Group<UserDelegationKeyRequestKey, UserDelegationKey>>,
     #[cfg(test)]
     time: Option<Timestamp>,
     #[cfg(test)]
@@ -486,6 +498,7 @@ impl UserDelegationSasGranter {
             ip: None,
             protocol: SasProtocol::Https,
             key_cache: Arc::new(Mutex::new(UserDelegationKeyCache::default())),
+            key_requests: Arc::new(Group::new()),
             #[cfg(test)]
             time: None,
             #[cfg(test)]
@@ -749,25 +762,38 @@ impl GrantCredential for UserDelegationSasGranter {
         let (key, fetched) = if let Some(key) = cached {
             (key, false)
         } else {
-            let required_until = self.now() + BEARER_TOKEN_OPERATION_HEADROOM;
-            if !credential.is_valid_at(required_until) {
-                return Err(Error::credential_invalid(
-                    "Azure bearer token expires before the user delegation key request can complete",
-                ));
-            }
-            let key = get_user_delegation_key(
-                ctx,
-                UserDelegationKeyRequest {
-                    scheme: &endpoint.scheme,
-                    authority: &endpoint.authority,
-                    bearer_token: token,
-                    start: times.key_start,
-                    expiry: times.key_expiry,
-                    service_version: USER_DELEGATION_SERVICE_VERSION,
-                    now: times.now,
-                },
-            )
-            .await?;
+            let request_key = UserDelegationKeyRequestKey {
+                cache_key: cache_key.clone(),
+                start: times.key_start,
+                expiry: times.key_expiry,
+            };
+            let key = self
+                .key_requests
+                .try_work(request_key, async || {
+                    if let Some(key) = self.cached_key(&cache_key, &times) {
+                        return Ok(key);
+                    }
+                    let required_until = self.now() + BEARER_TOKEN_OPERATION_HEADROOM;
+                    if !credential.is_valid_at(required_until) {
+                        return Err(Error::credential_invalid(
+                            "Azure bearer token expires before the user delegation key request can complete",
+                        ));
+                    }
+                    get_user_delegation_key(
+                        ctx,
+                        UserDelegationKeyRequest {
+                            scheme: &endpoint.scheme,
+                            authority: &endpoint.authority,
+                            bearer_token: token,
+                            start: times.key_start,
+                            expiry: times.key_expiry,
+                            service_version: USER_DELEGATION_SERVICE_VERSION,
+                            now: times.now,
+                        },
+                    )
+                    .await
+                })
+                .await?;
             (key, true)
         };
 
@@ -840,11 +866,13 @@ fn encode_query_pairs(pairs: &[(String, String)]) -> String {
 mod tests {
     use super::*;
     use crate::{RequestSigner, StaticCredentialProvider};
+    use asyncband::semaphore::Semaphore;
     use bytes::Bytes;
     use percent_encoding::percent_decode_str;
     use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::{Context as TaskContext, Waker};
 
     #[derive(Clone, Debug)]
     struct CapturedRequest {
@@ -862,7 +890,8 @@ mod tests {
     struct MockUserDelegationHttpSend {
         calls: Arc<AtomicUsize>,
         requests: Arc<Mutex<Vec<CapturedRequest>>>,
-        responses: Arc<Mutex<VecDeque<String>>>,
+        responses: Arc<Mutex<VecDeque<Result<String>>>>,
+        response_gate: Option<Arc<Semaphore>>,
     }
 
     impl Debug for MockUserDelegationHttpSend {
@@ -878,8 +907,14 @@ mod tests {
             Self {
                 calls: Arc::new(AtomicUsize::new(0)),
                 requests: Arc::new(Mutex::new(Vec::new())),
-                responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+                responses: Arc::new(Mutex::new(responses.into_iter().map(Ok).collect())),
+                response_gate: None,
             }
+        }
+
+        fn with_response_gate(mut self, gate: Arc<Semaphore>) -> Self {
+            self.response_gate = Some(gate);
+            self
         }
     }
 
@@ -916,12 +951,16 @@ mod tests {
                     body: String::from_utf8_lossy(req.body()).into_owned(),
                 });
 
+            if let Some(gate) = &self.response_gate {
+                gate.acquire(1).await.forget();
+            }
+
             let body = self
                 .responses
                 .lock()
                 .expect("lock poisoned")
                 .pop_front()
-                .ok_or_else(|| Error::unexpected("missing mock user delegation key response"))?;
+                .ok_or_else(|| Error::unexpected("missing mock user delegation key response"))??;
             Ok(http::Response::builder()
                 .status(200)
                 .body(Bytes::from(body))
@@ -1344,6 +1383,249 @@ mod tests {
             .await
             .expect("different endpoint must fetch a key");
         assert_eq!(http.calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn coalesces_user_delegation_key_requests_across_grants() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let gate = Arc::new(Semaphore::new(0));
+        let http = MockUserDelegationHttpSend::new([delegation_key_response(
+            now,
+            now + MAX_USER_DELEGATION_LIFETIME,
+            "oid",
+            "tid",
+            "a2V5",
+        )])
+        .with_response_gate(gate.clone());
+        let ctx = Context::new().with_http_send(http.clone());
+        let source = bearer("source");
+        let first = UserDelegationSasGranter::new(
+            "account",
+            blob_grant("first", UserDelegationSasPermissions::READ),
+        )
+        .with_time(now);
+        let second = first
+            .clone()
+            .with_time(now + Duration::from_millis(500))
+            .with_grant(blob_grant("second", UserDelegationSasPermissions::WRITE));
+        let mut first_request =
+            Box::pin(first.grant_credential(&ctx, &source, Some(Duration::from_secs(300))));
+        let mut second_request =
+            Box::pin(second.grant_credential(&ctx, &source, Some(Duration::from_secs(600))));
+        let mut cancelled_waiter =
+            Box::pin(first.grant_credential(&ctx, &source, Some(Duration::from_secs(300))));
+        let mut cx = TaskContext::from_waker(Waker::noop());
+
+        assert!(first_request.as_mut().poll(&mut cx).is_pending());
+        assert!(second_request.as_mut().poll(&mut cx).is_pending());
+        assert!(cancelled_waiter.as_mut().poll(&mut cx).is_pending());
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        drop(cancelled_waiter);
+        gate.release(1);
+
+        let first_output = first_request.await.expect("first grant must succeed");
+        let second_output = second_request.await.expect("second grant must succeed");
+        let first_token = output_parts(&first_output).0;
+        let second_token = output_parts(&second_output).0;
+        assert_eq!(query_value(first_token, "sp").as_deref(), Some("r"));
+        assert_eq!(query_value(second_token, "sp").as_deref(), Some("w"));
+        assert_ne!(
+            query_value(first_token, "sig"),
+            query_value(second_token, "sig")
+        );
+        assert_eq!(
+            output_parts(&first_output).1,
+            now + Duration::from_secs(300)
+        );
+        assert_eq!(
+            output_parts(&second_output).1,
+            now + Duration::from_secs(600)
+        );
+
+        second
+            .grant_credential(&ctx, &source, Some(Duration::from_secs(600)))
+            .await
+            .expect("completed request must populate the shared cache");
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn partitions_in_flight_user_delegation_key_requests() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let earlier = now - Duration::from_secs(60);
+
+        for partition in ["source", "endpoint", "key interval", "independent granter"] {
+            let gate = Arc::new(Semaphore::new(0));
+            let response = || {
+                delegation_key_response(
+                    earlier,
+                    earlier + MAX_USER_DELEGATION_LIFETIME,
+                    "oid",
+                    "tid",
+                    "a2V5",
+                )
+            };
+            let http = MockUserDelegationHttpSend::new([response(), response()])
+                .with_response_gate(gate.clone());
+            let ctx = Context::new().with_http_send(http.clone());
+            let source = bearer("source");
+            let first = UserDelegationSasGranter::new(
+                "account",
+                blob_grant("blob", UserDelegationSasPermissions::READ),
+            )
+            .with_time(now);
+            let mut second = first.clone();
+            let second_source = if partition == "source" {
+                bearer("other-source")
+            } else {
+                source.clone()
+            };
+            match partition {
+                "endpoint" => {
+                    second =
+                        second.with_trusted_endpoint("https://account.blob.core.windows.net:444");
+                }
+                "key interval" => second = second.with_start(earlier),
+                "independent granter" => {
+                    second = UserDelegationSasGranter::new("account", first.grant.clone())
+                        .with_time(now);
+                }
+                _ => {}
+            }
+            let mut first_request =
+                Box::pin(first.grant_credential(&ctx, &source, Some(Duration::from_secs(300))));
+            let mut second_request = Box::pin(second.grant_credential(
+                &ctx,
+                &second_source,
+                Some(Duration::from_secs(300)),
+            ));
+            let mut cx = TaskContext::from_waker(Waker::noop());
+
+            assert!(first_request.as_mut().poll(&mut cx).is_pending());
+            assert!(second_request.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(http.calls.load(Ordering::SeqCst), 2, "{partition}");
+            gate.release(2);
+            first_request.await.expect("first grant must succeed");
+            second_request
+                .await
+                .expect("independent grant must succeed");
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_failed_or_cancelled_user_delegation_key_requests() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+
+        for cancel in [false, true] {
+            let gate = Arc::new(Semaphore::new(0));
+            let http = MockUserDelegationHttpSend::new([delegation_key_response(
+                now,
+                now + MAX_USER_DELEGATION_LIFETIME,
+                "oid",
+                "tid",
+                "a2V5",
+            )])
+            .with_response_gate(gate.clone());
+            if !cancel {
+                http.responses
+                    .lock()
+                    .expect("lock poisoned")
+                    .push_front(Err(
+                        Error::rate_limited("retry later").with_context("delegation key request")
+                    ));
+            }
+            let ctx = Context::new().with_http_send(http.clone());
+            let source = bearer("source");
+            let operation = UserDelegationSasGranter::new(
+                "account",
+                blob_grant("blob", UserDelegationSasPermissions::READ),
+            )
+            .with_time(now);
+            let mut first =
+                Box::pin(operation.grant_credential(&ctx, &source, Some(Duration::from_secs(300))));
+            let mut waiter =
+                Box::pin(operation.grant_credential(&ctx, &source, Some(Duration::from_secs(300))));
+            let mut cx = TaskContext::from_waker(Waker::noop());
+
+            assert!(first.as_mut().poll(&mut cx).is_pending());
+            assert!(waiter.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+            if cancel {
+                drop(first);
+            } else {
+                gate.release(1);
+                let error = first.await.expect_err("first request must fail");
+                assert_eq!(error.kind(), ErrorKind::RateLimited);
+                assert!(error.is_retryable());
+                assert_eq!(error.context(), &["delegation key request"]);
+            }
+
+            assert!(waiter.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+            gate.release(1);
+            waiter
+                .await
+                .expect("waiter must retry with its own request");
+            operation
+                .grant_credential(&ctx, &source, Some(Duration::from_secs(300)))
+                .await
+                .expect("successful retry must populate the cache");
+            assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn validates_shared_user_delegation_key_for_each_grant() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+
+        for expires_while_waiting in [false, true] {
+            let gate = Arc::new(Semaphore::new(0));
+            let http = MockUserDelegationHttpSend::new([delegation_key_response(
+                now,
+                now + Duration::from_secs(600),
+                "oid",
+                "tid",
+                "a2V5",
+            )])
+            .with_response_gate(gate.clone());
+            let ctx = Context::new().with_http_send(http.clone());
+            let source = bearer("source");
+            let first = UserDelegationSasGranter::new(
+                "account",
+                blob_grant("blob", UserDelegationSasPermissions::READ),
+            )
+            .with_time(now);
+            let second = if expires_while_waiting {
+                first
+                    .clone()
+                    .with_time_after_request(now + Duration::from_secs(900))
+            } else {
+                first.clone()
+            };
+            let mut first_request =
+                Box::pin(first.grant_credential(&ctx, &source, Some(Duration::from_secs(300))));
+            let mut second_request =
+                Box::pin(second.grant_credential(&ctx, &source, Some(Duration::from_secs(900))));
+            let mut cx = TaskContext::from_waker(Waker::noop());
+
+            assert!(first_request.as_mut().poll(&mut cx).is_pending());
+            assert!(second_request.as_mut().poll(&mut cx).is_pending());
+            assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+            gate.release(1);
+            first_request.await.expect("key must cover the short grant");
+            let error = second_request
+                .await
+                .expect_err("waiter must validate its own interval");
+            assert_eq!(
+                error.kind(),
+                if expires_while_waiting {
+                    ErrorKind::RequestInvalid
+                } else {
+                    ErrorKind::CredentialInvalid
+                }
+            );
+            assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]

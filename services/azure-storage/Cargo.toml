@@ -28,6 +28,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+asyncband = { workspace = true, features = ["singleflight"] }
 base64 = { workspace = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true }
@@ -45,6 +46,7 @@ rsa = { workspace = true }
 reqsign-core = { workspace = true, features = ["jwt"] }
 
 [dev-dependencies]
+asyncband = { workspace = true, features = ["semaphore"] }
 env_logger = { workspace = true }
 reqsign-command-execute-tokio = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
