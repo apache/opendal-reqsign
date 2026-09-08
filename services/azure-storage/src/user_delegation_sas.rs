@@ -866,13 +866,13 @@ fn encode_query_pairs(pairs: &[(String, String)]) -> String {
 mod tests {
     use super::*;
     use crate::{RequestSigner, StaticCredentialProvider};
+    use asyncband::semaphore::Semaphore;
     use bytes::Bytes;
     use percent_encoding::percent_decode_str;
     use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer};
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::{Context as TaskContext, Waker};
-    use tokio::sync::Semaphore;
 
     #[derive(Clone, Debug)]
     struct CapturedRequest {
@@ -952,7 +952,7 @@ mod tests {
                 });
 
             if let Some(gate) = &self.response_gate {
-                gate.acquire().await.expect("gate must stay open").forget();
+                gate.acquire(1).await.forget();
             }
 
             let body = self
@@ -1421,7 +1421,7 @@ mod tests {
         assert!(cancelled_waiter.as_mut().poll(&mut cx).is_pending());
         assert_eq!(http.calls.load(Ordering::SeqCst), 1);
         drop(cancelled_waiter);
-        gate.add_permits(1);
+        gate.release(1);
 
         let first_output = first_request.await.expect("first grant must succeed");
         let second_output = second_request.await.expect("second grant must succeed");
@@ -1504,7 +1504,7 @@ mod tests {
             assert!(first_request.as_mut().poll(&mut cx).is_pending());
             assert!(second_request.as_mut().poll(&mut cx).is_pending());
             assert_eq!(http.calls.load(Ordering::SeqCst), 2, "{partition}");
-            gate.add_permits(2);
+            gate.release(2);
             first_request.await.expect("first grant must succeed");
             second_request
                 .await
@@ -1553,7 +1553,7 @@ mod tests {
             if cancel {
                 drop(first);
             } else {
-                gate.add_permits(1);
+                gate.release(1);
                 let error = first.await.expect_err("first request must fail");
                 assert_eq!(error.kind(), ErrorKind::RateLimited);
                 assert!(error.is_retryable());
@@ -1562,7 +1562,7 @@ mod tests {
 
             assert!(waiter.as_mut().poll(&mut cx).is_pending());
             assert_eq!(http.calls.load(Ordering::SeqCst), 2);
-            gate.add_permits(1);
+            gate.release(1);
             waiter
                 .await
                 .expect("waiter must retry with its own request");
@@ -1611,7 +1611,7 @@ mod tests {
             assert!(first_request.as_mut().poll(&mut cx).is_pending());
             assert!(second_request.as_mut().poll(&mut cx).is_pending());
             assert_eq!(http.calls.load(Ordering::SeqCst), 1);
-            gate.add_permits(1);
+            gate.release(1);
             first_request.await.expect("key must cover the short grant");
             let error = second_request
                 .await

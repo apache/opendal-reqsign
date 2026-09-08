@@ -22,10 +22,10 @@ use std::time::Duration;
 
 use aes_gcm::aead::{Aead, Generate, KeyInit, array::Array};
 use aes_gcm::{Aes128Gcm, Aes256Gcm};
+use asyncband::mutex::Mutex;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use form_urlencoded::Serializer;
-use futures::lock::Mutex;
 use http::header::{ACCEPT, CONTENT_TYPE};
 use prost::Message;
 use reqsign_core::hash::hex_sha256;
@@ -1077,10 +1077,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex as StdMutex};
 
+    use asyncband::semaphore::Semaphore;
     use bytes::Bytes;
     use http::header::{AUTHORIZATION, HeaderMap};
     use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer, time::Timestamp};
-    use tokio::sync::Semaphore;
 
     use super::*;
     use crate::{CredentialAccessBoundaryPermissions, RequestSigner, ServiceAccount};
@@ -1120,15 +1120,11 @@ mod tests {
 
     impl RequestGate {
         async fn wait_started(&self) {
-            self.started
-                .acquire()
-                .await
-                .expect("started semaphore must remain open")
-                .forget();
+            self.started.acquire(1).await.forget();
         }
 
         fn release_one(&self) {
-            self.release.add_permits(1);
+            self.release.release(1);
         }
     }
 
@@ -1187,12 +1183,8 @@ mod tests {
                     body: body.to_vec(),
                 });
             if let Some(gate) = &self.gate {
-                gate.started.add_permits(1);
-                gate.release
-                    .acquire()
-                    .await
-                    .expect("release semaphore must remain open")
-                    .forget();
+                gate.started.release(1);
+                gate.release.acquire(1).await.forget();
             }
             self.responses
                 .lock()

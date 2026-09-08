@@ -181,7 +181,7 @@ mod tests {
     use super::*;
     use crate::time::Timestamp;
     use crate::{ErrorKind, ProvideCredential, SignRequest};
-    use futures::channel::oneshot;
+    use asyncband::oneshot;
     use futures::future::{join_all, pending};
     use futures::poll;
     use http::{HeaderValue, Method, Request, Version};
