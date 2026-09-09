@@ -81,9 +81,10 @@ steps:
         test -n "$SYSTEM_ACCESSTOKEN"
         export REQSIGN_AZURE_STORAGE_TEST_PIPELINES=on
         test "$REQSIGN_AZURE_STORAGE_TEST_PIPELINES" = "on"
+        [[ "$REQSIGN_AZURE_STORAGE_PROBE_URL" =~ ^https://opendalci[.]blob[.]core[.]windows[.]net/reqsign-live-test/ci-probe-[0-9a-f-]+[.]txt$ ]] || exit 1
         cargo test -p reqsign-azure-storage --test main \
           credential_providers::azure_pipelines::test_azure_pipelines_provider \
           -- --exact --no-capture
     env:
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-      REQSIGN_AZURE_STORAGE_URL: https://opendalci.blob.core.windows.net/reqsign-live-test/probe.txt
+      REQSIGN_AZURE_STORAGE_PROBE_URL: $(REQSIGN_AZURE_STORAGE_PROBE_URL)

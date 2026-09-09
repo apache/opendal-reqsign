@@ -3,7 +3,7 @@
 The Azure Storage test suite separates deterministic protocol parsing from live
 credential-provider acceptance tests. Unit tests parse sanitized responses that
 were captured from Azure. Integration tests obtain credentials from the real
-provider and use `RequestSigner` to read a fixed private blob.
+provider and use `RequestSigner` to read a private blob prepared for that test run.
 
 ## Test Structure
 
@@ -42,15 +42,32 @@ set to `on`. For example:
 
 ```bash
 REQSIGN_AZURE_STORAGE_TEST_CLI=on \
-REQSIGN_AZURE_STORAGE_URL=https://example.blob.core.windows.net/container/blob \
-cargo test -p reqsign-azure-storage --test main \
+AZURE_STORAGE_ACCOUNT=example \
+AZURE_STORAGE_CONTAINER=container \
+bash .github/azure-live-tests/with-probe.sh cargo test -p reqsign-azure-storage --test main \
   credential_providers::azure_cli::test_azure_cli_provider -- --exact
 ```
 
 ## Live Test Configuration
 
-Every live provider test requires `REQSIGN_AZURE_STORAGE_URL`. The URL must
-identify a blob that contains `reqsign-live-azure-ok\n`.
+Every live provider test requires `REQSIGN_AZURE_STORAGE_PROBE_URL`. The URL must
+identify a blob that contains `reqsign-live-azure-ok\n`. Run live tests through
+`.github/azure-live-tests/with-probe.sh` to create a uniquely named private blob,
+set this URL for the child command, and delete the blob when the command exits,
+including on test failure. Concurrent jobs and failed-job reruns use independent
+objects. The storage account and private container must already exist.
+
+The wrapper uses an existing Azure CLI login with permission to create and delete
+fixture blobs. Set `AZURE_STORAGE_ACCOUNT` and `AZURE_STORAGE_CONTAINER` to the
+fixture location. Fixture setup credentials are separate from the provider being
+tested; providers only need read access. For Shared Key and SAS tests, set
+`AZURE_STORAGE_AUTH_MODE=key` and `REQSIGN_AZURE_STORAGE_ACCOUNT_KEY`. The wrapper
+also generates a two-hour, read-only SAS for the new blob and exports it as
+`REQSIGN_AZURE_STORAGE_SAS_TOKEN`. Direct Cargo invocations can still use a
+caller-prepared blob through `REQSIGN_AZURE_STORAGE_PROBE_URL`.
+
+Lifecycle policies may remove abandoned fixtures after interrupted jobs; no test
+depends on a blob surviving between runs.
 
 | Variable | Provider |
 | --- | --- |
@@ -102,12 +119,16 @@ for:
 
 The IMDS job uploads the test binary to a private blob, creates a VM without a
 public IP, runs the exact provider test through Azure Run Command, and removes
-the VM and uploaded binary in an unconditional cleanup step.
+the VM and uploaded binary in unconditional cleanup steps. Each VM deployment
+attempt has a distinct name. Cleanup covers every attempted deployment, including
+NICs and disks left behind when VM creation fails.
 
 GitHub Actions queues `AzurePipelinesCredentialProvider` through the Azure
 DevOps REST API and waits for the result as part of the GitHub check. The queued
-run receives the exact GitHub ref and commit, then uses an Azure Resource Manager
-workload-identity service connection for the provider test. Azure DevOps has no
+run receives the exact GitHub ref and commit plus a temporary probe URL created
+by the GitHub job. Its Azure Resource Manager workload-identity service connection
+keeps Blob Reader access; the GitHub job owns fixture creation and cleanup and
+cancels an unfinished pipeline before releasing the fixture. Azure DevOps has no
 repository or scheduled trigger for this pipeline. It uses a dedicated Azure VM
 Scale Set agent pool with one-node maximum capacity, zero standby agents, and
 automatic recycling after every job.
@@ -121,10 +142,8 @@ GitHub Actions reads the existing `reqsign/azure-storage` item through
 1Password Connect. The workflow uses these existing fields without renaming or
 creating fields:
 
-- `url`
 - `account_name`
 - `account_key`
-- `sas_token`
 - `tenant_id`
 - `client_id`
 - `client_secret`

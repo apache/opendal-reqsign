@@ -51,8 +51,8 @@ pub async fn assert_provider_reads_probe(
     provider: impl ProvideCredential<Credential = Credential> + 'static,
     ctx: Context,
 ) -> anyhow::Result<()> {
-    let url = std::env::var("REQSIGN_AZURE_STORAGE_URL")
-        .map_err(|_| anyhow::anyhow!("REQSIGN_AZURE_STORAGE_URL must be set"))?;
+    let url = std::env::var("REQSIGN_AZURE_STORAGE_PROBE_URL")
+        .map_err(|_| anyhow::anyhow!("REQSIGN_AZURE_STORAGE_PROBE_URL must be set"))?;
     let signer = Signer::new(ctx.clone(), provider, RequestSigner::new());
     let request = http::Request::get(url)
         .header("x-ms-version", "2023-11-03")
