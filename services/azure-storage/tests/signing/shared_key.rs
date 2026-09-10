@@ -34,7 +34,7 @@ fn get_test_config() -> Option<(String, String, String, String, String)> {
         return None;
     }
 
-    let url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
     let account_name = required_env("REQSIGN_AZURE_STORAGE_ACCOUNT_NAME");
     let account_key = required_env("REQSIGN_AZURE_STORAGE_ACCOUNT_KEY");
     let service =

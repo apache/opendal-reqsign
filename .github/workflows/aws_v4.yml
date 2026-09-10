@@ -742,6 +742,11 @@ jobs:
           log_file=/var/log/reqsign-live-test.log
           (
             set -euo pipefail
+            # Package installation can exceed the memory available on t3.nano.
+            fallocate -l 1G /var/reqsign-ci.swap
+            chmod 600 /var/reqsign-ci.swap
+            mkswap /var/reqsign-ci.swap
+            swapon /var/reqsign-ci.swap
             dnf install --assumeyes docker
             systemctl enable --now docker
             aws ecr get-login-password --region '${AWS_REGION}' | docker login --username AWS --password-stdin '${IMAGE_URI%/*}'
