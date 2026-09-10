@@ -95,7 +95,7 @@ jobs:
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Log in to Azure with GitHub OIDC
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -142,7 +142,7 @@ jobs:
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Log in to Azure with GitHub OIDC
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -266,7 +266,7 @@ jobs:
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Log in to Azure with GitHub OIDC
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -348,7 +348,7 @@ jobs:
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Log in to Azure with GitHub OIDC
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -387,7 +387,7 @@ jobs:
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Log in to Azure with GitHub OIDC
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -491,7 +491,7 @@ jobs:
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Log in to Azure with GitHub OIDC
-        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
