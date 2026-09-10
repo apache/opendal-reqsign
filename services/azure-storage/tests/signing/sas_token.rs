@@ -42,7 +42,7 @@ async fn test_sas_token_signing() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
     let sas_token = load_sas_token();
 
     let ctx = Context::new()
@@ -95,7 +95,7 @@ async fn test_sas_token_with_existing_query() {
         return;
     }
 
-    let base_url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let base_url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
     let sas_token = load_sas_token();
 
     let ctx = Context::new()
@@ -135,7 +135,7 @@ async fn test_sas_token_preserves_headers() {
         return;
     }
 
-    let url = required_env("REQSIGN_AZURE_STORAGE_URL");
+    let url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
     let sas_token = load_sas_token();
 
     let ctx = Context::new()
