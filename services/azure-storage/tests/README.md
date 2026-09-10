@@ -133,6 +133,14 @@ repository or scheduled trigger for this pipeline. It uses a dedicated Azure VM
 Scale Set agent pool with one-node maximum capacity, zero standby agents, and
 automatic recycling after every job.
 
+The Azure DevOps pipeline definition must declare the non-secret variable
+`REQSIGN_AZURE_STORAGE_PROBE_URL` with an empty default and **Let users override
+this value when running this pipeline** enabled (`allowOverride: true` in the
+Build Definitions API). GitHub supplies this value when queuing each run. Keep
+the organization-level restriction on other queue-time variables enabled.
+Azure DevOps YAML previews do not validate this permission; verify it with an
+actual queued run.
+
 The final summary reports and enforces every provider and signing job
 independently for trusted changes.
 
