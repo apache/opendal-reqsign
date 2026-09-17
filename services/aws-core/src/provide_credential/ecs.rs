@@ -26,7 +26,6 @@ const AWS_CONTAINER_CREDENTIALS_FULL_URI: &str = "AWS_CONTAINER_CREDENTIALS_FULL
 const AWS_CONTAINER_AUTHORIZATION_TOKEN: &str = "AWS_CONTAINER_AUTHORIZATION_TOKEN";
 const AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: &str = "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE";
 const ECS_METADATA_ENDPOINT: &str = "http://169.254.170.2";
-const ECS_CONTAINER_METADATA_URI: &str = "ECS_CONTAINER_METADATA_URI";
 
 /// ECS Task Role Credentials Provider
 ///
@@ -56,7 +55,6 @@ const ECS_CONTAINER_METADATA_URI: &str = "ECS_CONTAINER_METADATA_URI";
 /// - `AWS_CONTAINER_CREDENTIALS_FULL_URI`: Full URI to fetch credentials (Fargate)
 /// - `AWS_CONTAINER_AUTHORIZATION_TOKEN`: Authorization token for the request
 /// - `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`: File containing the authorization token
-/// - `ECS_CONTAINER_METADATA_URI`: Override the default base endpoint (for testing)
 ///
 /// # Examples
 ///
@@ -189,13 +187,10 @@ impl ECSCredentialProvider {
 
         // Try relative URI from environment (ECS)
         if let Some(relative_uri) = ctx.env_var(AWS_CONTAINER_CREDENTIALS_RELATIVE_URI) {
-            // Allow override of metadata endpoint for testing
-            let base_endpoint = match &self.metadata_uri_override {
-                Some(override_uri) => override_uri.clone(),
-                None => ctx
-                    .env_var(ECS_CONTAINER_METADATA_URI)
-                    .unwrap_or_else(|| ECS_METADATA_ENDPOINT.to_string()),
-            };
+            let base_endpoint = self
+                .metadata_uri_override
+                .as_deref()
+                .unwrap_or(ECS_METADATA_ENDPOINT);
             return Ok(format!("{base_endpoint}{relative_uri}"));
         }
 
@@ -348,7 +343,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_endpoint_relative_uri_with_custom_base() {
+    async fn test_fargate_metadata_uri_does_not_override_credentials_endpoint() {
         let ctx = Context::new()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
@@ -360,15 +355,15 @@ mod tests {
                     "/creds".to_string(),
                 ),
                 (
-                    ECS_CONTAINER_METADATA_URI.to_string(),
-                    "http://localhost:51679".to_string(),
+                    "ECS_CONTAINER_METADATA_URI".to_string(),
+                    "http://169.254.170.2/v3/task-id".to_string(),
                 ),
             ]),
         });
 
         let provider = ECSCredentialProvider::new();
         let endpoint = provider.get_endpoint(&ctx).unwrap();
-        assert_eq!(endpoint, "http://localhost:51679/creds");
+        assert_eq!(endpoint, "http://169.254.170.2/creds");
     }
 
     #[tokio::test]

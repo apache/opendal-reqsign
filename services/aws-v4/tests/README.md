@@ -9,7 +9,7 @@ This directory contains integration tests for the AWS V4 signing implementation,
 Tests for various AWS credential providers:
 - `env.rs` - EnvCredentialProvider (uses AWS environment variables)
 - `profile.rs` - ProfileCredentialProvider (uses AWS config/credentials files)
-- `assume_role.rs` - AssumeRoleCredentialProvider
+- `assume_role.rs` - AssumeRoleCredentialProvider and explicit AssumeRoleGranter
 - `assume_role_with_web_identity.rs` - AssumeRoleWithWebIdentityCredentialProvider
 - `cognito.rs` - CognitoIdentityCredentialProvider
 - `ecs.rs` - ECSCredentialProvider

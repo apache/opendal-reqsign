@@ -53,8 +53,11 @@
 //! [`SigningCredential::is_valid`] controls whether a cached credential can be reused
 //! without refresh. [`SigningCredential::is_valid_at`] checks exact usability at the
 //! timestamp returned by [`SignRequest::required_valid_until`]. A refreshed credential
-//! only needs to satisfy the exact operation requirement; provider errors are returned
-//! without retrying internally or falling back to the old cached credential.
+//! only needs to satisfy the exact operation requirement. Credential refresh is
+//! serialized per shared cache, so concurrent cold or stale callers reuse a successful
+//! refresh. Refresh failures are not cached, so the next waiting or later caller can
+//! retry. Provider errors are returned without retrying internally or falling back to
+//! the old cached credential.
 //!
 //! ## Example
 //!

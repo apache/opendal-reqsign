@@ -15,9 +15,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-headerPath = "Apache-2.0-ASF.txt"
+[header]
+builtin = "Apache-2.0-ASF"
 
-includes = ['**/*.rs', '**/*.yml', '**/*.yaml', '**/*.toml']
-
+[files]
+includes = ["**/*.rs", "**/*.yml", "**/*.yaml", "**/*.toml"]
 # Generated files cannot carry license headers.
-excludes = ['website/pnpm-lock.yaml']
+excludes = ["website/pnpm-lock.yaml"]

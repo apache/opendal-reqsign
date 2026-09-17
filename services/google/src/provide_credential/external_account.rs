@@ -16,6 +16,7 @@
 // under the License.
 
 use std::collections::BTreeMap;
+use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 
 use form_urlencoded::Serializer;
@@ -28,9 +29,12 @@ use reqsign_aws_v4::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::credential::{Credential, ExternalAccount, Token, external_account};
+use crate::credential::{
+    Credential, ExternalAccount, Token, external_account, parse_service_account_impersonation_url,
+};
+use crate::service_account_impersonation::generate_access_token;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, ProvideCredential, Result, SignRequest};
+use reqsign_core::{Context, Error, ProvideCredential, Result, SignRequest};
 
 /// The maximum impersonated token lifetime allowed, 1 hour.
 const MAX_LIFETIME: Duration = Duration::from_secs(3600);
@@ -60,27 +64,18 @@ const AWS_EC2_METADATA_DISABLED: &str = "AWS_EC2_METADATA_DISABLED";
 const AWS_IMDSV2_TOKEN_HEADER: &str = "x-aws-ec2-metadata-token";
 const AWS_IMDSV2_TTL_HEADER: &str = "x-aws-ec2-metadata-token-ttl-seconds";
 const AWS_IMDSV2_TTL_SECONDS: &str = "300";
+/// Scope required on the STS token used to call IAM Credentials `generateAccessToken`.
+///
+/// Caller business scopes (for example Storage) must not be used here: that token only
+/// authorizes the impersonation API. Either `iam` or `cloud-platform` is accepted by Google;
+/// prefer the narrower `iam` scope for the intermediate credential.
+const STS_IMPERSONATION_SCOPE: &str = "https://www.googleapis.com/auth/iam";
 
 /// STS token response.
 #[derive(Deserialize)]
 struct StsTokenResponse {
     access_token: String,
     expires_in: Option<u64>,
-}
-
-/// Impersonated token response.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImpersonatedTokenResponse {
-    access_token: String,
-    expire_time: String,
-}
-
-/// Impersonation request.
-#[derive(Serialize)]
-struct ImpersonationRequest {
-    scope: Vec<String>,
-    lifetime: String,
 }
 
 #[derive(Deserialize)]
@@ -137,18 +132,154 @@ struct AwsSignedHeader {
     value: String,
 }
 
-/// ExternalAccountCredentialProvider exchanges external account credentials for access tokens.
-#[derive(Debug, Clone)]
+/// Google configuration for exchanging an external subject token.
+#[derive(Clone, Debug)]
+pub struct ExternalAccountConfig {
+    audience: String,
+    subject_token_type: String,
+    token_url: String,
+    service_account_impersonation_url: Option<String>,
+    service_account_impersonation_lifetime: Option<Duration>,
+}
+
+impl ExternalAccountConfig {
+    /// Create the service-owned configuration for an external-account exchange.
+    pub fn new(
+        audience: impl Into<String>,
+        subject_token_type: impl Into<String>,
+        token_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            audience: audience.into(),
+            subject_token_type: subject_token_type.into(),
+            token_url: token_url.into(),
+            service_account_impersonation_url: None,
+            service_account_impersonation_lifetime: None,
+        }
+    }
+
+    /// Configure service-account impersonation after the STS exchange.
+    pub fn with_service_account_impersonation_url(mut self, url: impl Into<String>) -> Self {
+        self.service_account_impersonation_url = Some(url.into());
+        self
+    }
+
+    /// Configure the requested service-account impersonation token lifetime.
+    pub fn with_service_account_impersonation_lifetime(mut self, lifetime: Duration) -> Self {
+        self.service_account_impersonation_lifetime = Some(lifetime);
+        self
+    }
+
+    fn from_external_account(external_account: &ExternalAccount) -> Self {
+        Self {
+            audience: external_account.audience.clone(),
+            subject_token_type: external_account.subject_token_type.clone(),
+            token_url: external_account.token_url.clone(),
+            service_account_impersonation_url: external_account
+                .service_account_impersonation_url
+                .clone(),
+            service_account_impersonation_lifetime: external_account
+                .service_account_impersonation
+                .as_ref()
+                .and_then(|options| options.token_lifetime_seconds)
+                .map(|seconds| Duration::from_secs(seconds as u64)),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum ExternalAccountSubjectTokenSource {
+    CredentialSource(external_account::Source),
+    Direct(LoadedSubjectToken),
+}
+
+#[derive(Clone)]
+struct LoadedSubjectToken {
+    token: String,
+    expires_at: Option<Timestamp>,
+}
+
+impl LoadedSubjectToken {
+    fn new(token: impl Into<String>, expires_at: Option<Timestamp>) -> Self {
+        Self {
+            token: token.into(),
+            expires_at,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.token.trim().is_empty() {
+            return Err(Error::credential_invalid("subject token is empty"));
+        }
+        if self
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= Timestamp::now())
+        {
+            return Err(Error::credential_invalid("subject token has expired"));
+        }
+        Ok(())
+    }
+}
+
+/// Exchanges an external subject token for a Google access token.
+#[derive(Clone)]
 pub struct ExternalAccountCredentialProvider {
-    external_account: ExternalAccount,
+    config: ExternalAccountConfig,
+    subject_token_source: ExternalAccountSubjectTokenSource,
     scope: Option<String>,
 }
 
+impl Debug for ExternalAccountCredentialProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let subject_token_source = match &self.subject_token_source {
+            ExternalAccountSubjectTokenSource::CredentialSource(_) => "credential_source",
+            ExternalAccountSubjectTokenSource::Direct(_) => "direct",
+        };
+        f.debug_struct("ExternalAccountCredentialProvider")
+            .field("config", &self.config)
+            .field("subject_token_source", &subject_token_source)
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
 impl ExternalAccountCredentialProvider {
-    /// Create a new ExternalAccountCredentialProvider.
-    pub fn new(external_account: ExternalAccount) -> Self {
+    pub(crate) fn new(external_account: ExternalAccount) -> Self {
+        let config = ExternalAccountConfig::from_external_account(&external_account);
         Self {
-            external_account,
+            config,
+            subject_token_source: ExternalAccountSubjectTokenSource::CredentialSource(
+                external_account.credential_source,
+            ),
+            scope: None,
+        }
+    }
+
+    /// Create a provider for one caller-bound subject token.
+    pub fn from_subject_token(
+        config: ExternalAccountConfig,
+        subject_token: impl Into<String>,
+    ) -> Self {
+        Self {
+            config,
+            subject_token_source: ExternalAccountSubjectTokenSource::Direct(
+                LoadedSubjectToken::new(subject_token, None),
+            ),
+            scope: None,
+        }
+    }
+
+    /// Create a provider for a caller-bound subject token with absolute expiration.
+    pub fn from_subject_token_and_expiration(
+        config: ExternalAccountConfig,
+        subject_token: impl Into<String>,
+        expires_at: Timestamp,
+    ) -> Self {
+        Self {
+            config,
+            subject_token_source: ExternalAccountSubjectTokenSource::Direct(
+                LoadedSubjectToken::new(subject_token, Some(expires_at)),
+            ),
             scope: None,
         }
     }
@@ -166,17 +297,48 @@ impl ExternalAccountCredentialProvider {
             .unwrap_or_else(|| crate::constants::DEFAULT_SCOPE.to_string())
     }
 
-    async fn load_oidc_token(&self, ctx: &Context) -> Result<String> {
-        match &self.external_account.credential_source {
-            external_account::Source::Aws(source) => self.load_aws_subject_token(ctx, source).await,
-            external_account::Source::File(source) => {
-                self.load_file_sourced_token(ctx, source).await
-            }
-            external_account::Source::Url(source) => self.load_url_sourced_token(ctx, source).await,
-            external_account::Source::Executable(source) => {
-                self.load_executable_sourced_token(ctx, source).await
-            }
+    /// Scope for the STS token exchange.
+    ///
+    /// When service account impersonation follows, the STS token is only used to call
+    /// IAM Credentials and must carry `iam` (or `cloud-platform`). The caller's business
+    /// scopes are requested later via `generateAccessToken`. Without impersonation, STS
+    /// returns the final token and therefore uses the caller scope directly.
+    fn resolve_sts_scope(&self, ctx: &Context) -> String {
+        if self.config.service_account_impersonation_url.is_some() {
+            STS_IMPERSONATION_SCOPE.to_string()
+        } else {
+            self.resolve_scope(ctx)
         }
+    }
+
+    #[cfg(test)]
+    async fn load_oidc_token(&self, ctx: &Context) -> Result<String> {
+        Ok(self.load_subject_token(ctx).await?.token)
+    }
+
+    async fn load_subject_token(&self, ctx: &Context) -> Result<LoadedSubjectToken> {
+        let subject_token = match &self.subject_token_source {
+            ExternalAccountSubjectTokenSource::Direct(subject_token) => subject_token.clone(),
+            ExternalAccountSubjectTokenSource::CredentialSource(source) => {
+                let token = match source {
+                    external_account::Source::Aws(source) => {
+                        self.load_aws_subject_token(ctx, source).await?
+                    }
+                    external_account::Source::File(source) => {
+                        self.load_file_sourced_token(ctx, source).await?
+                    }
+                    external_account::Source::Url(source) => {
+                        self.load_url_sourced_token(ctx, source).await?
+                    }
+                    external_account::Source::Executable(source) => {
+                        self.load_executable_sourced_token(ctx, source).await?
+                    }
+                };
+                LoadedSubjectToken::new(token, None)
+            }
+        };
+        subject_token.validate()?;
+        Ok(subject_token)
     }
 
     async fn load_file_sourced_token(
@@ -224,11 +386,12 @@ impl ExternalAccountCredentialProvider {
             .await?;
 
         if resp.status() != http::StatusCode::OK {
-            error!("exchange token got unexpected response: {resp:?}");
-            let body = String::from_utf8_lossy(resp.body());
-            return Err(reqsign_core::Error::unexpected(format!(
-                "exchange OIDC token failed: {body}"
-            )));
+            let status = resp.status();
+            error!("external account subject-token URL returned {status}");
+            return Err(reqsign_core::Error::unexpected(
+                "external account subject-token request failed",
+            )
+            .with_context(format!("http_status: {status}")));
         }
 
         let token = source.format.parse(resp.body())?;
@@ -243,7 +406,7 @@ impl ExternalAccountCredentialProvider {
     }
 
     fn resolved_subject_token_type(&self, ctx: &Context) -> Result<String> {
-        resolve_template(ctx, &self.external_account.subject_token_type)
+        resolve_template(ctx, &self.config.subject_token_type)
     }
 
     fn validate_aws_source(
@@ -485,7 +648,7 @@ impl ExternalAccountCredentialProvider {
         region: &str,
         credential: AwsCredential,
     ) -> Result<String> {
-        let audience = resolve_template(ctx, &self.external_account.audience)?;
+        let audience = resolve_template(ctx, &self.config.audience)?;
         let verification_url = source
             .regional_cred_verification_url
             .replace("{region}", region);
@@ -541,16 +704,16 @@ impl ExternalAccountCredentialProvider {
         let mut envs = BTreeMap::new();
         envs.insert(
             GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE.to_string(),
-            resolve_template(ctx, &self.external_account.audience)?,
+            resolve_template(ctx, &self.config.audience)?,
         );
         envs.insert(
             GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE.to_string(),
             self.resolved_subject_token_type(ctx)?,
         );
 
-        if let Some(url) = &self.external_account.service_account_impersonation_url {
+        if let Some(url) = &self.config.service_account_impersonation_url {
             let url = resolve_template(ctx, url)?;
-            let email = parse_impersonated_service_account_email(&url)?;
+            let email = parse_service_account_impersonation_url(&url)?;
             envs.insert(
                 GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL.to_string(),
                 email,
@@ -772,10 +935,10 @@ impl ExternalAccountCredentialProvider {
     async fn exchange_sts_token(&self, ctx: &Context, oidc_token: &str) -> Result<Token> {
         debug!("exchanging OIDC token for STS access token");
 
-        let scope = self.resolve_scope(ctx);
-        let token_url = resolve_template(ctx, &self.external_account.token_url)?;
-        let audience = resolve_template(ctx, &self.external_account.audience)?;
-        let subject_token_type = resolve_template(ctx, &self.external_account.subject_token_type)?;
+        let scope = self.resolve_sts_scope(ctx);
+        let token_url = resolve_template(ctx, &self.config.token_url)?;
+        let audience = resolve_template(ctx, &self.config.audience)?;
+        let subject_token_type = resolve_template(ctx, &self.config.subject_token_type)?;
 
         let body = Serializer::new(String::new())
             .append_pair(
@@ -805,11 +968,12 @@ impl ExternalAccountCredentialProvider {
         let resp = ctx.http_send(req).await?;
 
         if resp.status() != http::StatusCode::OK {
-            error!("exchange token got unexpected response: {resp:?}");
-            let body = String::from_utf8_lossy(resp.body());
-            return Err(reqsign_core::Error::unexpected(format!(
-                "exchange token failed: {body}"
-            )));
+            let status = resp.status();
+            error!("Google STS token exchange returned {status}");
+            return Err(
+                reqsign_core::Error::unexpected("Google STS token exchange failed")
+                    .with_context(format!("http_status: {status}")),
+            );
         }
 
         let token_resp: StsTokenResponse = serde_json::from_slice(resp.body()).map_err(|e| {
@@ -831,7 +995,7 @@ impl ExternalAccountCredentialProvider {
         ctx: &Context,
         access_token: &str,
     ) -> Result<Option<Token>> {
-        let Some(url) = &self.external_account.service_account_impersonation_url else {
+        let Some(url) = &self.config.service_account_impersonation_url else {
             return Ok(None);
         };
 
@@ -839,80 +1003,38 @@ impl ExternalAccountCredentialProvider {
 
         let scope = self.resolve_scope(ctx);
         let lifetime = self
-            .external_account
-            .service_account_impersonation
-            .as_ref()
-            .and_then(|s| s.token_lifetime_seconds)
-            .unwrap_or(MAX_LIFETIME.as_secs() as usize);
+            .config
+            .service_account_impersonation_lifetime
+            .unwrap_or(MAX_LIFETIME);
 
-        let lifetime = if lifetime == 0 {
+        let lifetime = if lifetime.is_zero() {
             return Err(reqsign_core::Error::config_invalid(
                 "service_account_impersonation.token_lifetime_seconds must be positive",
             ));
         } else {
-            lifetime.min(MAX_LIFETIME.as_secs() as usize)
+            lifetime.min(MAX_LIFETIME)
         };
 
-        let request = ImpersonationRequest {
-            scope: vec![scope.clone()],
-            lifetime: format!("{lifetime}s"),
-        };
-
-        let body = serde_json::to_vec(&request).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to serialize request").with_source(e)
-        })?;
-
-        let req = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(url)
-            .header(ACCEPT, "application/json")
-            .header(CONTENT_TYPE, "application/json")
-            .header(http::header::AUTHORIZATION, {
-                let mut value: http::HeaderValue =
-                    format!("Bearer {access_token}").parse().map_err(|e| {
-                        reqsign_core::Error::unexpected("failed to parse header value")
-                            .with_source(e)
-                    })?;
-                value.set_sensitive(true);
-                value
-            })
-            .body(body.into())
-            .map_err(|e| {
-                reqsign_core::Error::unexpected("failed to build HTTP request").with_source(e)
-            })?;
-
-        let resp = ctx.http_send(req).await?;
-
-        if resp.status() != http::StatusCode::OK {
-            error!("impersonated token got unexpected response: {resp:?}");
-            let body = String::from_utf8_lossy(resp.body());
-            return Err(reqsign_core::Error::unexpected(format!(
-                "exchange impersonated token failed: {body}"
-            )));
-        }
-
-        let token_resp: ImpersonatedTokenResponse =
-            serde_json::from_slice(resp.body()).map_err(|e| {
-                reqsign_core::Error::unexpected("failed to parse impersonation response")
-                    .with_source(e)
-            })?;
-
-        // Parse expire time from RFC3339 format
-        Ok(Some(Token {
-            access_token: token_resp.access_token,
-            expires_at: token_resp.expire_time.parse().ok(),
-        }))
+        generate_access_token(ctx, url, access_token, &[scope], None, Some(lifetime))
+            .await
+            .map(Some)
     }
 }
 impl ProvideCredential for ExternalAccountCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        // Load OIDC token from source
-        let oidc_token = self.load_oidc_token(ctx).await?;
+        let signer_email = self
+            .config
+            .service_account_impersonation_url
+            .as_deref()
+            .and_then(|url| parse_service_account_impersonation_url(url).ok());
+
+        // Load the explicitly configured subject token.
+        let subject_token = self.load_subject_token(ctx).await?;
 
         // Exchange for STS token
-        let sts_token = self.exchange_sts_token(ctx, &oidc_token).await?;
+        let sts_token = self.exchange_sts_token(ctx, &subject_token.token).await?;
 
         // Try to impersonate service account if configured
         let final_token = if let Some(token) = self
@@ -924,7 +1046,11 @@ impl ProvideCredential for ExternalAccountCredentialProvider {
             sts_token
         };
 
-        Ok(Some(Credential::with_token(final_token)))
+        let credential = Credential::with_token(final_token);
+        Ok(Some(match signer_email {
+            Some(signer_email) => credential.with_signer_email(signer_email),
+            None => credential,
+        }))
     }
 }
 
@@ -965,37 +1091,6 @@ fn resolve_template(ctx: &Context, input: &str) -> Result<String> {
         })?;
         out.push_str(&value);
     }
-}
-
-fn parse_impersonated_service_account_email(url: &str) -> Result<String> {
-    let marker = "/serviceAccounts/";
-    let start = url.find(marker).ok_or_else(|| {
-        reqsign_core::Error::config_invalid(format!(
-            "service_account_impersonation_url missing {marker}: {url}"
-        ))
-    })?;
-    let rest = &url[start + marker.len()..];
-    let end = rest.find(':').ok_or_else(|| {
-        reqsign_core::Error::config_invalid(format!(
-            "service_account_impersonation_url missing action separator: {url}"
-        ))
-    })?;
-
-    let email = percent_encoding::percent_decode_str(&rest[..end])
-        .decode_utf8()
-        .map_err(|e| {
-            reqsign_core::Error::config_invalid(
-                "service_account_impersonation_url contains invalid UTF-8 email",
-            )
-            .with_source(e)
-        })?;
-    if email.is_empty() {
-        return Err(reqsign_core::Error::config_invalid(
-            "service_account_impersonation_url resolved empty service account email",
-        ));
-    }
-
-    Ok(email.into_owned())
 }
 
 struct ResolvedAwsSource {
@@ -1312,6 +1407,90 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct PanicHttpSend;
+
+    impl HttpSend for PanicHttpSend {
+        async fn http_send(&self, _req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            panic!("expired subject token must be rejected before HTTP")
+        }
+    }
+
+    #[derive(Debug)]
+    struct EchoErrorHttpSend {
+        response_body: String,
+    }
+
+    impl HttpSend for EchoErrorHttpSend {
+        async fn http_send(&self, _req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            Ok(http::Response::builder()
+                .status(http::StatusCode::BAD_REQUEST)
+                .body(Bytes::from(self.response_body.clone()))
+                .expect("response must build"))
+        }
+    }
+
+    /// Captures STS and IAM Credentials scopes used during WIF + impersonation.
+    #[derive(Clone, Debug, Default)]
+    struct CaptureStsAndImpersonateHttpSend {
+        sts_scope: Arc<Mutex<Option<String>>>,
+        impersonation_scopes: Arc<Mutex<Option<Vec<String>>>>,
+    }
+
+    impl HttpSend for CaptureStsAndImpersonateHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            assert_eq!(req.method(), http::Method::POST);
+            let url = req.uri().to_string();
+
+            if url == "https://sts.googleapis.com/v1/token" {
+                let pairs: HashMap<String, String> = form_urlencoded::parse(req.body().as_ref())
+                    .into_owned()
+                    .collect();
+                *self.sts_scope.lock().expect("lock") = pairs.get("scope").cloned();
+                let body = serde_json::json!({
+                    "access_token": "sts-token",
+                    "expires_in": 3600
+                });
+                return Ok(http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(serde_json::to_vec(&body).expect("json must encode").into())
+                    .expect("response must build"));
+            }
+
+            if url.contains("generateAccessToken") {
+                assert_eq!(
+                    req.headers()
+                        .get(AUTHORIZATION)
+                        .expect("authorization must exist")
+                        .to_str()
+                        .expect("authorization must be valid string"),
+                    "Bearer sts-token"
+                );
+                let body: serde_json::Value =
+                    serde_json::from_slice(req.body()).expect("impersonation body must be json");
+                let scopes = body
+                    .get("scope")
+                    .and_then(|v| v.as_array())
+                    .expect("scope array")
+                    .iter()
+                    .map(|v| v.as_str().expect("scope string").to_string())
+                    .collect::<Vec<_>>();
+                *self.impersonation_scopes.lock().expect("lock") = Some(scopes);
+
+                let resp = serde_json::json!({
+                    "accessToken": "impersonated-token",
+                    "expireTime": "2099-01-01T00:00:00Z"
+                });
+                return Ok(http::Response::builder()
+                    .status(http::StatusCode::OK)
+                    .body(serde_json::to_vec(&resp).expect("json must encode").into())
+                    .expect("response must build"));
+            }
+
+            panic!("unexpected URL: {url}");
+        }
+    }
+
+    #[derive(Debug)]
     struct UrlThenStsHttpSend {
         expected_get_url: String,
         expected_get_auth: String,
@@ -1473,6 +1652,122 @@ mod tests {
             .expect("credential must exist");
         assert!(cred.has_token());
         assert!(cred.has_valid_token());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn caller_provided_subject_token_uses_public_exchange_config() -> Result<()> {
+        let config = ExternalAccountConfig::new(
+            "aud",
+            "urn:ietf:params:oauth:token-type:jwt",
+            "https://sts.googleapis.com/v1/token",
+        );
+        let http = CaptureStsHttpSend {
+            expected_url: "https://sts.googleapis.com/v1/token".to_string(),
+            expected_scope: "scope-a".to_string(),
+            expected_subject_token: "caller.subject.token".to_string(),
+            expected_audience: "aud".to_string(),
+            expected_subject_token_type: "urn:ietf:params:oauth:token-type:jwt".to_string(),
+            access_token: "access-token".to_string(),
+        };
+        let ctx = Context::new().with_http_send(http);
+        let provider =
+            ExternalAccountCredentialProvider::from_subject_token(config, "caller.subject.token")
+                .with_scope("scope-a");
+
+        let credential = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must exist");
+        assert!(credential.has_valid_token());
+        assert!(!format!("{provider:?}").contains("caller.subject.token"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn expired_caller_subject_token_is_rejected_before_http() {
+        let config = ExternalAccountConfig::new(
+            "aud",
+            "urn:ietf:params:oauth:token-type:jwt",
+            "https://sts.googleapis.com/v1/token",
+        );
+        let provider = ExternalAccountCredentialProvider::from_subject_token_and_expiration(
+            config,
+            "expired.subject.token",
+            Timestamp::now() - Duration::from_secs(1),
+        );
+        let ctx = Context::new().with_http_send(PanicHttpSend);
+
+        let err = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("expired token must fail");
+        assert_eq!(err.kind(), reqsign_core::ErrorKind::CredentialInvalid);
+    }
+
+    #[tokio::test]
+    async fn sts_error_cannot_echo_caller_subject_token() {
+        let secret = "echoed.google.subject.token";
+        let config = ExternalAccountConfig::new(
+            "aud",
+            "urn:ietf:params:oauth:token-type:jwt",
+            "https://sts.googleapis.com/v1/token",
+        );
+        let provider = ExternalAccountCredentialProvider::from_subject_token(config, secret);
+        let ctx = Context::new().with_http_send(EchoErrorHttpSend {
+            response_body: format!(r#"{{"error_description":"{secret}"}}"#),
+        });
+
+        let err = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("STS error must be returned");
+        assert!(!err.to_string().contains(secret));
+        assert!(!format!("{err:?}").contains(secret));
+    }
+
+    #[tokio::test]
+    async fn test_external_account_impersonation_uses_iam_scope_for_sts() -> Result<()> {
+        let impersonation_url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/sa@example.com:generateAccessToken";
+        let business_scope = "https://www.googleapis.com/auth/devstorage.read_write";
+
+        let external_account = ExternalAccount {
+            audience: "aud".to_string(),
+            subject_token_type: "urn:ietf:params:oauth:token-type:jwt".to_string(),
+            token_url: "https://sts.googleapis.com/v1/token".to_string(),
+            credential_source: external_account::Source::File(external_account::FileSource {
+                file: "/var/run/token".to_string(),
+                format: external_account::Format::Text,
+            }),
+            service_account_impersonation_url: Some(impersonation_url.to_string()),
+            service_account_impersonation: None,
+        };
+
+        let http = CaptureStsAndImpersonateHttpSend::default();
+        let sts_scope = Arc::clone(&http.sts_scope);
+        let impersonation_scopes = Arc::clone(&http.impersonation_scopes);
+        let fs = MockFileRead::default().with_file("/var/run/token", b"test-oidc");
+        let ctx = Context::new().with_http_send(http).with_file_read(fs);
+
+        let provider =
+            ExternalAccountCredentialProvider::new(external_account).with_scope(business_scope);
+        let cred = provider
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must exist");
+        assert!(cred.has_valid_token());
+        assert_eq!(cred.signer_email.as_deref(), Some("sa@example.com"));
+
+        assert_eq!(
+            sts_scope.lock().expect("lock").as_deref(),
+            Some(STS_IMPERSONATION_SCOPE),
+            "STS intermediate token must use IAM scope when impersonating"
+        );
+        assert_eq!(
+            impersonation_scopes.lock().expect("lock").as_deref(),
+            Some([business_scope.to_string()].as_slice()),
+            "generateAccessToken must request the caller's business scope"
+        );
         Ok(())
     }
 

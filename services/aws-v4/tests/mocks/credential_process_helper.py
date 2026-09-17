@@ -8,47 +8,69 @@ It can be used in ~/.aws/config as:
 """
 
 import json
+import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def generate_credentials(profile=None):
     """Generate mock AWS credentials in the credential_process format"""
-    
+
     # Calculate expiration time (1 hour from now)
-    expiration = (datetime.utcnow() + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
-    
-    # Different credentials based on profile (for testing multiple profiles)
-    if profile == "test":
+    expiration = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    live_values = {
+        "access_key": os.environ.get("REQSIGN_AWS_PROCESS_ACCESS_KEY_ID"),
+        "secret_key": os.environ.get("REQSIGN_AWS_PROCESS_SECRET_ACCESS_KEY"),
+        "session_token": os.environ.get("REQSIGN_AWS_PROCESS_SESSION_TOKEN"),
+    }
+    if any(live_values.values()) and not (
+        live_values["access_key"] and live_values["secret_key"]
+    ):
+        raise RuntimeError(
+            "REQSIGN_AWS_PROCESS_ACCESS_KEY_ID and "
+            "REQSIGN_AWS_PROCESS_SECRET_ACCESS_KEY must be set together"
+        )
+
+    if live_values["access_key"] and live_values["secret_key"]:
+        access_key = live_values["access_key"]
+        secret_key = live_values["secret_key"]
+        session_token = live_values["session_token"]
+    elif profile == "test":
         access_key = "ASIAPROCESSTEST"
         secret_key = "process/test/secret/key/EXAMPLE"
+        session_token = "FwoGZXIvYXdzEPROCESS//////////wEaDEXAMPLETOKEN"
     else:
         access_key = "ASIAPROCESSEXAMPLE"
         secret_key = "process/secret/key/EXAMPLE"
-    
+        session_token = "FwoGZXIvYXdzEPROCESS//////////wEaDEXAMPLETOKEN"
+
     credentials = {
         "Version": 1,
         "AccessKeyId": access_key,
         "SecretAccessKey": secret_key,
-        "SessionToken": "FwoGZXIvYXdzEPROCESS//////////wEaDEXAMPLETOKEN",
-        "Expiration": expiration
+        "Expiration": expiration,
     }
-    
+    if session_token:
+        credentials["SessionToken"] = session_token
+
     return credentials
 
 
 def main():
     """Main entry point for the credential process helper"""
-    
+
     # Check if a profile argument was provided
     profile = None
     if len(sys.argv) > 2 and sys.argv[1] == "--profile":
         profile = sys.argv[2]
-    
+
     # Generate and output credentials
     credentials = generate_credentials(profile)
     print(json.dumps(credentials, indent=2))
-    
+
     return 0
 
 

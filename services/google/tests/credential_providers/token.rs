@@ -15,7 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context;
+use super::{assert_provider_reads_probe, create_test_context};
+use log::warn;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{ErrorKind, ProvideCredential, Result};
 use reqsign_google::TokenCredentialProvider;
@@ -89,4 +90,18 @@ async fn test_token_credential_provider_empty_token() {
         .await
         .expect_err("empty token must fail");
     assert_eq!(ErrorKind::CredentialInvalid, err.kind());
+}
+
+#[tokio::test]
+async fn test_token_credential_provider_live() -> Result<()> {
+    if std::env::var("REQSIGN_GOOGLE_TEST_TOKEN").unwrap_or_default() != "on" {
+        warn!("REQSIGN_GOOGLE_TEST_TOKEN is not set, skipped");
+        return Ok(());
+    }
+
+    let access_token = std::env::var("REQSIGN_GOOGLE_ACCESS_TOKEN")
+        .expect("REQSIGN_GOOGLE_ACCESS_TOKEN must be set");
+    let provider =
+        TokenCredentialProvider::new(access_token).with_expires_in(Duration::from_secs(1800));
+    assert_provider_reads_probe(provider, create_test_context()).await
 }

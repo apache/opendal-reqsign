@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-core"
-version = "3.2.1"
+version = "3.3.1"
 
 categories = ["command-line-utilities", "web-programming"]
 description = "Signing API requests without effort."
@@ -33,9 +33,9 @@ jwt = ["dep:rsa", "dep:serde", "dep:serde_json"]
 
 [dependencies]
 anyhow = { workspace = true }
+asyncband = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
-futures = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 http = { workspace = true }
@@ -56,3 +56,7 @@ windows-sys = { version = "0.61.0", features = [
   "Win32_UI_Shell",
   "Win32_System_Com",
 ] }
+
+[dev-dependencies]
+asyncband = { workspace = true, features = ["oneshot"] }
+futures = { workspace = true }

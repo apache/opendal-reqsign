@@ -19,6 +19,38 @@
 //!
 //! This module provides Azure Storage signing functionality along with convenience
 //! functions for common use cases.
+//!
+//! Shared Key credentials can also grant a typed Blob Storage Service SAS:
+//!
+//! ```no_run
+//! use std::time::Duration;
+//!
+//! use reqsign::azure::{
+//!     ServiceSasBlobPermissions, ServiceSasConfig, ServiceSasGrant,
+//!     ServiceSasGranter, StaticCredentialProvider,
+//! };
+//! use reqsign::{Context, Granter};
+//!
+//! # async fn example() -> reqsign::Result<()> {
+//! let grant = ServiceSasGrant::for_blob(
+//!     "customer-data",
+//!     "reports/current.csv",
+//!     ServiceSasBlobPermissions::READ,
+//! );
+//! let credential = Granter::new(
+//!     Context::new(),
+//!     StaticCredentialProvider::new_shared_key(
+//!         "mystorageaccount",
+//!         "<base64-encoded 512-bit account key>",
+//!     ),
+//!     ServiceSasGranter::new(ServiceSasConfig::new("mystorageaccount"), grant),
+//! )
+//! .grant(Some(Duration::from_secs(900)))
+//! .await?;
+//! # let _ = credential;
+//! # Ok(())
+//! # }
+//! ```
 
 // Re-export all Azure Storage signing types
 pub use reqsign_azure_storage::*;

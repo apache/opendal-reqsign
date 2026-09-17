@@ -112,22 +112,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_azure_cli_token() {
-        let json = r#"{
-            "accessToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6IjJaUXBKM...",
-            "expiresOn": "2023-10-31 21:59:10.000000",
-            "expires_on": 1698760750,
-            "subscription": "0b1f6471-1bf0-4dda-aec3-cb9272f09590",
-            "tenant": "54826b22-38d6-4fb2-bad9-b7b93a3e9c5a",
-            "tokenType": "Bearer"
-        }"#;
-
-        let token: AzureCliToken = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            token.access_token,
-            "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6IjJaUXBKM..."
-        );
-        assert_eq!(token.expires_on_timestamp, Some(1698760750));
+    fn parses_redacted_real_azure_cli_response() {
+        let response = include_bytes!("../../tests/fixtures/azure_cli_token_response.json");
+        let token: AzureCliToken = serde_json::from_slice(response).unwrap();
+        assert_eq!(token.access_token, "REDACTED");
+        assert_eq!(token.expires_on_timestamp, Some(1788423131));
         assert_eq!(token.token_type, "Bearer");
     }
 }

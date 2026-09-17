@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context_with_env;
+use super::{assert_credentials_work, create_test_context_with_env};
 use log::info;
 use reqsign_aws_v4::AssumeRoleWithWebIdentityCredentialProvider;
 use reqsign_core::ProvideCredential;
@@ -69,4 +69,5 @@ async fn test_assume_role_with_web_identity_credential_provider() {
         cred.session_token.is_some(),
         "Web identity should return session token"
     );
+    assert_credentials_work(&ctx, &cred).await;
 }

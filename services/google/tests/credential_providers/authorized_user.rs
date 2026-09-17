@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context_with_env;
+use super::{assert_provider_reads_probe, create_test_context_with_env};
 use log::warn;
-use reqsign_core::{ProvideCredential, Result};
+use reqsign_core::Result;
 use reqsign_google::DefaultCredentialProvider;
 use std::collections::HashMap;
 use std::env;
@@ -47,21 +47,7 @@ async fn test_authorized_user_credential_provider() -> Result<()> {
         cred_path,
     )]));
 
-    let provider = DefaultCredentialProvider::new();
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided for authorized user");
-
-    // Authorized user credentials should have a token
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    assert!(
-        !credential.has_service_account(),
-        "Should not have service account"
-    );
-
-    Ok(())
+    assert_provider_reads_probe(DefaultCredentialProvider::new(), ctx).await
 }
 
 #[tokio::test]
@@ -86,18 +72,5 @@ async fn test_authorized_user_from_well_known_location() -> Result<()> {
     // Don't set GOOGLE_APPLICATION_CREDENTIALS so it falls back to well-known location
     let ctx = create_test_context_with_env(HashMap::new());
 
-    let provider = DefaultCredentialProvider::new();
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided from well-known location");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    assert!(
-        !credential.has_service_account(),
-        "Should not have service account"
-    );
-
-    Ok(())
+    assert_provider_reads_probe(DefaultCredentialProvider::new(), ctx).await
 }

@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context;
+use super::{assert_provider_reads_probe, create_test_context};
 use log::warn;
-use reqsign_core::{ProvideCredential, Result};
+use reqsign_core::Result;
 use reqsign_google::VmMetadataCredentialProvider;
 use std::env;
 
@@ -31,41 +31,7 @@ async fn test_vm_metadata_credential_provider() -> Result<()> {
     // This test should only run on actual GCP VMs
     let ctx = create_test_context();
 
-    let provider = VmMetadataCredentialProvider::new();
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided on GCP VM");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    let token = credential.token.as_ref().unwrap();
-    assert!(!token.access_token.is_empty(), "Token must not be empty");
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_vm_metadata_credential_provider_with_mock() -> Result<()> {
-    if env::var("REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK").unwrap_or_default() != "on" {
-        warn!("REQSIGN_GOOGLE_TEST_VM_METADATA_MOCK is not set, skipped");
-        return Ok(());
-    }
-
-    let ctx = create_test_context();
-
-    let provider = VmMetadataCredentialProvider::new();
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided with mock metadata server");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    let token = credential.token.as_ref().unwrap();
-    assert!(!token.access_token.is_empty(), "Token must not be empty");
-
-    Ok(())
+    assert_provider_reads_probe(VmMetadataCredentialProvider::new(), ctx).await
 }
 
 #[tokio::test]
@@ -81,14 +47,5 @@ async fn test_vm_metadata_credential_provider_with_scope() -> Result<()> {
 
     let ctx = create_test_context();
 
-    let provider = VmMetadataCredentialProvider::new().with_scope(&scope);
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided on GCP VM");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-
-    Ok(())
+    assert_provider_reads_probe(VmMetadataCredentialProvider::new().with_scope(&scope), ctx).await
 }

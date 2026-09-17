@@ -48,6 +48,22 @@ async fn main() -> anyhow::Result<()> {
 
 On `wasm32`, the non-portable `sso` and `process` slots are not available.
 
+## S3 Express Authentication
+
+`RequestSigner::new("s3express", region)` uses the S3 Express CreateSession
+token representation by default. Use `with_standard_session_token()` for
+operations that require IAM credentials, including `CopyObject`, `HeadBucket`,
+and `UploadPartCopy`. The same selection applies to header and query
+authentication.
+
+```rust
+use reqsign_aws_v4::RequestSigner;
+
+let _session_signer = RequestSigner::new("s3express", "us-west-2");
+let _iam_signer = RequestSigner::new("s3express", "us-west-2")
+    .with_standard_session_token();
+```
+
 ## Select a Profile
 
 Use `with_profile(...)` to select one profile consistently for the shared

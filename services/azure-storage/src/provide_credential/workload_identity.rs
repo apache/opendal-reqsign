@@ -16,9 +16,49 @@
 // under the License.
 
 use crate::Credential;
+use crate::provide_credential::entra::{
+    EntraTokenResponse, parse_token_response, token_request_error,
+};
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, ProvideCredential, Result};
+use reqsign_core::{Context, Error, ProvideCredential, Result};
+use std::fmt::{Debug, Formatter};
 use std::time::Duration;
+
+#[derive(Clone)]
+struct LoadedSubjectToken {
+    token: String,
+    expires_at: Option<Timestamp>,
+}
+
+impl LoadedSubjectToken {
+    fn new(token: impl Into<String>, expires_at: Option<Timestamp>) -> Self {
+        Self {
+            token: token.into(),
+            expires_at,
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.token.trim().is_empty() {
+            return Err(Error::credential_invalid("subject token is empty"));
+        }
+        if self
+            .expires_at
+            .is_some_and(|expires_at| expires_at <= Timestamp::now())
+        {
+            return Err(Error::credential_invalid("subject token has expired"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+enum FederatedTokenSource {
+    #[default]
+    Environment,
+    File(String),
+    Direct(LoadedSubjectToken),
+}
 
 /// Load credential from Azure Workload Identity.
 ///
@@ -27,12 +67,28 @@ use std::time::Duration;
 /// using a federated token.
 ///
 /// Reference: <https://learn.microsoft.com/en-us/azure/aks/workload-identity-overview>
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct WorkloadIdentityCredentialProvider {
     tenant_id: Option<String>,
     client_id: Option<String>,
-    federated_token_file: Option<String>,
+    token_source: FederatedTokenSource,
     authority_host: Option<String>,
+}
+
+impl Debug for WorkloadIdentityCredentialProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let token_source = match &self.token_source {
+            FederatedTokenSource::Environment => "environment",
+            FederatedTokenSource::File(_) => "file",
+            FederatedTokenSource::Direct(_) => "direct",
+        };
+        f.debug_struct("WorkloadIdentityCredentialProvider")
+            .field("tenant_id", &self.tenant_id)
+            .field("client_id", &self.client_id)
+            .field("token_source", &token_source)
+            .field("authority_host", &self.authority_host)
+            .finish()
+    }
 }
 
 impl WorkloadIdentityCredentialProvider {
@@ -54,8 +110,32 @@ impl WorkloadIdentityCredentialProvider {
     }
 
     /// Set the federated token file path.
+    ///
+    /// This replaces any previously configured subject-token source.
     pub fn with_federated_token_file(mut self, path: impl Into<String>) -> Self {
-        self.federated_token_file = Some(path.into());
+        self.token_source = FederatedTokenSource::File(path.into());
+        self
+    }
+
+    /// Set a caller-provided subject token.
+    ///
+    /// This replaces any previously configured subject-token source.
+    pub fn with_subject_token(mut self, subject_token: impl Into<String>) -> Self {
+        self.token_source =
+            FederatedTokenSource::Direct(LoadedSubjectToken::new(subject_token, None));
+        self
+    }
+
+    /// Set a caller-provided subject token with its absolute source expiration.
+    ///
+    /// This replaces any previously configured subject-token source.
+    pub fn with_subject_token_and_expiration(
+        mut self,
+        subject_token: impl Into<String>,
+        expires_at: Timestamp,
+    ) -> Self {
+        self.token_source =
+            FederatedTokenSource::Direct(LoadedSubjectToken::new(subject_token, Some(expires_at)));
         self
     }
 
@@ -63,6 +143,32 @@ impl WorkloadIdentityCredentialProvider {
     pub fn with_authority_host(mut self, authority_host: impl Into<String>) -> Self {
         self.authority_host = Some(authority_host.into());
         self
+    }
+
+    async fn load_subject_token(
+        &self,
+        ctx: &Context,
+        envs: &std::collections::HashMap<String, String>,
+    ) -> Result<Option<LoadedSubjectToken>> {
+        let subject_token = match &self.token_source {
+            FederatedTokenSource::Environment => {
+                let Some(path) = envs
+                    .get("AZURE_FEDERATED_TOKEN_FILE")
+                    .filter(|path| !path.is_empty())
+                else {
+                    return Ok(None);
+                };
+                load_file_subject_token(ctx, path).await?
+            }
+            FederatedTokenSource::File(path) => load_file_subject_token(ctx, path).await?,
+            FederatedTokenSource::Direct(subject_token) => Some(subject_token.clone()),
+        };
+
+        let Some(subject_token) = subject_token else {
+            return Ok(None);
+        };
+        subject_token.validate()?;
+        Ok(Some(subject_token))
     }
 }
 impl ProvideCredential for WorkloadIdentityCredentialProvider {
@@ -90,15 +196,6 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
             _ => return Ok(None),
         };
 
-        let federated_token_file = match self
-            .federated_token_file
-            .as_ref()
-            .or_else(|| envs.get("AZURE_FEDERATED_TOKEN_FILE"))
-        {
-            Some(file) if !file.is_empty() => file,
-            _ => return Ok(None),
-        };
-
         let authority_host = self
             .authority_host
             .as_ref()
@@ -107,61 +204,34 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
             .map(|s| s.as_str())
             .unwrap_or("https://login.microsoftonline.com");
 
-        let token = get_workload_identity_token(
+        let Some(subject_token) = self.load_subject_token(ctx, &envs).await? else {
+            return Ok(None);
+        };
+        let token_response = get_workload_identity_token(
             tenant_id,
             client_id,
-            federated_token_file,
+            &subject_token.token,
             authority_host,
             ctx,
         )
         .await?;
 
-        match token {
-            Some(token_response) => {
-                let expires_on = match token_response.expires_on {
-                    Some(expires_on) => expires_on.parse().map_err(|e| {
-                        reqsign_core::Error::unexpected("failed to parse expires_on time")
-                            .with_source(e)
-                    })?,
-                    None => Timestamp::now() + Duration::from_secs(600),
-                };
+        let expires_on = Timestamp::now() + Duration::from_secs(token_response.expires_in);
 
-                Ok(Some(Credential::with_bearer_token(
-                    &token_response.access_token,
-                    Some(expires_on),
-                )))
-            }
-            None => Ok(None),
-        }
+        Ok(Some(Credential::with_bearer_token(
+            &token_response.access_token,
+            Some(expires_on),
+        )))
     }
-}
-
-#[derive(serde::Deserialize)]
-struct WorkloadIdentityTokenResponse {
-    access_token: String,
-    expires_on: Option<String>,
 }
 
 async fn get_workload_identity_token(
     tenant_id: &str,
     client_id: &str,
-    federated_token_file: &str,
+    federated_token: &str,
     authority_host: &str,
     ctx: &Context,
-) -> Result<Option<WorkloadIdentityTokenResponse>> {
-    // Read the federated token from file
-    let federated_token = match ctx.file_read(federated_token_file).await {
-        Ok(content) => String::from_utf8(content).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to parse federated token file as UTF-8")
-                .with_source(e)
-        })?,
-        Err(_) => return Ok(None), // File doesn't exist or can't be read
-    };
-
-    if federated_token.trim().is_empty() {
-        return Ok(None);
-    }
-
+) -> Result<EntraTokenResponse> {
     let url = format!(
         "{}/{}/oauth2/v2.0/token",
         authority_host.trim_end_matches('/'),
@@ -175,7 +245,7 @@ async fn get_workload_identity_token(
             "client_assertion_type",
             "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
         )
-        .append_pair("client_assertion", federated_token.trim())
+        .append_pair("client_assertion", federated_token)
         .append_pair("grant_type", "client_credentials")
         .finish();
 
@@ -192,17 +262,61 @@ async fn get_workload_identity_token(
     let resp = ctx.http_send(req).await?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let body = String::from_utf8_lossy(resp.body());
-        return Err(reqsign_core::Error::unexpected(format!(
-            "Workload identity request failed with status {status}: {body}"
-        )));
+        return Err(token_request_error(
+            "Microsoft Entra workload identity token request",
+            resp.status(),
+        ));
     }
 
-    let token: WorkloadIdentityTokenResponse =
-        serde_json::from_slice(resp.body()).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to parse workload identity response")
-                .with_source(e)
-        })?;
-    Ok(Some(token))
+    parse_token_response(resp.body(), "workload identity token response")
+}
+
+async fn load_file_subject_token(ctx: &Context, path: &str) -> Result<Option<LoadedSubjectToken>> {
+    let content = match ctx.file_read(path).await {
+        Ok(content) => String::from_utf8(content).map_err(|err| {
+            reqsign_core::Error::unexpected("failed to parse federated token file as UTF-8")
+                .with_source(err)
+        })?,
+        Err(_) => return Ok(None),
+    };
+    let token = content.trim();
+    if token.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(LoadedSubjectToken::new(token, None)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqsign_core::ErrorKind;
+
+    #[test]
+    fn caller_provided_subject_token_is_redacted_from_debug() {
+        let provider = WorkloadIdentityCredentialProvider::new()
+            .with_tenant_id("test-tenant")
+            .with_client_id("test-client")
+            .with_federated_token_file("/must-not-be-read")
+            .with_subject_token("caller.subject+token/");
+
+        assert!(!format!("{provider:?}").contains("caller.subject+token/"));
+    }
+
+    #[tokio::test]
+    async fn expired_subject_token_is_rejected() {
+        let provider = WorkloadIdentityCredentialProvider::new()
+            .with_tenant_id("test-tenant")
+            .with_client_id("test-client")
+            .with_subject_token_and_expiration(
+                "expired.subject.token",
+                Timestamp::now() - Duration::from_secs(1),
+            );
+
+        let err = provider
+            .provide_credential(&Context::new())
+            .await
+            .expect_err("expired token must fail");
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert!(err.to_string().contains("subject token has expired"));
+    }
 }

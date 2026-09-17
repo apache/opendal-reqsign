@@ -100,10 +100,27 @@ async fn test_client_side_credential_access_boundary_live_interoperability() -> 
         .map_err(|err| {
             reqsign_core::Error::unexpected("client-side CAB live request failed").with_source(err)
         })?;
+    let status = response.status();
+    let body = response.text().await.map_err(|err| {
+        reqsign_core::Error::unexpected("failed to read client-side CAB live response")
+            .with_source(err)
+    })?;
     assert!(
-        response.status().is_success(),
+        status.is_success(),
         "client-issued CAB token was rejected with status {}",
-        response.status()
+        status
+    );
+    let listing: serde_json::Value = serde_json::from_str(&body).map_err(|err| {
+        reqsign_core::Error::unexpected("client-side CAB live response was not valid JSON")
+            .with_source(err)
+    })?;
+    assert!(
+        listing["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with(&object_prefix)))),
+        "client-issued CAB token did not list the fixed probe object"
     );
 
     let disallowed_prefix = if object_prefix.starts_with('a') {

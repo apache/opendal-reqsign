@@ -15,29 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::assume_role::{
+    DEFAULT_STS_ENDPOINT, normalize_sts_endpoint, parse_credential, signature_nonce,
+    signed_rpc_request,
+};
 use crate::provide_credential::{
     ConfigFileCredentialProvider, CredentialsFileCredentialProvider, EnvCredentialProvider,
     OssProfileCredentialProvider,
 };
 use crate::{Credential, constants::*};
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
-use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
     Context, ProvideCredential, ProvideCredentialChain, ProvideCredentialDyn, Result,
 };
-use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static ALIYUN_RPC_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
-const DEFAULT_STS_ENDPOINT: &str = "https://sts.aliyuncs.com";
-static SIGNATURE_NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// AssumeRoleCredentialProvider loads credentials via Alibaba Cloud STS AssumeRole.
 ///
@@ -200,12 +192,7 @@ impl AssumeRoleCredentialProvider {
             return nonce.clone();
         }
 
-        let counter = SIGNATURE_NONCE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        format!(
-            "{}-{}-{counter}",
-            signing_time.as_second(),
-            signing_time.subsec_nanosecond()
-        )
+        signature_nonce(signing_time)
     }
 }
 
@@ -253,31 +240,11 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
             params.insert("SecurityToken".to_string(), token.clone());
         }
 
-        let canonicalized_query_string = canonicalized_query_string(&params);
-        let string_to_sign = format!(
-            "GET&%2F&{}",
-            percent_encode_query_value(&canonicalized_query_string)
-        );
-        let signature = base64_hmac_sha1(
-            format!("{}&", base_credential.access_key_secret).as_bytes(),
-            string_to_sign.as_bytes(),
-        );
-
-        let url = format!(
-            "{}/?{}&Signature={}",
-            self.get_sts_endpoint(&envs),
-            canonicalized_query_string,
-            percent_encode_query_value(&signature)
-        );
-
-        let req = http::Request::builder()
-            .method(http::Method::GET)
-            .uri(&url)
-            .header(
-                http::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            )
-            .body(Vec::new())?;
+        let req = signed_rpc_request(
+            &self.get_sts_endpoint(&envs),
+            &params,
+            &base_credential.access_key_secret,
+        )?;
 
         let resp = ctx.http_send(req.map(Into::into)).await?;
         if resp.status() != http::StatusCode::OK {
@@ -287,17 +254,7 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
             )));
         }
 
-        let resp: AssumeRoleResponse = serde_json::from_slice(resp.body()).map_err(|e| {
-            reqsign_core::Error::unexpected(format!("Failed to parse STS response: {e}"))
-        })?;
-        let resp_cred = resp.credentials;
-
-        Ok(Some(Credential {
-            access_key_id: resp_cred.access_key_id,
-            access_key_secret: resp_cred.access_key_secret,
-            security_token: Some(resp_cred.security_token),
-            expires_in: Some(resp_cred.expiration.parse()?),
-        }))
+        Ok(Some(parse_credential(resp.body())?))
     }
 }
 
@@ -309,54 +266,13 @@ fn default_base_provider_chain() -> ProvideCredentialChain<Credential> {
         .push(ConfigFileCredentialProvider::new())
 }
 
-fn normalize_sts_endpoint(endpoint: &str) -> String {
-    let endpoint = endpoint.trim().trim_end_matches('/');
-    if endpoint.starts_with("https://") || endpoint.starts_with("http://") {
-        endpoint.to_string()
-    } else {
-        format!("https://{endpoint}")
-    }
-}
-
-fn canonicalized_query_string(params: &BTreeMap<String, String>) -> String {
-    params
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                percent_encode_query_value(key),
-                percent_encode_query_value(value)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn percent_encode_query_value(value: &str) -> String {
-    utf8_percent_encode(value, &ALIYUN_RPC_QUERY_ENCODE_SET).to_string()
-}
-
-#[derive(Default, Debug, Deserialize)]
-#[serde(default)]
-struct AssumeRoleResponse {
-    #[serde(rename = "Credentials")]
-    credentials: AssumeRoleCredentials,
-}
-
-#[derive(Default, Debug, Deserialize)]
-#[serde(default, rename_all = "PascalCase")]
-struct AssumeRoleCredentials {
-    access_key_id: String,
-    access_key_secret: String,
-    security_token: String,
-    expiration: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::RequestSigner;
+    use crate::assume_role::{canonicalized_query_string, percent_encode_query_value};
     use bytes::Bytes;
+    use reqsign_core::hash::base64_hmac_sha1;
     use reqsign_core::{Context, HttpSend, Signer, StaticEnv};
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -425,58 +341,6 @@ mod tests {
                 .body(Bytes::from(body))
                 .expect("response must build"))
         }
-    }
-
-    #[test]
-    fn test_parse_assume_role_response() -> Result<()> {
-        let content = r#"{
-    "RequestId": "3D57EAD2-8723-1F26-B69C-F8707D8B565D",
-    "AssumedRoleUser": {
-        "AssumedRoleId": "33157794895460****",
-        "Arn": "acs:ram::113511544585****:role/test-role/test-session"
-    },
-    "Credentials": {
-        "SecurityToken": "CAIShwJ1q6Ft5B2yfSjIr5bSEsj4g7BihPWGWHz****",
-        "Expiration": "2021-10-20T04:27:09Z",
-        "AccessKeySecret": "CVwjCkNzTMupZ8NbTCxCBRq3K16jtcWFTJAyBEv2****",
-        "AccessKeyId": "STS.NUgYrLnoC37mZZCNnAbez****"
-    }
-}"#;
-
-        let resp: AssumeRoleResponse =
-            serde_json::from_str(content).expect("json deserialize must succeed");
-
-        assert_eq!(
-            resp.credentials.access_key_id,
-            "STS.NUgYrLnoC37mZZCNnAbez****"
-        );
-        assert_eq!(
-            resp.credentials.access_key_secret,
-            "CVwjCkNzTMupZ8NbTCxCBRq3K16jtcWFTJAyBEv2****"
-        );
-        assert_eq!(
-            resp.credentials.security_token,
-            "CAIShwJ1q6Ft5B2yfSjIr5bSEsj4g7BihPWGWHz****"
-        );
-        assert_eq!(resp.credentials.expiration, "2021-10-20T04:27:09Z");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_normalize_sts_endpoint_accepts_bare_host_and_full_url() {
-        assert_eq!(
-            "https://sts.aliyuncs.com",
-            normalize_sts_endpoint("sts.aliyuncs.com")
-        );
-        assert_eq!(
-            "https://sts.example.com",
-            normalize_sts_endpoint("https://sts.example.com/")
-        );
-        assert_eq!(
-            "http://sts.example.com",
-            normalize_sts_endpoint("http://sts.example.com/")
-        );
     }
 
     #[tokio::test]

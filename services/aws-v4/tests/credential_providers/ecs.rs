@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context_with_env;
+use super::{assert_credentials_work, create_test_context_with_env};
 use log::info;
 use reqsign_aws_v4::ECSCredentialProvider;
 use reqsign_core::ProvideCredential;
@@ -30,11 +30,6 @@ async fn test_ecs_credential_provider() {
     }
 
     let mut envs = HashMap::new();
-
-    // Add custom metadata endpoint if set (for testing)
-    if let Ok(metadata_uri) = env::var("ECS_CONTAINER_METADATA_URI") {
-        envs.insert("ECS_CONTAINER_METADATA_URI".to_string(), metadata_uri);
-    }
 
     // ECS can use either relative or full URI
     if let Ok(relative_uri) = env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") {
@@ -66,4 +61,5 @@ async fn test_ecs_credential_provider() {
     let cred = cred.unwrap();
     assert!(!cred.access_key_id.is_empty());
     assert!(!cred.secret_access_key.is_empty());
+    assert_credentials_work(&ctx, &cred).await;
 }

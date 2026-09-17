@@ -18,6 +18,8 @@
 mod env;
 pub use env::EnvCredentialProvider;
 
+mod entra;
+
 mod static_provider;
 pub use static_provider::StaticCredentialProvider;
 

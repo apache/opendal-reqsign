@@ -146,6 +146,9 @@ let signer = aws::default_signer("s3", "us-east-1")
     .with_context(my_custom_context);
 ```
 
+For server applications that already hold an OIDC assertion, see
+[Caller-provided subject tokens](../docs/caller-provided-subject-tokens.md).
+
 ### Examples for Other Services
 
 ```rust,ignore

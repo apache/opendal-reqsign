@@ -21,7 +21,10 @@ use http::header::CONTENT_TYPE;
 use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
-use crate::credential::{Credential, ImpersonatedServiceAccount, Token};
+use crate::credential::{
+    Credential, ImpersonatedServiceAccount, Token, parse_service_account_impersonation_url,
+};
+use crate::service_account_impersonation::generate_access_token;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 
@@ -43,22 +46,6 @@ struct RefreshTokenResponse {
     access_token: String,
     #[serde(default)]
     expires_in: Option<u64>,
-}
-
-/// Impersonation request.
-#[derive(Serialize)]
-struct ImpersonationRequest {
-    lifetime: String,
-    scope: Vec<String>,
-    delegates: Vec<String>,
-}
-
-/// Impersonated token response.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImpersonatedTokenResponse {
-    access_token: String,
-    expire_time: String,
 }
 
 /// ImpersonatedServiceAccountCredentialProvider exchanges impersonated service account credentials for access tokens.
@@ -154,56 +141,17 @@ impl ImpersonatedServiceAccountCredentialProvider {
             .or_else(|| ctx.env_var(crate::constants::GOOGLE_SCOPE))
             .unwrap_or_else(|| crate::constants::DEFAULT_SCOPE.to_string());
 
-        let request = ImpersonationRequest {
-            lifetime: format!("{}s", MAX_LIFETIME.as_secs()),
-            scope: vec![scope.clone()],
-            delegates: self.impersonated_service_account.delegates.clone(),
-        };
-
-        let body = serde_json::to_vec(&request).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to serialize request").with_source(e)
-        })?;
-
-        let req = http::Request::builder()
-            .method(http::Method::POST)
-            .uri(
-                &self
-                    .impersonated_service_account
-                    .service_account_impersonation_url,
-            )
-            .header(CONTENT_TYPE, "application/json")
-            .header(
-                "Authorization",
-                format!("Bearer {}", bearer_token.access_token),
-            )
-            .body(body.into())
-            .map_err(|e| {
-                reqsign_core::Error::unexpected("failed to build HTTP request").with_source(e)
-            })?;
-
-        let resp = ctx.http_send(req).await?;
-
-        if resp.status() != http::StatusCode::OK {
-            error!(
-                "access token loader for impersonated service account got unexpected response: {resp:?}"
-            );
-            let body = String::from_utf8_lossy(resp.body());
-            return Err(reqsign_core::Error::unexpected(format!(
-                "access token loader for impersonated service account failed: {body}"
-            )));
-        }
-
-        let token_resp: ImpersonatedTokenResponse =
-            serde_json::from_slice(resp.body()).map_err(|e| {
-                reqsign_core::Error::unexpected("failed to parse impersonation response")
-                    .with_source(e)
-            })?;
-
-        // Parse expire time from RFC3339 format
-        Ok(Token {
-            access_token: token_resp.access_token,
-            expires_at: token_resp.expire_time.parse().ok(),
-        })
+        generate_access_token(
+            ctx,
+            &self
+                .impersonated_service_account
+                .service_account_impersonation_url,
+            &bearer_token.access_token,
+            &[scope],
+            Some(&self.impersonated_service_account.delegates),
+            Some(MAX_LIFETIME),
+        )
+        .await
     }
 }
 impl ProvideCredential for ImpersonatedServiceAccountCredentialProvider {
@@ -216,6 +164,94 @@ impl ProvideCredential for ImpersonatedServiceAccountCredentialProvider {
         // Then exchange for impersonated access token
         let access_token = self.generate_access_token(ctx, &bearer_token).await?;
 
-        Ok(Some(Credential::with_token(access_token)))
+        let credential = Credential::with_token(access_token);
+        let signer_email = parse_service_account_impersonation_url(
+            &self
+                .impersonated_service_account
+                .service_account_impersonation_url,
+        )
+        .ok();
+        Ok(Some(match signer_email {
+            Some(signer_email) => credential.with_signer_email(signer_email),
+            None => credential,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use reqsign_core::HttpSend;
+
+    #[derive(Clone, Debug)]
+    struct MockHttpSend;
+
+    impl HttpSend for MockHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            let mut body: serde_json::Value = match req.uri().to_string().as_str() {
+                "https://oauth2.googleapis.com/token" => serde_json::from_slice(include_bytes!(
+                    "../../tests/fixtures/authorized_user_token_response.json"
+                ))
+                .expect("real authorized-user response fixture must parse"),
+                "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/target%40example.com:generateAccessToken" => {
+                    serde_json::from_slice(include_bytes!(
+                        "../../tests/fixtures/iam_generate_access_token_response.json"
+                    ))
+                    .expect("real IAM Credentials response fixture must parse")
+                }
+                uri => panic!("unexpected request: {uri}"),
+            };
+            if req.uri() == "https://oauth2.googleapis.com/token" {
+                body["access_token"] = "source-token".into();
+                body["expires_in"] = 3600.into();
+            } else {
+                body["accessToken"] = "impersonated-token".into();
+                body["expireTime"] = "2100-01-01T00:00:00Z".into();
+            }
+
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(
+                    serde_json::to_vec(&body)
+                        .expect("response fixture must serialize")
+                        .into(),
+                )
+                .expect("response must build"))
+        }
+    }
+
+    #[tokio::test]
+    async fn preserves_impersonated_service_account_identity() -> Result<()> {
+        let provider = ImpersonatedServiceAccountCredentialProvider::new(
+            ImpersonatedServiceAccount {
+                service_account_impersonation_url: "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/target%40example.com:generateAccessToken".to_string(),
+                source_credentials: crate::credential::OAuth2Credentials {
+                    client_id: "client-id".to_string(),
+                    client_secret: "client-secret".to_string(),
+                    refresh_token: "refresh-token".to_string(),
+                },
+                delegates: Vec::new(),
+            },
+        );
+
+        let credential = provider
+            .provide_credential(&Context::new().with_http_send(MockHttpSend))
+            .await?
+            .expect("credential must exist");
+
+        assert_eq!(
+            credential.signer_email.as_deref(),
+            Some("target@example.com")
+        );
+        assert_eq!(
+            credential
+                .token
+                .as_ref()
+                .expect("token must exist")
+                .access_token,
+            "impersonated-token"
+        );
+        Ok(())
     }
 }

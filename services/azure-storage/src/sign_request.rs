@@ -24,7 +24,7 @@ use crate::user_delegation::{
 use http::request::Parts;
 use http::{HeaderValue, Uri, header};
 use log::debug;
-use percent_encoding::{percent_decode_str, percent_encode};
+use percent_encoding::percent_decode_str;
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
@@ -533,17 +533,7 @@ fn service_sas_resource(path: &str) -> Result<crate::service_sas::ServiceSasReso
 }
 
 fn append_query_pairs(uri: &Uri, pairs: &[(String, String)]) -> Result<Uri> {
-    let fragment = pairs
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                percent_encode(key.as_bytes(), &AZURE_QUERY_ENCODE_SET),
-                percent_encode(value.as_bytes(), &AZURE_QUERY_ENCODE_SET)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("&");
+    let fragment = crate::service_sas::encode_query_pairs(pairs);
     append_query_fragment(uri, &fragment)
 }
 

@@ -254,7 +254,7 @@ mod tests {
             Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(
-                    br#"{"access_token":"test-access-token","expires_in":3600}"#
+                    include_bytes!("../../tests/fixtures/vm_metadata_token_response.json")
                         .as_slice()
                         .into(),
                 )

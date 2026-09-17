@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use super::create_test_context_with_env;
+use super::{assert_provider_reads_probe, create_test_context_with_env};
 use log::warn;
-use reqsign_core::{ProvideCredential, Result};
+use reqsign_core::Result;
 use reqsign_google::DefaultCredentialProvider;
 use std::collections::HashMap;
 use std::env;
@@ -42,29 +42,14 @@ async fn test_impersonated_service_account_credential_provider() -> Result<()> {
         "Credential file must be impersonated_service_account type"
     );
 
+    let scope = env::var("REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE")
+        .unwrap_or_else(|_| "https://www.googleapis.com/auth/devstorage.read_only".to_string());
     let ctx = create_test_context_with_env(HashMap::from_iter([
         ("GOOGLE_APPLICATION_CREDENTIALS".to_string(), cred_path),
-        (
-            "GOOGLE_SCOPE".to_string(),
-            "https://www.googleapis.com/auth/devstorage.read_write".to_string(),
-        ),
+        ("GOOGLE_SCOPE".to_string(), scope),
     ]));
 
-    let provider = DefaultCredentialProvider::new();
-
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided for impersonated service account");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    assert!(
-        !credential.has_service_account(),
-        "Should not have service account"
-    );
-
-    Ok(())
+    assert_provider_reads_probe(DefaultCredentialProvider::new(), ctx).await
 }
 
 #[tokio::test]
@@ -90,29 +75,14 @@ async fn test_impersonated_service_account_with_real_credentials() -> Result<()>
         "Credential file must be impersonated_service_account type"
     );
 
+    let scope = env::var("REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE")
+        .unwrap_or_else(|_| "https://www.googleapis.com/auth/devstorage.read_only".to_string());
     let ctx = create_test_context_with_env(HashMap::from_iter([
         ("GOOGLE_APPLICATION_CREDENTIALS".to_string(), cred_path),
-        (
-            "GOOGLE_SCOPE".to_string(),
-            "https://www.googleapis.com/auth/devstorage.read_write".to_string(),
-        ),
+        ("GOOGLE_SCOPE".to_string(), scope),
     ]));
 
-    let provider = DefaultCredentialProvider::new();
-
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided for real impersonation");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    assert!(
-        !credential.has_service_account(),
-        "Should not have service account"
-    );
-
-    Ok(())
+    assert_provider_reads_probe(DefaultCredentialProvider::new(), ctx).await
 }
 
 #[tokio::test]
@@ -138,27 +108,12 @@ async fn test_impersonated_service_account_with_delegates() -> Result<()> {
         "Credential file must contain delegation chain"
     );
 
+    let scope = env::var("REQSIGN_GOOGLE_CLOUD_STORAGE_SCOPE")
+        .unwrap_or_else(|_| "https://www.googleapis.com/auth/devstorage.read_only".to_string());
     let ctx = create_test_context_with_env(HashMap::from_iter([
         ("GOOGLE_APPLICATION_CREDENTIALS".to_string(), cred_path),
-        (
-            "GOOGLE_SCOPE".to_string(),
-            "https://www.googleapis.com/auth/devstorage.read_write".to_string(),
-        ),
+        ("GOOGLE_SCOPE".to_string(), scope),
     ]));
 
-    let provider = DefaultCredentialProvider::new();
-
-    let credential = provider
-        .provide_credential(&ctx)
-        .await?
-        .expect("credential must be provided for delegation chain");
-
-    assert!(credential.has_token(), "Must have access token");
-    assert!(credential.has_valid_token(), "Token must be valid");
-    assert!(
-        !credential.has_service_account(),
-        "Should not have service account"
-    );
-
-    Ok(())
+    assert_provider_reads_probe(DefaultCredentialProvider::new(), ctx).await
 }

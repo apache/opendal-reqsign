@@ -92,9 +92,9 @@
 //! // Use the custom client
 //! let http_send = ReqwestHttpSend::new(client);
 //! ```
-use bytes::Bytes;
 #[cfg(target_arch = "wasm32")]
-use futures_channel::oneshot;
+use asyncband::oneshot;
+use bytes::Bytes;
 #[cfg(not(target_arch = "wasm32"))]
 use http_body_util::BodyExt;
 use reqsign_core::{Error, HttpSend, Result};

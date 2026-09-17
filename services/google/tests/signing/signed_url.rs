@@ -56,16 +56,12 @@ async fn test_get_object_with_signed_url() -> Result<()> {
         return Ok(());
     };
 
-    let url = &env::var("REQSIGN_GOOGLE_CLOUD_STORAGE_URL")
-        .expect("env REQSIGN_GOOGLE_CLOUD_STORAGE_URL must set");
+    let url = &env::var("REQSIGN_GOOGLE_CLOUD_STORAGE_SIGNED_PROBE_URL")
+        .expect("env REQSIGN_GOOGLE_CLOUD_STORAGE_SIGNED_PROBE_URL must be set");
 
     let mut builder = http::Request::builder();
     builder = builder.method(http::Method::GET);
-    builder = builder.uri(format!(
-        "{}/{}",
-        url.replace("storage/v1/b/", ""),
-        "not_exist_file"
-    ));
+    builder = builder.uri(url);
     let req = builder.body("").map_err(|e| {
         reqsign_core::Error::unexpected("failed to build HTTP request").with_source(e)
     })?;
@@ -88,14 +84,12 @@ async fn test_get_object_with_signed_url() -> Result<()> {
         .expect("request must succeed");
 
     let code = resp.status();
-    debug!("got response: {resp:?}");
-    debug!(
-        "got body: {}",
-        resp.text().await.map_err(|e| {
-            reqsign_core::Error::unexpected("failed to read response body").with_source(e)
-        })?
-    );
-    assert_eq!(StatusCode::NOT_FOUND, code);
+    let body = resp.text().await.map_err(|e| {
+        reqsign_core::Error::unexpected("failed to read response body").with_source(e)
+    })?;
+    debug!("got response status: {code}");
+    assert_eq!(StatusCode::OK, code);
+    assert_eq!("reqsign-live-google-ok\n", body);
     Ok(())
 }
 

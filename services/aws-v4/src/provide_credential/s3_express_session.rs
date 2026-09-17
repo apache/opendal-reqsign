@@ -17,7 +17,7 @@
 
 use crate::Credential;
 use bytes::Bytes;
-use http::{HeaderValue, Method, Request, StatusCode, header};
+use http::{HeaderValue, Method, Request, StatusCode, Uri, header};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
     Context, Error, GrantCredential, ProvideCredential, ProvideCredentialDyn, Result, SignRequest,
@@ -134,10 +134,11 @@ impl FromStr for S3ExpressSessionPartition {
 
 /// A complete S3 Express `CreateSession` authorization grant.
 ///
-/// The source AWS principal must have `s3express:CreateSession` permission for
-/// the directory bucket bound by [`S3ExpressSessionConfig`]. A bucket or
-/// identity policy can use the `s3express:SessionMode` condition key to limit
-/// which mode that principal may grant.
+/// For AWS directory buckets, the source AWS principal must have
+/// `s3express:CreateSession` permission for the bucket bound by
+/// [`S3ExpressSessionConfig`]. A bucket or identity policy can use the
+/// `s3express:SessionMode` condition key to limit which mode that principal may
+/// grant. A compatible service defines its own authorization policy.
 ///
 /// This grant does not override the directory bucket's encryption settings.
 /// CreateSession therefore uses the bucket default, matching the compatibility
@@ -160,9 +161,59 @@ impl S3ExpressSessionGrant {
         Self { mode }
     }
 
+    /// Select the maximum session privilege allowed by service policy.
+    ///
+    /// This selection omits `x-amz-create-session-mode`. On AWS, S3 attempts a
+    /// `ReadWrite` session first and falls back to `ReadOnly` when required by
+    /// policy. It remains distinct from either explicit session mode.
+    pub fn maximum_allowed() -> S3ExpressSessionGrantSelection {
+        S3ExpressSessionGrantSelection::MaximumAllowed
+    }
+
     /// Return the bound session mode.
     pub fn mode(&self) -> S3ExpressSessionMode {
         self.mode
+    }
+}
+
+/// Selects how S3 Express determines the `CreateSession` permission mode.
+///
+/// Explicit grants send the corresponding `x-amz-create-session-mode` value.
+/// [`Self::MaximumAllowed`] omits that header and delegates the final mode to
+/// AWS policy evaluation.
+#[non_exhaustive]
+#[derive(Clone, Eq, PartialEq)]
+pub enum S3ExpressSessionGrantSelection {
+    /// Let the service create the session with the maximum privilege allowed by policy.
+    MaximumAllowed,
+    /// Request exactly the mode bound by the explicit grant.
+    Explicit(S3ExpressSessionGrant),
+}
+
+impl S3ExpressSessionGrantSelection {
+    /// Return the explicitly requested mode, or `None` for maximum-allowed.
+    pub fn explicit_mode(&self) -> Option<S3ExpressSessionMode> {
+        match self {
+            Self::MaximumAllowed => None,
+            Self::Explicit(grant) => Some(grant.mode()),
+        }
+    }
+
+    fn mode_header_value(&self) -> Option<&'static str> {
+        self.explicit_mode().map(S3ExpressSessionMode::as_str)
+    }
+}
+
+impl Debug for S3ExpressSessionGrantSelection {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3ExpressSessionGrantSelection")
+            .finish_non_exhaustive()
+    }
+}
+
+impl From<S3ExpressSessionGrant> for S3ExpressSessionGrantSelection {
+    fn from(grant: S3ExpressSessionGrant) -> Self {
+        Self::Explicit(grant)
     }
 }
 
@@ -187,6 +238,20 @@ impl Debug for S3ExpressSessionConfig {
 }
 
 impl S3ExpressSessionConfig {
+    /// Resolve a directory bucket configuration from its bucket name and Region.
+    ///
+    /// The complete `base--zone-id--x-s3` bucket name is validated, the Zone ID
+    /// is extracted from its suffix, and the partition is derived from `region`.
+    /// Supplying the Region explicitly supports Local Zones and new Zone ID
+    /// prefixes without relying on compatibility inference.
+    pub fn from_bucket(bucket: impl Into<String>, region: impl Into<String>) -> Result<Self> {
+        let bucket = bucket.into();
+        let region = region.into();
+        let zone_id = zone_id_from_bucket(&bucket)?;
+        let partition = S3ExpressSessionPartition::from_region(&region)?;
+        Self::new(bucket, zone_id, region, partition)
+    }
+
     /// Create and validate a directory bucket configuration.
     ///
     /// `bucket` must include the exact `--{zone_id}--x-s3` suffix. `zone_id`
@@ -264,7 +329,106 @@ impl S3ExpressSessionConfig {
     }
 }
 
-/// Grants expiration-aware AWS credentials for one S3 Express directory bucket.
+#[derive(Clone)]
+enum S3ExpressSessionEndpointConfig {
+    Aws(S3ExpressSessionConfig),
+    Custom {
+        // A custom service identifies the bucket through its configured
+        // authority, but the granter still retains the caller's bucket binding.
+        _bucket: String,
+        region: String,
+        endpoint: String,
+        authority: String,
+    },
+}
+
+impl S3ExpressSessionEndpointConfig {
+    fn custom(
+        bucket: impl Into<String>,
+        region: impl Into<String>,
+        endpoint: impl Into<String>,
+    ) -> Result<Self> {
+        let bucket = bucket.into();
+        if bucket.is_empty() {
+            return Err(Error::config_invalid(
+                "S3 Express custom endpoint requires a bucket",
+            ));
+        }
+
+        let region = region.into();
+        validate_custom_signing_region(&region)?;
+
+        let endpoint: Uri = endpoint
+            .into()
+            .parse()
+            .map_err(|_| Error::config_invalid("invalid S3 Express custom endpoint"))?;
+        if endpoint.scheme_str() != Some("https") {
+            return Err(Error::config_invalid(
+                "S3 Express custom endpoint must use HTTPS",
+            ));
+        }
+        if endpoint.path() != "/" || endpoint.query().is_some() {
+            return Err(Error::config_invalid(
+                "S3 Express custom endpoint must not include a path or query",
+            ));
+        }
+        let authority = endpoint
+            .authority()
+            .ok_or_else(|| Error::config_invalid("S3 Express custom endpoint has no authority"))?;
+        if authority.as_str().contains('@') {
+            return Err(Error::config_invalid(
+                "S3 Express custom endpoint must not include user information",
+            ));
+        }
+        let host = endpoint
+            .host()
+            .ok_or_else(|| Error::config_invalid("S3 Express custom endpoint has no host"))?;
+        if host.is_empty() {
+            return Err(Error::config_invalid(
+                "S3 Express custom endpoint has no host",
+            ));
+        }
+
+        let authority = authority.as_str().to_string();
+        Ok(Self::Custom {
+            _bucket: bucket,
+            region,
+            endpoint: format!("https://{authority}"),
+            authority,
+        })
+    }
+
+    fn region(&self) -> &str {
+        match self {
+            Self::Aws(config) => &config.region,
+            Self::Custom { region, .. } => region,
+        }
+    }
+
+    fn endpoint(&self) -> &str {
+        match self {
+            Self::Aws(config) => &config.endpoint,
+            Self::Custom { endpoint, .. } => endpoint,
+        }
+    }
+
+    fn authority(&self) -> &str {
+        match self {
+            Self::Aws(config) => config
+                .endpoint
+                .strip_prefix("https://")
+                .expect("validated endpoint must use HTTPS"),
+            Self::Custom { authority, .. } => authority,
+        }
+    }
+
+    fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom { .. })
+    }
+}
+
+/// Grants expiration-aware credentials for one S3 Express directory bucket or
+/// one caller-configured compatible endpoint.
 ///
 /// The source credential authorizes `s3express:CreateSession` and is used only
 /// to sign the issuance request. The output contains only the independently
@@ -280,18 +444,16 @@ impl S3ExpressSessionConfig {
 /// ```no_run
 /// use reqsign_aws_v4::{
 ///     DefaultCredentialProvider, S3ExpressSessionConfig, S3ExpressSessionGrant,
-///     S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
+///     S3ExpressSessionGranter,
 /// };
 /// use reqsign_core::{Context, Granter};
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let config = S3ExpressSessionConfig::new(
+/// let config = S3ExpressSessionConfig::from_bucket(
 ///     "my-bucket--usw2-az1--x-s3",
-///     "usw2-az1",
 ///     "us-west-2",
-///     S3ExpressSessionPartition::Aws,
 /// )?;
-/// let grant = S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly);
+/// let grant = S3ExpressSessionGrant::maximum_allowed();
 /// let granter = Granter::new(
 ///     Context::new(),
 ///     DefaultCredentialProvider::new(),
@@ -305,8 +467,8 @@ impl S3ExpressSessionConfig {
 /// ```
 #[derive(Clone)]
 pub struct S3ExpressSessionGranter {
-    config: S3ExpressSessionConfig,
-    grant: S3ExpressSessionGrant,
+    config: S3ExpressSessionEndpointConfig,
+    grant: S3ExpressSessionGrantSelection,
     #[cfg(test)]
     time: Option<Timestamp>,
     #[cfg(test)]
@@ -321,11 +483,14 @@ impl Debug for S3ExpressSessionGranter {
 }
 
 impl S3ExpressSessionGranter {
-    /// Create a granter with stable bucket configuration and a complete grant.
-    pub fn new(config: S3ExpressSessionConfig, grant: S3ExpressSessionGrant) -> Self {
+    /// Create a granter with stable bucket configuration and a mode selection.
+    pub fn new(
+        config: S3ExpressSessionConfig,
+        grant: impl Into<S3ExpressSessionGrantSelection>,
+    ) -> Self {
         Self {
-            config,
-            grant,
+            config: S3ExpressSessionEndpointConfig::Aws(config),
+            grant: grant.into(),
             #[cfg(test)]
             time: None,
             #[cfg(test)]
@@ -333,9 +498,58 @@ impl S3ExpressSessionGranter {
         }
     }
 
-    /// Replace the bound grant while retaining the stable bucket configuration.
-    pub fn with_grant(mut self, grant: S3ExpressSessionGrant) -> Self {
-        self.grant = grant;
+    /// Create a granter for a compatible service at a custom HTTPS endpoint.
+    ///
+    /// This path deliberately bypasses AWS directory-bucket name, Zone ID,
+    /// partition, and DNS derivation rules. The endpoint must already route
+    /// `CreateSession` to `bucket`; reqsign sends the exact configured authority
+    /// and does not add the bucket to the request target. `region` is used
+    /// verbatim in the SigV4 credential scope.
+    ///
+    /// # Security
+    ///
+    /// The endpoint receives AWS `Authorization` material and, when the source
+    /// credential is temporary, its `x-amz-security-token`. Reqsign validates
+    /// endpoint syntax but cannot determine whether the configured service is
+    /// authorized to receive those credentials or implements `CreateSession`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use reqsign_aws_v4::{
+    ///     S3ExpressSessionGrant, S3ExpressSessionGranter, S3ExpressSessionMode,
+    /// };
+    ///
+    /// # fn example() -> reqsign_core::Result<()> {
+    /// let granter = S3ExpressSessionGranter::new_with_custom_endpoint(
+    ///     "compatible-bucket",
+    ///     "custom-region-1",
+    ///     "https://sessions.example.com",
+    ///     S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+    /// )?;
+    /// # let _ = granter;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new_with_custom_endpoint(
+        bucket: impl Into<String>,
+        region: impl Into<String>,
+        endpoint: impl Into<String>,
+        grant: impl Into<S3ExpressSessionGrantSelection>,
+    ) -> Result<Self> {
+        Ok(Self {
+            config: S3ExpressSessionEndpointConfig::custom(bucket, region, endpoint)?,
+            grant: grant.into(),
+            #[cfg(test)]
+            time: None,
+            #[cfg(test)]
+            time_after_request: None,
+        })
+    }
+
+    /// Replace the bound mode selection while retaining the stable bucket configuration.
+    pub fn with_grant(mut self, grant: impl Into<S3ExpressSessionGrantSelection>) -> Self {
+        self.grant = grant.into();
         self
     }
 
@@ -397,22 +611,19 @@ impl S3ExpressSessionGranter {
     }
 
     async fn create_session(&self, ctx: &Context, source: &Credential) -> Result<Credential> {
-        let authority = self
-            .config
-            .endpoint
-            .strip_prefix("https://")
-            .expect("validated endpoint must use HTTPS");
-        let request = Request::builder()
+        let authority = self.config.authority();
+        let mut request = Request::builder()
             .method(Method::GET)
-            .uri(format!("{}/?session", self.config.endpoint))
+            .uri(format!("{}/?session", self.config.endpoint()))
             .header(header::HOST, authority)
-            .header("x-amz-content-sha256", crate::EMPTY_STRING_SHA256)
-            .header("x-amz-create-session-mode", self.grant.mode.as_str())
-            .body(Bytes::new())
-            .map_err(|e| {
-                Error::request_invalid("failed to build S3 Express CreateSession request")
-                    .with_source(e)
-            })?;
+            .header("x-amz-content-sha256", crate::EMPTY_STRING_SHA256);
+        if let Some(mode) = self.grant.mode_header_value() {
+            request = request.header("x-amz-create-session-mode", mode);
+        }
+        let request = request.body(Bytes::new()).map_err(|e| {
+            Error::request_invalid("failed to build S3 Express CreateSession request")
+                .with_source(e)
+        })?;
 
         let (mut parts, body) = request.into_parts();
         let mut signing_source = source.clone();
@@ -426,7 +637,7 @@ impl S3ExpressSessionGranter {
             parts.headers.insert("x-amz-security-token", value);
         }
 
-        let signer = crate::RequestSigner::new("s3express", &self.config.region);
+        let signer = crate::RequestSigner::new("s3express", self.config.region());
         #[cfg(test)]
         let signer = if let Some(time) = self.time {
             signer.with_time(time)
@@ -437,7 +648,21 @@ impl S3ExpressSessionGranter {
             .sign_request(ctx, &mut parts, Some(&signing_source), None)
             .await?;
 
-        let response = ctx.http_send(Request::from_parts(parts, body)).await?;
+        let response = ctx
+            .http_send(Request::from_parts(parts, body))
+            .await
+            .map_err(|err| {
+                if self.config.is_custom() {
+                    Error::new(
+                        err.kind(),
+                        "failed to send S3 Express CreateSession request",
+                    )
+                    .with_context("operation: CreateSession")
+                    .set_retryable(err.is_retryable())
+                } else {
+                    err
+                }
+            })?;
         let status = response.status();
         if !status.is_success() {
             return Err(create_session_status_error(status));
@@ -469,15 +694,15 @@ impl GrantCredential for S3ExpressSessionGranter {
     }
 }
 
-/// S3 Express fixed-flow credential provider.
+/// S3 Express session credential provider.
 ///
-/// This compatibility API loads its source through [`ProvideCredential`] and
-/// creates a `ReadWrite` session on every call. New explicit credential-vending
-/// flows should use [`S3ExpressSessionGranter`] through
-/// [`reqsign_core::Granter`].
+/// This API loads its source through [`ProvideCredential`] and creates a session
+/// on every call. It defaults to an explicit `ReadWrite` session for compatibility;
+/// use [`Self::with_grant`] to select another mode.
 pub struct S3ExpressSessionProvider {
     bucket: String,
     region: Option<String>,
+    grant: S3ExpressSessionGrantSelection,
     base_provider: Box<dyn ProvideCredentialDyn<Credential = Credential>>,
 }
 
@@ -489,7 +714,7 @@ impl Debug for S3ExpressSessionProvider {
 }
 
 impl S3ExpressSessionProvider {
-    /// Create a fixed `ReadWrite` session provider for a directory bucket.
+    /// Create a session provider that defaults to `ReadWrite` for a directory bucket.
     ///
     /// The legacy constructor infers the Region from well-known AWS Zone ID
     /// prefixes. Use [`S3ExpressSessionProvider::with_region`] when the Zone is
@@ -502,6 +727,7 @@ impl S3ExpressSessionProvider {
         Self {
             bucket: bucket.into(),
             region: None,
+            grant: S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite).into(),
             base_provider: Box::new(provider),
         }
     }
@@ -509,6 +735,12 @@ impl S3ExpressSessionProvider {
     /// Bind the AWS Region instead of using compatibility inference.
     pub fn with_region(mut self, region: impl Into<String>) -> Self {
         self.region = Some(region.into());
+        self
+    }
+
+    /// Select how S3 Express determines the `CreateSession` permission mode.
+    pub fn with_grant(mut self, grant: impl Into<S3ExpressSessionGrantSelection>) -> Self {
+        self.grant = grant.into();
         self
     }
 
@@ -522,12 +754,8 @@ impl S3ExpressSessionProvider {
                 )
             })?,
         };
-        let partition = S3ExpressSessionPartition::from_region(&region)?;
-        let config = S3ExpressSessionConfig::new(&self.bucket, zone_id, region, partition)?;
-        Ok(S3ExpressSessionGranter::new(
-            config,
-            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
-        ))
+        let config = S3ExpressSessionConfig::from_bucket(&self.bucket, region)?;
+        Ok(S3ExpressSessionGranter::new(config, self.grant.clone()))
     }
 }
 
@@ -626,6 +854,27 @@ fn create_session_status_error(status: StatusCode) -> Error {
         _ => Error::unexpected("S3 Express CreateSession request failed"),
     };
     error.with_context(format!("status: {}", status.as_u16()))
+}
+
+fn validate_custom_signing_region(region: &str) -> Result<()> {
+    let valid_length = (1..=64).contains(&region.len());
+    let valid_characters = region
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'));
+    let valid_edges = region
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphanumeric)
+        && region
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric);
+    if !valid_length || !valid_characters || !valid_edges {
+        return Err(Error::config_invalid(
+            "invalid S3 Express custom endpoint signing Region",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_directory_bucket_name(bucket: &str) -> Result<()> {
@@ -764,6 +1013,11 @@ fn infer_region_from_zone_id(zone_id: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_credential_types::Credentials as AwsCredentials;
+    use aws_sigv4::http_request::{
+        PayloadChecksumKind, PercentEncodingMode, SignableBody, SignableRequest, SigningSettings,
+    };
+    use aws_sigv4::sign::v4;
     use http::{HeaderMap, Response, Uri};
     use reqsign_core::{
         ErrorKind, Granter, HttpSend, ProvideCredential, Signer, SigningCredential,
@@ -871,6 +1125,24 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct FailingHttpSend;
+
+    impl Debug for FailingHttpSend {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("FailingHttpSend").finish_non_exhaustive()
+        }
+    }
+
+    impl HttpSend for FailingHttpSend {
+        async fn http_send(&self, _request: Request<Bytes>) -> Result<Response<Bytes>> {
+            Err(Error::unexpected(
+                "transport failed for https://sensitive-session.example.com using AKIDEXAMPLE, wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY, and source-session-token",
+            )
+            .set_retryable(true))
+        }
+    }
+
     fn timestamp(value: &str) -> Timestamp {
         value.parse().expect("timestamp must parse")
     }
@@ -882,6 +1154,66 @@ mod tests {
             session_token: Some("source-session-token".to_string()),
             expires_in: None,
         }
+    }
+
+    fn sign_with_aws_sdk(request: &CapturedRequest, region: &str, source: &Credential) -> String {
+        let mut reference = Request::builder()
+            .method(request.method.clone())
+            .uri(request.uri.clone())
+            .header(header::HOST, request.headers[header::HOST].clone())
+            .header(
+                "x-amz-content-sha256",
+                request.headers["x-amz-content-sha256"].clone(),
+            );
+        if let Some(mode) = request.headers.get("x-amz-create-session-mode") {
+            reference = reference.header("x-amz-create-session-mode", mode.clone());
+        }
+        let mut reference = reference
+            .body(request.body.clone())
+            .expect("AWS SDK reference request must build");
+        let identity = AwsCredentials::new(
+            source.access_key_id.clone(),
+            source.secret_access_key.clone(),
+            source.session_token.clone(),
+            None,
+            "reqsign-s3-express-test",
+        )
+        .into();
+        let mut settings = SigningSettings::default();
+        settings.percent_encoding_mode = PercentEncodingMode::Double;
+        settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        let params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region(region)
+            .name("s3express")
+            .time(timestamp("2030-01-01T00:00:00Z").as_system_time())
+            .settings(settings)
+            .build()
+            .expect("AWS SDK reference signing parameters must build");
+        let output = aws_sigv4::http_request::sign(
+            SignableRequest::new(
+                reference.method().as_str(),
+                reference.uri().to_string(),
+                reference.headers().iter().map(|(name, value)| {
+                    (
+                        name.as_str(),
+                        value
+                            .to_str()
+                            .expect("AWS SDK reference header must be text"),
+                    )
+                }),
+                SignableBody::Bytes(reference.body()),
+            )
+            .expect("AWS SDK reference request must be signable"),
+            &params.into(),
+        )
+        .expect("AWS SDK reference signing must succeed");
+        let (instructions, _) = output.into_parts();
+        instructions.apply_to_request_http1x(&mut reference);
+        reference.headers()[header::AUTHORIZATION]
+            .to_str()
+            .expect("AWS SDK authorization must be ASCII")
+            .to_string()
     }
 
     fn config() -> S3ExpressSessionConfig {
@@ -931,15 +1263,170 @@ mod tests {
         now: Timestamp,
         responses: impl IntoIterator<Item = Response<Bytes>>,
     ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
+        operation_with_selection(config, S3ExpressSessionGrant::new(mode), now, responses)
+    }
+
+    fn operation_with_selection(
+        config: S3ExpressSessionConfig,
+        grant: impl Into<S3ExpressSessionGrantSelection>,
+        now: Timestamp,
+        responses: impl IntoIterator<Item = Response<Bytes>>,
+    ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
         let http = MockHttpSend::new(responses);
         let ctx = Context::new().with_http_send(http.clone());
-        let operation =
-            S3ExpressSessionGranter::new(config, S3ExpressSessionGrant::new(mode)).with_time(now);
+        let operation = S3ExpressSessionGranter::new(config, grant).with_time(now);
+        (operation, ctx, http)
+    }
+
+    fn operation_with_custom_endpoint(
+        mode: S3ExpressSessionMode,
+        now: Timestamp,
+        responses: impl IntoIterator<Item = Response<Bytes>>,
+    ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
+        operation_with_custom_selection(S3ExpressSessionGrant::new(mode), now, responses)
+    }
+
+    fn operation_with_custom_selection(
+        grant: impl Into<S3ExpressSessionGrantSelection>,
+        now: Timestamp,
+        responses: impl IntoIterator<Item = Response<Bytes>>,
+    ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
+        let http = MockHttpSend::new(responses);
+        let ctx = Context::new().with_http_send(http.clone());
+        let operation = S3ExpressSessionGranter::new_with_custom_endpoint(
+            "compatible-bucket",
+            "custom-region-1",
+            "https://sessions.example.com:8443/",
+            grant,
+        )
+        .expect("custom endpoint configuration must be valid")
+        .with_time(now);
         (operation, ctx, http)
     }
 
     #[test]
+    fn resolves_configuration_from_bucket_and_region() {
+        let config = S3ExpressSessionConfig::from_bucket("example--usw2-az1--x-s3", "us-west-2")
+            .expect("standard AWS configuration must resolve");
+        assert_eq!(config.bucket(), "example--usw2-az1--x-s3");
+        assert_eq!(config.zone_id(), "usw2-az1");
+        assert_eq!(config.region(), "us-west-2");
+        assert_eq!(config.partition(), S3ExpressSessionPartition::Aws);
+        assert_eq!(
+            config.endpoint(),
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
+        );
+
+        let explicit = S3ExpressSessionConfig::new(
+            "example--usw2-az1--x-s3",
+            "usw2-az1",
+            "us-west-2",
+            S3ExpressSessionPartition::Aws,
+        )
+        .expect("explicit constructor must remain available");
+        assert_eq!(config, explicit);
+
+        let china =
+            S3ExpressSessionConfig::from_bucket("example--cnn1-pkx1-az1--x-s3", "cn-north-1")
+                .expect("AWS China configuration must resolve");
+        assert_eq!(china.zone_id(), "cnn1-pkx1-az1");
+        assert_eq!(china.partition(), S3ExpressSessionPartition::AwsCn);
+        assert_eq!(
+            china.endpoint(),
+            "https://example--cnn1-pkx1-az1--x-s3.s3express-cnn1-pkx1-az1.cn-north-1.amazonaws.com.cn"
+        );
+    }
+
+    #[test]
+    fn explicit_region_supports_local_zones_and_new_zone_prefixes() {
+        let local_zone =
+            S3ExpressSessionConfig::from_bucket("example--usw2-lax1-az1--x-s3", "us-west-2")
+                .expect("Local Zone configuration must resolve");
+        assert_eq!(local_zone.zone_id(), "usw2-lax1-az1");
+
+        assert_eq!(infer_region_from_zone_id("apse6-az1"), None);
+        let new_zone =
+            S3ExpressSessionConfig::from_bucket("example--apse6-az1--x-s3", "ap-southeast-6")
+                .expect("explicit Region must not depend on compatibility inference");
+        assert_eq!(new_zone.zone_id(), "apse6-az1");
+        assert_eq!(new_zone.region(), "ap-southeast-6");
+        assert_eq!(
+            new_zone.endpoint(),
+            "https://example--apse6-az1--x-s3.s3express-apse6-az1.ap-southeast-6.amazonaws.com"
+        );
+    }
+
+    #[test]
+    fn validates_complete_directory_bucket_name() {
+        let max_length = format!("{}--usw2-az1--x-s3", "a".repeat(47));
+        assert_eq!(max_length.len(), 63);
+        S3ExpressSessionConfig::from_bucket(max_length, "us-west-2")
+            .expect("63-character directory bucket name must be accepted");
+        S3ExpressSessionConfig::from_bucket("a--usw2-az1--x-s3", "us-west-2")
+            .expect("one-character base name must be accepted");
+
+        let too_long = format!("{}--usw2-az1--x-s3", "a".repeat(48));
+        assert_eq!(too_long.len(), 64);
+        let invalid_buckets = [
+            "general-purpose-bucket".to_string(),
+            "--usw2-az1--x-s3".to_string(),
+            "example----x-s3".to_string(),
+            "-example--usw2-az1--x-s3".to_string(),
+            "UPPER--usw2-az1--x-s3".to_string(),
+            "example_name--usw2-az1--x-s3".to_string(),
+            "example.name--usw2-az1--x-s3".to_string(),
+            "xn--name--usw2-az1--x-s3".to_string(),
+            "sthree-name--usw2-az1--x-s3".to_string(),
+            "sthree-configurator--usw2-az1--x-s3".to_string(),
+            "amzn-s3-demo-name--usw2-az1--x-s3".to_string(),
+            "example--usw2--x-s3".to_string(),
+            "example--usw2--az1--x-s3".to_string(),
+            "example--USW2-az1--x-s3".to_string(),
+            "example--usw2-zone1--x-s3".to_string(),
+            "example--usw2-az--x-s3".to_string(),
+            "example--usw2-azx--x-s3".to_string(),
+            too_long,
+        ];
+        for bucket in invalid_buckets {
+            assert_eq!(
+                S3ExpressSessionConfig::from_bucket(bucket, "us-west-2")
+                    .expect_err("invalid directory bucket name must fail")
+                    .kind(),
+                ErrorKind::ConfigInvalid
+            );
+        }
+    }
+
+    #[test]
+    fn validates_explicit_region_and_zone_match() {
+        for (bucket, region) in [
+            ("example--use1-az1--x-s3", "us-west-2"),
+            ("example--cnn1-az1--x-s3", "us-west-2"),
+            ("example--usw2-az1--x-s3", "cn-north-1"),
+            ("example--usw2-az1--x-s3", "US-WEST-2"),
+            ("example--usw2-az1--x-s3", "us-west"),
+            ("example--usw2-az1--x-s3", "us-west-x"),
+            ("example--usgw1-az1--x-s3", "us-gov-west-1"),
+        ] {
+            assert_eq!(
+                S3ExpressSessionConfig::from_bucket(bucket, region)
+                    .expect_err("invalid Region or Zone/Region mismatch must fail")
+                    .kind(),
+                ErrorKind::ConfigInvalid
+            );
+        }
+    }
+
+    #[test]
     fn validates_typed_mode_partition_and_configuration() {
+        let maximum_allowed = S3ExpressSessionGrant::maximum_allowed();
+        assert_eq!(maximum_allowed.explicit_mode(), None);
+        let explicit_read_only: S3ExpressSessionGrantSelection =
+            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly).into();
+        assert_eq!(
+            explicit_read_only.explicit_mode(),
+            Some(S3ExpressSessionMode::ReadOnly)
+        );
         assert_eq!(
             "ReadOnly".parse::<S3ExpressSessionMode>().unwrap(),
             S3ExpressSessionMode::ReadOnly
@@ -1097,8 +1584,95 @@ mod tests {
         }
     }
 
+    #[test]
+    fn validates_explicit_custom_endpoint_configuration() {
+        S3ExpressSessionGranter::new_with_custom_endpoint(
+            "compatible-bucket",
+            "custom-region-1",
+            "https://sessions.example.com:8443/",
+            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+        )
+        .expect("custom endpoint configuration must be valid");
+
+        assert_eq!(
+            S3ExpressSessionConfig::new(
+                "compatible-bucket",
+                "custom-zone-1",
+                "custom-region-1",
+                S3ExpressSessionPartition::Aws,
+            )
+            .expect_err("the standard AWS constructor must remain strict")
+            .kind(),
+            ErrorKind::ConfigInvalid
+        );
+    }
+
+    fn assert_standard_create_session_request(request: &CapturedRequest) {
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(
+            request.uri,
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/?session"
+                .parse::<Uri>()
+                .unwrap()
+        );
+        assert!(request.body.is_empty());
+        assert_eq!(
+            request.headers[header::HOST],
+            "example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
+        );
+        assert_eq!(
+            request.headers["x-amz-content-sha256"],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(request.headers["x-amz-date"], "20300101T000000Z");
+        assert_eq!(
+            request.headers["x-amz-security-token"],
+            "source-session-token"
+        );
+        assert!(request.headers["x-amz-security-token"].is_sensitive());
+        assert!(!request.headers.contains_key("x-amz-s3session-token"));
+        assert!(request.headers[header::AUTHORIZATION].is_sensitive());
+    }
+
     #[tokio::test]
-    async fn builds_and_signs_exact_create_session_request() {
+    async fn builds_and_signs_exact_maximum_allowed_create_session_request() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation_with_selection(
+            config(),
+            S3ExpressSessionGrant::maximum_allowed(),
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+
+        let output = operation
+            .grant_credential(&ctx, &source_credential(), None)
+            .await
+            .expect("maximum-allowed CreateSession must succeed");
+        assert_eq!(output.expires_in, Some(timestamp("2030-01-01T00:05:00Z")));
+
+        let request = http.request(0);
+        assert_standard_create_session_request(&request);
+        assert!(!request.headers.contains_key("x-amz-create-session-mode"));
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=3ae2a693a57537e21f96c0bb753071ff58c7398cd4df5ddf1f772ba059cdf0b2"
+        );
+        assert_eq!(
+            sign_with_aws_sdk(&request, "us-west-2", &source_credential()),
+            authorization
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_and_signs_exact_read_only_create_session_request() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let (operation, ctx, http) = operation(
             S3ExpressSessionMode::ReadOnly,
@@ -1124,36 +1698,54 @@ mod tests {
         assert_eq!(output.expires_in, Some(timestamp("2030-01-01T00:05:00Z")));
 
         let request = http.request(0);
-        assert_eq!(request.method, Method::GET);
-        assert_eq!(
-            request.uri,
-            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/?session"
-                .parse::<Uri>()
-                .unwrap()
-        );
-        assert!(request.body.is_empty());
-        assert_eq!(
-            request.headers[header::HOST],
-            "example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
-        );
-        assert_eq!(
-            request.headers["x-amz-content-sha256"],
-            crate::EMPTY_STRING_SHA256
-        );
+        assert_standard_create_session_request(&request);
         assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
-        assert_eq!(request.headers["x-amz-date"], "20300101T000000Z");
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
         assert_eq!(
-            request.headers["x-amz-security-token"],
-            "source-session-token"
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=8bced65039aee22da12f49209a59ab8890db30e8d49889c09943697d684ddc1d"
         );
-        assert!(request.headers["x-amz-security-token"].is_sensitive());
-        assert!(!request.headers.contains_key("x-amz-s3session-token"));
-        assert!(request.headers[header::AUTHORIZATION].is_sensitive());
         assert_eq!(
-            request.headers[header::AUTHORIZATION]
-                .to_str()
-                .expect("authorization must be ASCII"),
-            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=9dbbac1f6c2300e0bdbc43bbd4f44384ce8ca6d4820447478a90e616ecb89acc"
+            sign_with_aws_sdk(&request, "us-west-2", &source_credential()),
+            authorization
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_and_signs_exact_read_write_create_session_request() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation(
+            S3ExpressSessionMode::ReadWrite,
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+
+        let output = operation
+            .grant_credential(&ctx, &source_credential(), None)
+            .await
+            .expect("ReadWrite CreateSession must succeed");
+        assert_eq!(output.expires_in, Some(timestamp("2030-01-01T00:05:00Z")));
+
+        let request = http.request(0);
+        assert_standard_create_session_request(&request);
+        assert_eq!(request.headers["x-amz-create-session-mode"], "ReadWrite");
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/us-west-2/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=93753ad279dc7f13295350a3ad9bc2d643a3972bd9e1d52caa65fd1716e00374"
+        );
+        assert_eq!(
+            sign_with_aws_sdk(&request, "us-west-2", &source_credential()),
+            authorization
         );
     }
 
@@ -1196,12 +1788,154 @@ mod tests {
             request.headers[header::HOST],
             "example--cnn1-pkx1-az1--x-s3.s3express-cnn1-pkx1-az1.cn-north-1.amazonaws.com.cn"
         );
+        assert_eq!(
+            request.headers["x-amz-content-sha256"],
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
+        assert_eq!(request.headers["x-amz-date"], "20300101T000000Z");
+        assert_eq!(
+            request.headers["x-amz-security-token"],
+            "source-session-token"
+        );
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/cn-north-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=48449b573534252c610bc8a20a8c76017039bb6c59b56120d41bbdae44fb47a3"
+        );
+        assert_eq!(
+            sign_with_aws_sdk(&request, "cn-north-1", &source_credential()),
+            authorization
+        );
+    }
+
+    #[tokio::test]
+    async fn builds_and_signs_exact_custom_endpoint_request_with_temporary_source() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation_with_custom_endpoint(
+            S3ExpressSessionMode::ReadOnly,
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+        let source = source_credential();
+
+        operation
+            .grant_credential(&ctx, &source, None)
+            .await
+            .expect("custom endpoint CreateSession must succeed");
+
+        let request = http.request(0);
+        assert_eq!(request.method, Method::GET);
+        assert_eq!(
+            request.uri,
+            "https://sessions.example.com:8443/?session"
+                .parse::<Uri>()
+                .unwrap()
+        );
+        assert!(request.body.is_empty());
+        assert_eq!(request.headers[header::HOST], "sessions.example.com:8443");
         assert_eq!(request.headers["x-amz-create-session-mode"], "ReadOnly");
         assert_eq!(
-            request.headers[header::AUTHORIZATION]
-                .to_str()
-                .expect("authorization must be ASCII"),
-            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/cn-north-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=110a8acca9067dccbd29dfa3d93f7b5f681fe7d3efcf86e50fb90b4de52831aa"
+            request.headers["x-amz-security-token"],
+            "source-session-token"
+        );
+        assert!(request.headers["x-amz-security-token"].is_sensitive());
+        assert!(!request.headers.contains_key("x-amz-s3session-token"));
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/custom-region-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date;x-amz-security-token, Signature=27e3fd0b349ab99b6e629e8b0c741b3c88bfbef1cb4fbbf491c461df213a0dbe"
+        );
+        assert_eq!(
+            sign_with_aws_sdk(&request, "custom-region-1", &source),
+            authorization
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_endpoint_supports_maximum_allowed_selection() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation_with_custom_selection(
+            S3ExpressSessionGrant::maximum_allowed(),
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+        let source = source_credential();
+
+        operation
+            .grant_credential(&ctx, &source, None)
+            .await
+            .expect("maximum-allowed custom endpoint CreateSession must succeed");
+
+        let request = http.request(0);
+        assert_eq!(
+            request.uri,
+            "https://sessions.example.com:8443/?session"
+                .parse::<Uri>()
+                .unwrap()
+        );
+        assert!(!request.headers.contains_key("x-amz-create-session-mode"));
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert!(authorization.contains("/custom-region-1/s3express/aws4_request"));
+        assert!(!authorization.contains("x-amz-create-session-mode"));
+        assert_eq!(
+            sign_with_aws_sdk(&request, "custom-region-1", &source),
+            authorization
+        );
+    }
+
+    #[tokio::test]
+    async fn signs_custom_endpoint_request_with_long_term_source() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let (operation, ctx, http) = operation_with_custom_endpoint(
+            S3ExpressSessionMode::ReadWrite,
+            now,
+            [success_response(
+                "session-access-key",
+                "session-secret-key",
+                "granted-session-token",
+                "2030-01-01T00:05:00Z",
+            )],
+        );
+        let source = Credential {
+            session_token: None,
+            ..source_credential()
+        };
+
+        operation
+            .grant_credential(&ctx, &source, None)
+            .await
+            .expect("long-term source credential must sign the custom endpoint request");
+
+        let request = http.request(0);
+        assert!(!request.headers.contains_key("x-amz-security-token"));
+        assert!(!request.headers.contains_key("x-amz-s3session-token"));
+        let authorization = request.headers[header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert_eq!(
+            authorization,
+            "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20300101/custom-region-1/s3express/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-create-session-mode;x-amz-date, Signature=47ba9abd7e57001176a0c0f77fecd54f1d5c71b680fddeae5549548cf85e1d72"
+        );
+        assert_eq!(
+            sign_with_aws_sdk(&request, "custom-region-1", &source),
+            authorization
         );
     }
 
@@ -1306,6 +2040,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_invalid_custom_endpoint_configuration_before_provider_io() {
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let http = MockHttpSend::new([]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let invalid = [
+            (
+                "",
+                "custom-region-1",
+                "https://sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "",
+                "https://sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom/region",
+                "https://sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "http://sensitive-session.example.com",
+            ),
+            ("compatible-bucket", "custom-region-1", "https:///"),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "https://user@sensitive-session.example.com",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "https://sensitive-session.example.com/create-session",
+            ),
+            (
+                "compatible-bucket",
+                "custom-region-1",
+                "https://sensitive-session.example.com?secret=query",
+            ),
+            ("compatible-bucket", "custom-region-1", "https://:8443"),
+        ];
+
+        for (bucket, region, endpoint) in invalid {
+            let result: Result<()> = async {
+                let operation = S3ExpressSessionGranter::new_with_custom_endpoint(
+                    bucket,
+                    region,
+                    endpoint,
+                    S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+                )?;
+                Granter::new(ctx.clone(), source_provider.clone(), operation)
+                    .grant(None)
+                    .await?;
+                Ok(())
+            }
+            .await;
+            let err = result.expect_err("invalid custom endpoint configuration must fail");
+            assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+            let rendered = format!("{err}\n{err:?}");
+            for sensitive in [
+                "compatible-bucket",
+                "custom-region-1",
+                "sensitive-session",
+                "secret=query",
+            ] {
+                assert!(!rendered.contains(sensitive));
+            }
+        }
+
+        assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn rejects_output_that_expires_during_io() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let completed_at = timestamp("2030-01-01T00:05:00Z");
@@ -1359,13 +2174,34 @@ mod tests {
             "sensitive-bucket--usw2-az1--x-s3",
             FixedCredentialProvider::new(source.clone()).0,
         );
+        let resolved_config = S3ExpressSessionConfig::from_bucket(
+            "resolved-sensitive-bucket--usw2-az1--x-s3",
+            "us-west-2",
+        )
+        .expect("sensitive configuration must resolve");
+        let resolution_err = S3ExpressSessionConfig::from_bucket(
+            "mismatched-sensitive-bucket--use1-az1--x-s3",
+            "us-west-2",
+        )
+        .expect_err("mismatched sensitive configuration must fail");
 
         for (debug, secret) in [
             (format!("{:?}", config()), "example--usw2-az1--x-s3"),
+            (format!("{resolved_config:?}"), "resolved-sensitive-bucket"),
+            (format!("{resolution_err:?}"), "mismatched-sensitive-bucket"),
             (
                 format!(
                     "{:?}",
                     S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite)
+                ),
+                "ReadWrite",
+            ),
+            (
+                format!(
+                    "{:?}",
+                    S3ExpressSessionGrantSelection::from(S3ExpressSessionGrant::new(
+                        S3ExpressSessionMode::ReadWrite
+                    ))
                 ),
                 "ReadWrite",
             ),
@@ -1380,6 +2216,40 @@ mod tests {
             (format!("{err:?}"), "raw-response-secret"),
         ] {
             assert!(!debug.contains(secret));
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_endpoint_debug_and_transport_errors_are_redacted() {
+        let operation = S3ExpressSessionGranter::new_with_custom_endpoint(
+            "sensitive-compatible-bucket",
+            "sensitive-region-1",
+            "https://sensitive-session.example.com",
+            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+        )
+        .expect("custom endpoint configuration must be valid")
+        .with_time(timestamp("2030-01-01T00:00:00Z"));
+        let source = source_credential();
+        let ctx = Context::new().with_http_send(FailingHttpSend);
+
+        let err = operation
+            .grant_credential(&ctx, &source, None)
+            .await
+            .expect_err("transport failure must be sanitized");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert!(err.is_retryable());
+        assert_eq!(err.context(), &["operation: CreateSession"]);
+
+        let combined = format!("{operation:?}\n{source:?}\n{err:?}");
+        for sensitive in [
+            "sensitive-compatible-bucket",
+            "sensitive-region-1",
+            "sensitive-session.example.com",
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            "source-session-token",
+        ] {
+            assert!(!combined.contains(sensitive));
         }
     }
 
@@ -1429,6 +2299,106 @@ mod tests {
         assert_eq!(
             request.uri.authority().unwrap().as_str(),
             "example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com"
+        );
+    }
+
+    #[tokio::test]
+    async fn configurable_provider_refreshes_maximum_allowed_sessions_for_signer() {
+        let first_expiration = (Timestamp::now() + Duration::from_secs(110)).format_rfc3339_zulu();
+        let second_expiration = (Timestamp::now() + Duration::from_secs(300)).format_rfc3339_zulu();
+        let http = MockHttpSend::new([
+            success_response(
+                "first-session-access-key",
+                "first-session-secret-key",
+                "first-session-token",
+                &first_expiration,
+            ),
+            success_response(
+                "second-session-access-key",
+                "second-session-secret-key",
+                "second-session-token",
+                &second_expiration,
+            ),
+        ]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let provider = S3ExpressSessionProvider::new("example--usw2-az1--x-s3", source_provider)
+            .with_grant(S3ExpressSessionGrant::maximum_allowed());
+        let signer = Signer::new(
+            ctx,
+            provider,
+            crate::RequestSigner::new("s3express", "us-west-2"),
+        );
+
+        let mut first = Request::get(
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/first",
+        )
+        .body(())
+        .expect("first request must build")
+        .into_parts()
+        .0;
+        signer
+            .sign(&mut first, None)
+            .await
+            .expect("first request must use a maximum-allowed session");
+        assert_eq!(
+            first.headers["x-amz-s3session-token"],
+            "first-session-token"
+        );
+
+        let mut second = Request::get(
+            "https://example--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/second",
+        )
+        .body(())
+        .expect("second request must build")
+        .into_parts()
+        .0;
+        signer
+            .sign(&mut second, None)
+            .await
+            .expect("second request must refresh the maximum-allowed session");
+        assert_eq!(
+            second.headers["x-amz-s3session-token"],
+            "second-session-token"
+        );
+
+        assert_eq!(source_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        for index in 0..2 {
+            assert!(
+                !http
+                    .request(index)
+                    .headers
+                    .contains_key("x-amz-create-session-mode")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn compatibility_provider_uses_explicit_region_for_new_zone_prefix() {
+        let response = success_response(
+            "session-access-key",
+            "session-secret-key",
+            "session-token",
+            "2099-01-01T00:05:00Z",
+        );
+        let http = MockHttpSend::new([response]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let provider = S3ExpressSessionProvider::new("example--apse6-az1--x-s3", source_provider)
+            .with_region("ap-southeast-6");
+
+        provider
+            .provide_credential(&ctx)
+            .await
+            .expect("explicit Region compatibility provider must succeed")
+            .expect("compatibility provider must return a credential");
+
+        assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            http.request(0).uri.authority().unwrap().as_str(),
+            "example--apse6-az1--x-s3.s3express-apse6-az1.ap-southeast-6.amazonaws.com"
         );
     }
 
@@ -1501,6 +2471,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provider_rejects_zone_region_mismatch_before_loading_source() {
+        let http = MockHttpSend::new([]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
+        let provider = S3ExpressSessionProvider::new("example--use1-az1--x-s3", source_provider)
+            .with_region("us-west-2");
+
+        let err = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("Zone/Region mismatch must fail before source loading");
+        assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+        assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn granter_never_caches_outputs_and_existing_signer_consumes_them() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let response = || {
@@ -1513,11 +2500,9 @@ mod tests {
         };
         let http = MockHttpSend::new([response(), response()]);
         let ctx = Context::new().with_http_send(http.clone());
-        let operation = S3ExpressSessionGranter::new(
-            config(),
-            S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
-        )
-        .with_time(now);
+        let operation =
+            S3ExpressSessionGranter::new(config(), S3ExpressSessionGrant::maximum_allowed())
+                .with_time(now);
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let granter = Granter::new(ctx, source_provider, operation);
 
@@ -1528,6 +2513,18 @@ mod tests {
             .expect("second grant must issue another session");
         assert_eq!(source_calls.load(Ordering::SeqCst), 1);
         assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        assert!(
+            !http
+                .request(0)
+                .headers
+                .contains_key("x-amz-create-session-mode")
+        );
+        assert!(
+            !http
+                .request(1)
+                .headers
+                .contains_key("x-amz-create-session-mode")
+        );
 
         let (output_provider, _) = FixedCredentialProvider::new(output);
         let signer = Signer::new(
