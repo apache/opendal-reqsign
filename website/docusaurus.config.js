@@ -29,7 +29,7 @@ const repoAddress = "https://github.com/apache/opendal-reqsign";
 // configurable so staging and the documented fallbacks need no code change.
 const url = process.env.REQSIGN_WEBSITE_URL
   ? process.env.REQSIGN_WEBSITE_URL
-  : "https://reqsign.opendal.apache.org";
+  : "https://reqsign.apache.org";
 const baseUrl = process.env.REQSIGN_WEBSITE_BASE_URL
   ? process.env.REQSIGN_WEBSITE_BASE_URL
   : "/";
@@ -54,7 +54,7 @@ const websiteVersion = (function () {
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "Apache OpenDAL™ Reqsign",
+  title: "Apache Reqsign™",
   tagline:
     "Sign HTTP requests, load cloud credentials, and grant scoped access without pulling in a full vendor SDK.",
   favicon: "img/favicon.svg",
@@ -105,8 +105,8 @@ const config = {
           showLastUpdateTime: true,
           remarkPlugins: [require("./plugins/remark-include-code")],
         },
-        // Announcements and long-form posts live on the OpenDAL blog; Reqsign
-        // does not run its own.
+        // Reqsign does not run a blog yet; announcements go to the mailing
+        // list and GitHub releases.
         blog: false,
         theme: {
           customCss: require.resolve("./src/css/custom.css"),
@@ -130,7 +130,7 @@ const config = {
         version: websiteVersion,
         llmConfigs: [
           {
-            title: "Apache OpenDAL™ Reqsign: Build. Sign. Send.",
+            title: "Apache Reqsign™: Build. Sign. Send.",
             description:
               "Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.",
             summary:
@@ -176,7 +176,7 @@ const config = {
       },
       navbar: {
         logo: {
-          alt: "Apache OpenDAL Reqsign",
+          alt: "Apache Reqsign",
           src: "img/logo.svg",
           srcDark: "img/logo_dark.svg",
           href: "/",
@@ -266,7 +266,7 @@ const config = {
           href: "https://www.apache.org/",
           width: 300,
         },
-        copyright: `Copyright © 2022-${new Date().getFullYear()}, The Apache Software Foundation<br/>Reqsign is a subproject of Apache OpenDAL™, governed by the Apache OpenDAL PMC.<br/>Apache OpenDAL, OpenDAL, Apache, the Apache feather and the Apache OpenDAL project logo are either registered trademarks or trademarks of the Apache Software Foundation.`,
+        copyright: `Copyright © 2022-${new Date().getFullYear()}, The Apache Software Foundation<br/>Apache Reqsign, Reqsign, Apache, the Apache feather and the Apache Reqsign project logo are either registered trademarks or trademarks of the Apache Software Foundation.`,
       },
       prism: {
         theme: themes.github,

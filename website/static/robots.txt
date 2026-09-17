@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://reqsign.opendal.apache.org/sitemap.xml
+Sitemap: https://reqsign.apache.org/sitemap.xml

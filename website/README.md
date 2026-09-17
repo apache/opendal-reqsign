@@ -19,8 +19,8 @@
 
 # Reqsign Website
 
-The Apache OpenDAL™ Reqsign website — a [Docusaurus](https://docusaurus.io/)
-site targeting `https://reqsign.opendal.apache.org/`.
+The Apache Reqsign™ website — a [Docusaurus](https://docusaurus.io/) site
+targeting `https://reqsign.apache.org/`.
 
 ## Development
 

@@ -33,7 +33,7 @@ export default function Home() {
   return (
     <Layout
       title="Build. Sign. Send."
-      description="Apache OpenDAL™ Reqsign signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs."
+      description="Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs."
     >
       <main>
         <Hero />

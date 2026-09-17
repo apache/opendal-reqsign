@@ -26,7 +26,6 @@ import {
   REPO_URL,
   DOCS_URL,
   PROVIDERS_URL,
-  DISCORD_URL,
   heroStats,
   codeSamples,
   valueProps,
@@ -44,7 +43,7 @@ export function Hero() {
         <div className={styles.heroInner}>
           <div>
             <span className="rs-eyebrow">
-              Apache OpenDAL™ Reqsign — Request Signing
+              Apache Reqsign™ — Request Signing
             </span>
             <h1 className={styles.heroTitle}>
               Build. <span className={styles.heroTitleAccent}>Sign.</span> Send.
@@ -91,12 +90,14 @@ export function Adoption() {
       <div className="rs-container">
         <div className={styles.adoptionStrip}>
           <span className="rs-eyebrow">Proven in production</span>
-          <p className={styles.adoptionClaim}>
-            <Link to={adoption.href} className={styles.adoptionName}>
-              {adoption.name}
-            </Link>{" "}
-            {adoption.claim}
-          </p>
+          {adoption.map((a) => (
+            <p className={styles.adoptionClaim} key={a.name}>
+              <Link to={a.href} className={styles.adoptionName}>
+                {a.name}
+              </Link>{" "}
+              {a.claim}
+            </p>
+          ))}
         </div>
       </div>
     </section>
@@ -303,9 +304,9 @@ export function FinalCta() {
               </Link>
               <Link
                 className={`${styles.btn} ${styles.btnSecondary}`}
-                to={DISCORD_URL}
+                to="/community/"
               >
-                Join the OpenDAL community
+                Join the community
               </Link>
             </div>
           </div>

@@ -20,7 +20,7 @@
 # Reqsign Design System
 
 > **Build. Sign. Send.** An engineering-grade visual language for Apache
-> OpenDAL™ Reqsign — sharing its skeleton with the OpenDAL website, carrying
+> Reqsign™ — sharing its skeleton with the Apache OpenDAL™ website, carrying
 > its own signature.
 
 This document is the source of truth for Reqsign's web visual language. The
@@ -58,9 +58,9 @@ in sync (see `UPSTREAM_DESIGN.md`):**
   pen closing a signature. Used in the eyebrow marker (`.rs-eyebrow::before`),
   the standalone `.rs-stroke`, the logo, and the favicon.
 - **Wordmark**: the stroke plus "Reqsign" in the system stack
-  (`static/img/logo.svg`, `logo_dark.svg`). The full `Apache OpenDAL
-  Reqsign™` name appears in the page title, hero eyebrow, and footer
-  attribution rather than inside the mark.
+  (`static/img/logo.svg`, `logo_dark.svg`). The full `Apache Reqsign™` name
+  appears in the page title, hero eyebrow, and footer attribution rather than
+  inside the mark.
 
 ## 2. Where the system lives
 

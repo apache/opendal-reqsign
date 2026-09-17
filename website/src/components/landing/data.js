@@ -273,12 +273,20 @@ let ctx = Context::new().with_http_send(MyHttpSend);`,
   },
 ];
 
-// Verified adoption. Reqsign does not keep a logo wall: entries here require a
-// public, auditable dependency. OpenDAL's per-service crates (s3, gcs, azblob,
-// cos, tos, ...) sign their storage requests with reqsign.
-export const adoption = {
-  name: "Apache OpenDAL™",
-  href: OPENDAL_URL,
-  claim:
-    "Every cloud request OpenDAL's storage services sign — S3, GCS, Azure Blob, COS, TOS, and more — goes through Reqsign.",
-};
+// Verified adoption. Reqsign does not keep a logo wall: an entry requires a
+// public, auditable direct dependency on reqsign in the adopter's own
+// manifest (OpenDAL's per-service crates; uv's Cargo.toml).
+export const adoption = [
+  {
+    name: "Apache OpenDAL™",
+    href: OPENDAL_URL,
+    claim:
+      "signs every cloud storage request — S3, GCS, Azure Blob, COS, TOS, and more — through Reqsign.",
+  },
+  {
+    name: "uv",
+    href: "https://github.com/astral-sh/uv",
+    claim:
+      "the Python package manager, authenticates to AWS, Azure, and Google Cloud with Reqsign.",
+  },
+];

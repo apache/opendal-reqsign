@@ -53,10 +53,10 @@ do; Reqsign replaces only that fraction.
 
 ## Relationship to Apache OpenDAL
 
-Reqsign is an independent library incubating as a subproject of
-[Apache OpenDAL™](https://opendal.apache.org/), governed by the OpenDAL PMC.
-The dependency points one way: OpenDAL's cloud storage services sign their
-requests with Reqsign; Reqsign does not depend on OpenDAL.
+Reqsign started inside [Apache OpenDAL™](https://opendal.apache.org/) and
+graduated to a standalone Apache top-level project in 2026. The two remain
+close, and the dependency points one way: OpenDAL's cloud storage services
+sign their requests with Reqsign; Reqsign does not depend on OpenDAL.
 
 The two serve different builders. Reqsign gives you signing primitives for a
 client you are writing yourself. OpenDAL is a ready-made data access layer —

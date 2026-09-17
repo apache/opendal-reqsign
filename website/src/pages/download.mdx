@@ -1,6 +1,6 @@
 ---
 title: Download
-description: Official Apache source releases, signatures, checksums, and crates.io convenience packages for Apache OpenDAL Reqsign.
+description: Official Apache source releases, signatures, checksums, and crates.io convenience packages for Apache Reqsign.
 ---
 
 {/*
@@ -26,25 +26,25 @@ description: Official Apache source releases, signatures, checksums, and crates.
 
 ## Official Apache source releases
 
-The official distribution channel for Apache OpenDAL™ Reqsign is the source
+The official distribution channel for Apache Reqsign™ is the source
 release published through the ASF mirror system. Each release ships a source
 archive with a PGP signature and SHA-512 checksum:
 
-- **[Download source releases](https://www.apache.org/dyn/closer.lua/opendal/)**
+- **[Download source releases](https://www.apache.org/dyn/closer.lua/reqsign/)**
   — via the ASF mirror resolver.
-- **[KEYS](https://downloads.apache.org/opendal/KEYS)** — release managers'
+- **[KEYS](https://downloads.apache.org/reqsign/KEYS)** — release managers'
   public signing keys.
 
 ### Verifying a release
 
 ```bash
 # Import the release signing keys once:
-curl -O https://downloads.apache.org/opendal/KEYS
+curl -O https://downloads.apache.org/reqsign/KEYS
 gpg --import KEYS
 
 # Verify the signature and checksum of a downloaded artifact:
-gpg --verify apache-opendal-reqsign-X.Y.Z-src.tar.gz.asc
-sha512sum -c apache-opendal-reqsign-X.Y.Z-src.tar.gz.sha512
+gpg --verify apache-reqsign-X.Y.Z-src.tar.gz.asc
+sha512sum -c apache-reqsign-X.Y.Z-src.tar.gz.sha512
 ```
 
 See the [ASF release verification guide](https://www.apache.org/dyn/closer.cgi#verify)
@@ -74,5 +74,5 @@ Release notes for every version are published with the
 ## Historical releases
 
 Older releases move out of the mirror system and remain permanently available
-in the [Apache archive](https://archive.apache.org/dist/opendal/). Use the
+in the [Apache archive](https://archive.apache.org/dist/reqsign/). Use the
 latest release unless you have a specific reason not to.

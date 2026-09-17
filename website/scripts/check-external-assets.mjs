@@ -37,7 +37,7 @@ const buildDir = path.join(websiteDir, "build");
 // Hosts a page may legitimately reference in load-bearing positions. Add a
 // host only with a recorded ASF privacy/CSP decision.
 const ALLOWED_HOSTS = new Set([
-  "reqsign.opendal.apache.org",
+  "reqsign.apache.org",
   "www.w3.org", // xmlns in inline SVG
 ]);
 
