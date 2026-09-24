@@ -180,48 +180,54 @@
 // Make sure all our public APIs have docs.
 #![warn(missing_docs)]
 
-/// Error types for reqsign operations
-pub mod error;
-mod futures_util;
 pub mod hash;
 #[cfg(all(not(target_arch = "wasm32"), feature = "jwt"))]
 pub mod jwt;
 pub mod time;
 pub mod utils;
 
-pub use error::{Error, ErrorKind, Result};
-pub use futures_util::BoxedFuture;
-pub use futures_util::MaybeSend;
+mod api;
+pub use self::api::GrantCredential;
+pub use self::api::GrantCredentialDyn;
+pub use self::api::ProvideCredential;
+pub use self::api::ProvideCredentialChain;
+pub use self::api::ProvideCredentialDyn;
+pub use self::api::SignRequest;
+pub use self::api::SignRequestDyn;
+pub use self::api::SigningCredential;
 
 mod context;
-pub use context::CommandExecute;
-pub use context::CommandExecuteDyn;
-pub use context::CommandOutput;
-pub use context::Context;
-pub use context::Env;
-pub use context::FileRead;
-pub use context::FileReadDyn;
-pub use context::HttpSend;
-pub use context::HttpSendDyn;
-pub use context::NoopCommandExecute;
-pub use context::NoopEnv;
-pub use context::NoopFileRead;
-pub use context::NoopHttpSend;
-pub use context::OsEnv;
-pub use context::StaticEnv;
+pub use self::context::CommandExecute;
+pub use self::context::CommandExecuteDyn;
+pub use self::context::CommandOutput;
+pub use self::context::Context;
+pub use self::context::Env;
+pub use self::context::FileRead;
+pub use self::context::FileReadDyn;
+pub use self::context::HttpSend;
+pub use self::context::HttpSendDyn;
+pub use self::context::NoopCommandExecute;
+pub use self::context::NoopEnv;
+pub use self::context::NoopFileRead;
+pub use self::context::NoopHttpSend;
+pub use self::context::OsEnv;
+pub use self::context::StaticEnv;
 
-mod api;
-pub use api::GrantCredential;
-pub use api::GrantCredentialDyn;
-pub use api::ProvideCredential;
-pub use api::ProvideCredentialChain;
-pub use api::ProvideCredentialDyn;
-pub use api::SignRequest;
-pub use api::SignRequestDyn;
-pub use api::SigningCredential;
-mod request;
-pub use request::{SigningMethod, SigningRequest};
-mod signer;
-pub use signer::Signer;
+mod error;
+pub use self::error::Error;
+pub use self::error::ErrorKind;
+pub use self::error::Result;
+
+mod futures_util;
+pub use self::futures_util::BoxedFuture;
+pub use self::futures_util::MaybeSend;
+
 mod granter;
-pub use granter::Granter;
+pub use self::granter::Granter;
+
+mod request;
+pub use self::request::SigningMethod;
+pub use self::request::SigningRequest;
+
+mod signer;
+pub use self::signer::Signer;
