@@ -22,9 +22,15 @@ Parameters:
   GitHubOrganization:
     Type: String
     Default: apache
+  GitHubOrganizationId:
+    Type: String
+    Default: "47359"
   GitHubRepository:
     Type: String
-    Default: opendal-reqsign
+    Default: reqsign
+  GitHubRepositoryId:
+    Type: String
+    Default: "469069490"
   TestBucketName:
     Type: String
     Default: reqsign-aws-v4-test
@@ -319,10 +325,10 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
+                # GitHub immutable subjects include both names and numeric IDs.
                 token.actions.githubusercontent.com:sub:
-                  - !Sub repo:${GitHubOrganization}/${GitHubRepository}:ref:refs/heads/main
-                  - !Sub repo:${GitHubOrganization}/${GitHubRepository}:pull_request
+                  - !Sub repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/main
+                  - !Sub repo:${GitHubOrganization}@${GitHubOrganizationId}/${GitHubRepository}@${GitHubRepositoryId}:pull_request
       Policies:
         - PolicyName: reqsign-live-test-runtime
           PolicyDocument:

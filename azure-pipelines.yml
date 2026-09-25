@@ -45,7 +45,7 @@ steps:
       esac
 
       git fetch --no-tags --depth=1 \
-        https://github.com/apache/opendal-reqsign.git \
+        https://github.com/apache/reqsign.git \
         "$GITHUB_REF"
       fetched_sha=$(git rev-parse 'FETCH_HEAD^{commit}')
       test "$fetched_sha" = "$GITHUB_SHA"

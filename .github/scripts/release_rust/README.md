@@ -37,7 +37,7 @@ Trusted Publishing cannot create the first version of a crate.
   credentials.
 - `apply` authenticates every existing crate before any write, publishes a
   dependency-free `0.0.0` namespace reservation for each missing name,
-  configures the exact `apache/opendal-reqsign`, `release.yml`, `release`
+  configures the exact `apache/reqsign`, `release.yml`, `release`
   Trusted Publisher, enables `trustpub_only`, and performs a final authenticated
   audit.
 - `verify` checks public crate metadata and `trustpub_only`. It cannot verify
@@ -48,6 +48,10 @@ The protected `rust-bootstrap` workflow always runs the authenticated audit,
 including when discovery finds no missing names. It never changes an
 established crate. Existing crates must be migrated independently before the
 workflow can succeed.
+
+Published crate metadata may still reference the former repository URL. The
+audit accepts that historical metadata, but every Trusted Publisher must target
+`apache/reqsign`. New placeholders and releases use the current repository URL.
 
 Version `0.0.0` is an irreversible namespace reservation. It is not an ASF
 software release and contains no implementation.

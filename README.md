@@ -2,8 +2,8 @@
 
 [![Build Status]][actions] [![Latest Version]][crates.io] [![Crate Downloads]][crates.io]
 
-[Build Status]: https://img.shields.io/github/actions/workflow/status/apache/opendal-reqsign/ci.yml?branch=main
-[actions]: https://github.com/apache/opendal-reqsign/actions?query=branch%3Amain
+[Build Status]: https://img.shields.io/github/actions/workflow/status/apache/reqsign/ci.yml?branch=main
+[actions]: https://github.com/apache/reqsign/actions?query=branch%3Amain
 [Latest Version]: https://img.shields.io/crates/v/reqsign.svg
 [crates.io]: https://crates.io/crates/reqsign
 [Crate Downloads]: https://img.shields.io/crates/d/reqsign.svg
@@ -183,7 +183,7 @@ Check out the [CONTRIBUTING.md](CONTRIBUTING.md) guide for more details on getti
 
 ## Getting help
 
-Submit [issues](https://github.com/apache/opendal-reqsign/issues/new/choose) for bug report or asking questions in [discussion](https://github.com/apache/opendal-reqsign/discussions/new?category=q-a).
+Submit [issues](https://github.com/apache/reqsign/issues/new/choose) for bug report or asking questions in [discussion](https://github.com/apache/reqsign/discussions/new?category=q-a).
 
 ## Acknowledge
 
