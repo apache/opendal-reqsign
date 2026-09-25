@@ -28,7 +28,7 @@ import ProvidersMatrix from "@site/src/components/providers/ProvidersMatrix";
 Reqsign keeps each provider's signing protocol and credential semantics
 explicit instead of hiding them behind one abstraction. This matrix and every
 detail page are rendered from a machine-checked capability catalog
-([`website/data/providers.json`](https://github.com/apache/opendal-reqsign/blob/main/website/data/providers.json));
+([`website/data/providers.json`](https://github.com/apache/reqsign/blob/main/website/data/providers.json));
 each claim is traced to source, and CI fails when the catalog drifts from the
 workspace.
 
@@ -62,5 +62,5 @@ cloud — only what this catalog declares and traces to source.
 - Sending requests: Reqsign signs; your HTTP client sends.
 - Response modeling, pagination, or service-specific request builders.
 - Providers or schemes not listed here. If you need one,
-  [open an issue](https://github.com/apache/opendal-reqsign/issues) — the
+  [open an issue](https://github.com/apache/reqsign/issues) — the
   architecture is built for adding providers.

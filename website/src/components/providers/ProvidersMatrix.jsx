@@ -83,9 +83,9 @@ export default function ProvidersMatrix() {
       </div>
       <p className={styles.verifiedNote}>
         Capability data last verified against{" "}
-        <code>apache/opendal-reqsign@{catalog.verified_commit}</code>; CI fails
+        <code>apache/reqsign@{catalog.verified_commit}</code>; CI fails
         when this matrix drifts from the workspace. Found a mismatch?{" "}
-        <Link to="https://github.com/apache/opendal-reqsign/issues">
+        <Link to="https://github.com/apache/reqsign/issues">
           Open an issue.
         </Link>
       </p>

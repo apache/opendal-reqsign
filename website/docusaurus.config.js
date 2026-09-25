@@ -23,7 +23,7 @@ const semver = require("semver");
 const exec = require("child_process").execSync;
 
 const { themes } = require("prism-react-renderer");
-const repoAddress = "https://github.com/apache/opendal-reqsign";
+const repoAddress = "https://github.com/apache/reqsign";
 
 // The canonical hostname is pending ASF Infra approval; keep url/baseUrl
 // configurable so staging and the documented fallbacks need no code change.
@@ -100,7 +100,7 @@ const config = {
         docs: {
           routeBasePath: "docs",
           sidebarPath: require.resolve("./docs/sidebars.js"),
-          editUrl: "https://github.com/apache/opendal-reqsign/tree/main/website/",
+          editUrl: "https://github.com/apache/reqsign/tree/main/website/",
           showLastUpdateAuthor: true,
           showLastUpdateTime: true,
           remarkPlugins: [require("./plugins/remark-include-code")],

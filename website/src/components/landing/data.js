@@ -25,7 +25,7 @@
 
 import catalog from "../../../data/providers.json";
 
-export const REPO_URL = "https://github.com/apache/opendal-reqsign";
+export const REPO_URL = "https://github.com/apache/reqsign";
 export const DOCS_URL = "/docs/getting-started/";
 export const PROVIDERS_URL = "/docs/providers/";
 export const DISCORD_URL = "https://discord.gg/XQy8yGR2dg";

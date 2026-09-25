@@ -54,7 +54,7 @@ reqsign-aws-v4 = "3"
 Every release ships as an ASF source release plus crates.io packages — see
 [Download](/download/). Release notes and migration steps for breaking
 majors are published with each
-[GitHub release](https://github.com/apache/opendal-reqsign/releases).
+[GitHub release](https://github.com/apache/reqsign/releases).
 
 ## Targets
 

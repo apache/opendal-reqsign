@@ -82,7 +82,7 @@ let ctx = Context::new().with_env(StaticEnv(
 The same pattern applies to `HttpSend` (canned metadata/STS responses) and
 `FileRead` (in-memory profiles). This is exactly how the repository tests
 IMDS, ECS, SSO, and OIDC flows against local mock servers under
-[`services/aws-v4/tests/mocks`](https://github.com/apache/opendal-reqsign/tree/main/services/aws-v4/tests/mocks).
+[`services/aws-v4/tests/mocks`](https://github.com/apache/reqsign/tree/main/services/aws-v4/tests/mocks).
 
 ## Integration tests against real services
 
