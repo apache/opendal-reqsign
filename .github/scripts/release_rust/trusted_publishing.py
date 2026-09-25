@@ -26,9 +26,7 @@ from contextlib import contextmanager
 
 
 DEFAULT_REGISTRY_URL = "https://crates.io"
-USER_AGENT = (
-    "apache-opendal-reqsign-release/1.0 (https://github.com/apache/opendal-reqsign)"
-)
+USER_AGENT = "apache-reqsign-release/1.0 (https://github.com/apache/reqsign)"
 
 
 def _response_error(operation: str, error: urllib.error.HTTPError) -> RuntimeError:

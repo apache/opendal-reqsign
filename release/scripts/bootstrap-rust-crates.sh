@@ -41,17 +41,17 @@ fi
 
 apache_remote="$(
   git remote -v |
-    awk '$2 ~ /github.com[:\/]apache\/opendal-reqsign(\.git)?$/ && $3 == "(fetch)" { print $1; exit }'
+    awk '$2 ~ /github.com[:\/]apache\/reqsign(\.git)?$/ && $3 == "(fetch)" { print $1; exit }'
 )"
 if [[ -z "${apache_remote}" ]]; then
-  echo "cannot find a git remote for apache/opendal-reqsign" >&2
+  echo "cannot find a git remote for apache/reqsign" >&2
   exit 1
 fi
 
 git fetch "${apache_remote}" main
 source_commit="$(git rev-parse FETCH_HEAD)"
 if [[ "$(git rev-parse HEAD)" != "${source_commit}" ]]; then
-  echo "the release checkout must be at the current apache/opendal-reqsign main: ${source_commit}" >&2
+  echo "the release checkout must be at the current apache/reqsign main: ${source_commit}" >&2
   exit 1
 fi
 
@@ -60,7 +60,7 @@ git cat-file -e \
 git cat-file -e \
   "${source_commit}:.github/scripts/release_rust/bootstrap.py"
 
-repo="apache/opendal-reqsign"
+repo="apache/reqsign"
 workflow="bootstrap_rust_crates.yml"
 environment="rust-bootstrap"
 if ! environment_json="$(gh api "repos/${repo}/environments/${environment}")"; then
@@ -89,7 +89,7 @@ echo "${dispatch_output}"
 
 run_id="$(
   sed -nE \
-    's#.*github\.com/apache/opendal-reqsign/actions/runs/([0-9]+).*#\1#p' \
+    's#.*github\.com/apache/reqsign/actions/runs/([0-9]+).*#\1#p' \
     <<<"${dispatch_output}" |
     tail -n 1
 )"

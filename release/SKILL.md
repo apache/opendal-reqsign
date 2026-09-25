@@ -12,7 +12,7 @@ Use this skill when preparing or executing an Apache OpenDAL reqsign release.
 - Do not push the formal `vX.Y.Z` tag before the Apache vote passes.
 - The voted release candidate tag is `vX.Y.Z-rc.N`; it must be a signed tag.
 - The formal `vX.Y.Z` tag must point to the exact same commit as the voted RC tag, even if `main` has advanced after the vote started.
-- Every crate in the current publish plan must exist with the exact `apache/opendal-reqsign`, `release.yml`, `release` Trusted Publisher and `trustpub_only` enabled before creating the RC tag.
+- Every crate in the current publish plan must exist with the exact `apache/reqsign`, `release.yml`, `release` Trusted Publisher and `trustpub_only` enabled before creating the RC tag.
 - The repo release workflow publishes only formal `vX.Y.Z` tags. It uses short-lived GitHub OIDC credentials and never a long-lived crates.io token.
 - Source release artifacts live under Apache dist:
   - RC: `https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z/`
@@ -58,7 +58,7 @@ Use this skill when preparing or executing an Apache OpenDAL reqsign release.
 ## Bootstrap Rust Crates
 
 Wait until the intended crate-name set is present on the
-`apache/opendal-reqsign` `main` branch. The release manager chooses the exact
+`apache/reqsign` `main` branch. The release manager chooses the exact
 reservation time, normally about three days before the planned release. At that
 time, check out the current `main` commit and run:
 
@@ -74,7 +74,7 @@ but it is a namespace reservation rather than an ASF software release.
 
 The helper:
 
-- Requires a clean checkout at the current `apache/opendal-reqsign` `main`.
+- Requires a clean checkout at the current `apache/reqsign` `main`.
 - Verifies that the `rust-bootstrap` environment has required reviewers.
 - Dispatches the input-free `bootstrap_rust_crates.yml` workflow.
 - Resolves the exact run, verifies its `headSha`, and waits for completion.
@@ -87,7 +87,7 @@ before any write. Established crates must already have exactly one Trusted
 Publisher with:
 
 - Repository owner: `apache`
-- Repository name: `opendal-reqsign`
+- Repository name: `reqsign`
 - Workflow filename: `release.yml`
 - Environment: `release`
 
@@ -129,22 +129,22 @@ The RC tag should not trigger the formal publish workflow.
 Create the Apache source artifact from the RC tag.
 
 ```bash
-rm -rf /tmp/opendal-reqsign-release-X.Y.Z
-mkdir -p /tmp/opendal-reqsign-release-X.Y.Z/dist
+rm -rf /tmp/reqsign-release-X.Y.Z
+mkdir -p /tmp/reqsign-release-X.Y.Z/dist
 
 git archive \
   --format=tar.gz \
-  --prefix=apache-opendal-reqsign-X.Y.Z/ \
-  -o /tmp/opendal-reqsign-release-X.Y.Z/dist/apache-opendal-reqsign-X.Y.Z.tar.gz \
+  --prefix=apache-reqsign-X.Y.Z/ \
+  -o /tmp/reqsign-release-X.Y.Z/dist/apache-reqsign-X.Y.Z.tar.gz \
   vX.Y.Z-rc.N
 
-cd /tmp/opendal-reqsign-release-X.Y.Z/dist
-gpg --armor --detach-sign apache-opendal-reqsign-X.Y.Z.tar.gz
-shasum -a 512 apache-opendal-reqsign-X.Y.Z.tar.gz > apache-opendal-reqsign-X.Y.Z.tar.gz.sha512
+cd /tmp/reqsign-release-X.Y.Z/dist
+gpg --armor --detach-sign apache-reqsign-X.Y.Z.tar.gz
+shasum -a 512 apache-reqsign-X.Y.Z.tar.gz > apache-reqsign-X.Y.Z.tar.gz.sha512
 
-gpg --verify apache-opendal-reqsign-X.Y.Z.tar.gz.asc apache-opendal-reqsign-X.Y.Z.tar.gz
-shasum -a 512 -c apache-opendal-reqsign-X.Y.Z.tar.gz.sha512
-tar -tzf apache-opendal-reqsign-X.Y.Z.tar.gz | rg '(^|/)LICENSE$|(^|/)NOTICE$|(^|/)Cargo.toml$'
+gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc apache-reqsign-X.Y.Z.tar.gz
+shasum -a 512 -c apache-reqsign-X.Y.Z.tar.gz.sha512
+tar -tzf apache-reqsign-X.Y.Z.tar.gz | rg '(^|/)LICENSE$|(^|/)NOTICE$|(^|/)Cargo.toml$'
 ```
 
 Confirm the signing key is present in Apache OpenDAL KEYS:
@@ -163,7 +163,7 @@ svn co --depth=empty https://dist.apache.org/repos/dist/dev/opendal /tmp/opendal
 
 cd /tmp/opendal-dist-dev-reqsign-X.Y.Z
 mkdir reqsign-X.Y.Z
-cp /tmp/opendal-reqsign-release-X.Y.Z/dist/* reqsign-X.Y.Z/
+cp /tmp/reqsign-release-X.Y.Z/dist/* reqsign-X.Y.Z/
 svn add reqsign-X.Y.Z
 svn status
 svn commit --force-interactive -m "Prepare reqsign X.Y.Z release candidate"
@@ -173,16 +173,16 @@ Verify the remote copy:
 
 ```bash
 svn ls https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z/
-rm -rf /tmp/opendal-reqsign-verify-X.Y.Z
-svn co https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z /tmp/opendal-reqsign-verify-X.Y.Z
-cd /tmp/opendal-reqsign-verify-X.Y.Z
-shasum -a 512 -c apache-opendal-reqsign-X.Y.Z.tar.gz.sha512
-gpg --verify apache-opendal-reqsign-X.Y.Z.tar.gz.asc apache-opendal-reqsign-X.Y.Z.tar.gz
+rm -rf /tmp/reqsign-verify-X.Y.Z
+svn co https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z /tmp/reqsign-verify-X.Y.Z
+cd /tmp/reqsign-verify-X.Y.Z
+shasum -a 512 -c apache-reqsign-X.Y.Z.tar.gz.sha512
+gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc apache-reqsign-X.Y.Z.tar.gz
 ```
 
 ## Start Vote
 
-Create a GitHub Discussion in `apache/opendal-reqsign` General.
+Create a GitHub Discussion in `apache/reqsign` General.
 
 Title:
 
@@ -207,7 +207,7 @@ https://downloads.apache.org/opendal/KEYS
 
 Git tag for the release candidate:
 
-https://github.com/apache/opendal-reqsign/releases/tag/vX.Y.Z-rc.N
+https://github.com/apache/reqsign/releases/tag/vX.Y.Z-rc.N
 
 The tag points to commit:
 
@@ -295,8 +295,8 @@ NAME
 5. Monitor the GitHub Release workflow.
 
    ```bash
-   gh run list --repo apache/opendal-reqsign --workflow Release --limit 5
-   gh run view RUN_ID --repo apache/opendal-reqsign --json status,conclusion,url,jobs
+   gh run list --repo apache/reqsign --workflow Release --limit 5
+   gh run view RUN_ID --repo apache/reqsign --json status,conclusion,url,jobs
    ```
 
    The workflow validates the complete workspace package set, then publishes

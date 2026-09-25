@@ -104,6 +104,45 @@ The workflow uses 1Password GitHub Action to load secrets:
 
 ## Troubleshooting
 
+### GitHub repository identity
+
+The canonical repository is `apache/reqsign`. GitHub uses immutable OIDC
+subjects for this repository, which include the organization and repository IDs:
+
+- Main: `repo:apache@47359/reqsign@469069490:ref:refs/heads/main`
+- Pull requests: `repo:apache@47359/reqsign@469069490:pull_request`
+
+Check the live configuration before changing cloud trust policies:
+
+```bash
+gh api repos/apache/reqsign/actions/oidc/customization/sub
+```
+
+Repository redirects do not migrate cloud identity bindings. Keep these external
+settings aligned with the repository identity:
+
+- AWS: update the GitHub OIDC trust subjects on both
+  `REQSIGN_AWS_LIVE_ROLE_ARN` and `op://reqsign/aws-v4/web_identity_role_arn`.
+  Preserve the `sts.amazonaws.com` audience. The live-test role template is
+  [cloudformation.yml](aws-live-tests/cloudformation.yml); changing the template
+  alone does not update an existing role.
+- Azure: update the CI application's federated identity credentials for both
+  subjects above, retaining the `api://AzureADTokenExchange` audience and GitHub
+  issuer. Azure DevOps service connections use a separate identity.
+- Google Cloud: update service-account IAM members that bind the workload
+  identity pool's `attribute.repository` to `apache/reqsign`. Check provider
+  attribute conditions as well. This attribute uses the repository name, not
+  the OIDC subject with numeric IDs.
+- Azure Pipelines: check the pipeline's external GitHub repository binding as
+  well as the clone URL in `azure-pipelines.yml`.
+- crates.io: audit each crate's Trusted Publisher for `apache/reqsign`,
+  `release.yml`, and the `release` environment. See the
+  [release helpers](scripts/release_rust/README.md); public metadata verification
+  cannot establish the authenticated publisher configuration.
+
+After updating cloud bindings, rerun the failed live-test jobs to verify actual
+token exchange and access to the test resources.
+
 ### Tests are skipped
 - Check if the PR is from a fork (integration tests don't run on forked PRs)
 - Verify 1Password Connect is accessible

@@ -26,6 +26,7 @@ from pathlib import Path
 from unittest import mock
 
 from bootstrap import CratesIoClient
+from bootstrap import LEGACY_REPOSITORY
 from bootstrap import PLACEHOLDER_DESCRIPTION
 from bootstrap import PLACEHOLDER_VERSION
 from bootstrap import PUBLISHER
@@ -124,6 +125,8 @@ class BootstrapTest(unittest.TestCase):
         publish_job = workflow.split("\n  publish:\n", 1)[1]
 
         self.assertEqual(PUBLISHER["workflow_filename"], "release.yml")
+        self.assertEqual(PUBLISHER["repository_owner"], "apache")
+        self.assertEqual(PUBLISHER["repository_name"], "reqsign")
         self.assertEqual(PUBLISHER["environment"], "release")
         self.assertIn("    environment: release\n", publish_job)
         self.assertIn("github.event_name == 'push'", publish_job)
@@ -182,7 +185,7 @@ class BootstrapTest(unittest.TestCase):
         )
         response = JsonResponse(
             b'{"crate":{"id":"reqsign","repository":'
-            b'"https://github.com/apache/opendal-reqsign"}}'
+            b'"https://github.com/apache/reqsign"}}'
         )
 
         with (
@@ -252,6 +255,42 @@ class BootstrapTest(unittest.TestCase):
 
         self.assertEqual(client.created_configs, 0)
         self.assertEqual(client.restricted, 0)
+
+    def test_authenticated_preflight_accepts_historical_repository_metadata(self):
+        planned = PlannedCrate("reqsign-core", "core")
+        krate = metadata(planned.name, trustpub_only=True)
+        krate["repository"] = LEGACY_REPOSITORY
+        client = FakeClient(planned.name, krate, [expected_config(planned.name)])
+
+        self.assertEqual(
+            preflight_authenticated([planned], set(), client), [planned.name]
+        )
+        self.assertEqual(verify_authenticated([planned], client), [planned.name])
+        self.assertEqual(client.created_configs, 0)
+
+    def test_authenticated_preflight_rejects_historical_publisher(self):
+        planned = PlannedCrate("reqsign-core", "core")
+        krate = metadata(planned.name, trustpub_only=True)
+        krate["repository"] = LEGACY_REPOSITORY
+        config = {**expected_config(planned.name), "repository_name": "opendal-reqsign"}
+        client = FakeClient(planned.name, krate, [config])
+
+        with self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"):
+            preflight_authenticated([planned], set(), client)
+
+        self.assertEqual(client.created_configs, 0)
+
+    def test_discovery_rejects_an_unrelated_repository(self):
+        planned = PlannedCrate("reqsign-core", "core")
+        krate = metadata(planned.name)
+        krate["repository"] = "https://github.com/other/reqsign"
+        client = FakeClient(planned.name, krate)
+
+        with (
+            mock.patch("bootstrap.planned_crates", return_value=[planned]),
+            self.assertRaisesRegex(RuntimeError, "unexpected repository"),
+        ):
+            discover(Path(), client)
 
     def test_authenticated_preflight_rejects_unmigrated_established_crate(self):
         planned = PlannedCrate("reqsign-core", "core")

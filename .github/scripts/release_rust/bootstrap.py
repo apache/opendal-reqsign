@@ -36,20 +36,22 @@ from publish import should_retry
 
 
 REGISTRY_URL = "https://crates.io"
-REPOSITORY = "https://github.com/apache/opendal-reqsign"
+REPOSITORY = "https://github.com/apache/reqsign"
+# Published versions retain their original manifest metadata after a repo rename.
+LEGACY_REPOSITORY = "https://github.com/apache/opendal-reqsign"
 PLACEHOLDER_VERSION = "0.0.0"
 PLACEHOLDER_DESCRIPTION = (
     "Namespace reservation for a crate planned by Apache OpenDAL reqsign."
 )
 PUBLISHER = {
     "repository_owner": "apache",
-    "repository_name": "opendal-reqsign",
+    "repository_name": "reqsign",
     "workflow_filename": "release.yml",
     "environment": "release",
 }
 USER_AGENT = (
-    "apache-opendal-reqsign-release-bootstrap/1.0 "
-    "(https://github.com/apache/opendal-reqsign)"
+    "apache-reqsign-release-bootstrap/1.0 "
+    "(https://github.com/apache/reqsign)"
 )
 
 
@@ -267,9 +269,10 @@ def validate_crate_metadata(
         raise RuntimeError(
             f"crate name mismatch for {planned.name}: got {metadata.get('id')!r}"
         )
-    if _normalized_repository(metadata.get("repository")) != _normalized_repository(
-        REPOSITORY
-    ):
+    if _normalized_repository(metadata.get("repository")) not in {
+        _normalized_repository(REPOSITORY),
+        _normalized_repository(LEGACY_REPOSITORY),
+    }:
         raise RuntimeError(
             f"{planned.name} already exists with an unexpected repository: "
             f"{metadata.get('repository')!r}"
