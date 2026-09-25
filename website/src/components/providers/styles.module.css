@@ -1,0 +1,116 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+/* Styles for the provider components embedded in docs pages
+   (ProviderFacts, ProviderDetails, ProvidersMatrix). */
+
+.scopeLede {
+  font-size: var(--rs-text-md);
+  line-height: var(--rs-leading-normal);
+  color: var(--rs-fg-muted);
+}
+
+/* ===== Capability facts bar (page header) =============================== */
+.factsBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--rs-space-2) var(--rs-space-3);
+  padding: var(--rs-space-3) var(--rs-space-4);
+  border: 1px solid var(--rs-border);
+  border-radius: var(--rs-radius-md);
+  background: var(--rs-bg-subtle);
+  margin-bottom: var(--rs-space-4);
+}
+.factsDivider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--rs-border-strong);
+}
+.factsDocsLink {
+  margin-left: auto;
+  font-family: var(--rs-font-mono);
+  font-size: var(--rs-text-xs);
+  white-space: nowrap;
+}
+.factsNote {
+  font-size: var(--rs-text-sm);
+  line-height: var(--rs-leading-snug);
+  color: var(--rs-fg-muted);
+  margin-top: calc(-1 * var(--rs-space-2));
+}
+
+/* ===== Capability matrix (providers index) ============================== */
+.matrixWrap {
+  overflow-x: auto;
+}
+.matrix {
+  display: table;
+  width: 100%;
+  margin-bottom: var(--rs-space-3);
+}
+.matrix th {
+  font-family: var(--rs-font-mono);
+  font-size: var(--rs-text-2xs);
+  font-weight: 600;
+  letter-spacing: var(--rs-tracking-label);
+  text-transform: uppercase;
+  color: var(--rs-fg-subtle);
+  white-space: nowrap;
+}
+.matrix td {
+  font-size: var(--rs-text-sm);
+  vertical-align: top;
+}
+.matrixSchemes {
+  color: var(--rs-fg-muted);
+}
+
+/* ===== Chips & flags ==================================================== */
+.schemeChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid var(--rs-border);
+  border-radius: var(--rs-radius-sm);
+  background: var(--rs-bg);
+  font-family: var(--rs-font-mono);
+  font-size: var(--rs-text-2xs);
+  color: var(--rs-fg);
+  white-space: nowrap;
+}
+.flagOn,
+.flagOff {
+  font-family: var(--rs-font-mono);
+  font-size: var(--rs-text-xs);
+  white-space: nowrap;
+}
+.flagOn {
+  color: var(--rs-accent);
+}
+.flagOff {
+  color: var(--rs-fg-subtle);
+}
+
+/* ===== Verification footnote ============================================ */
+.verifiedNote {
+  font-size: var(--rs-text-sm);
+  line-height: var(--rs-leading-normal);
+  color: var(--rs-fg-subtle);
+}

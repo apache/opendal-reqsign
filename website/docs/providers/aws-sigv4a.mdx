@@ -1,0 +1,55 @@
+---
+title: AWS SigV4a
+description: Asymmetric multi-region signing for AWS, sharing the SigV4 credential chain.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="aws-sigv4a" />
+
+## Get started
+
+```bash
+cargo add reqsign --features aws-v4a
+```
+
+```rust
+use reqsign::aws::v4a::{default_signer, SigningRegionSet};
+
+// Same credential chain as SigV4; the signature covers a region set —
+// built for multi-region endpoints like S3 Multi-Region Access Points.
+let region_set = SigningRegionSet::new("us-east-1,us-west-2")?;
+let signer = default_signer("s3", region_set);
+
+let mut req = http::Request::builder()
+    .method(http::Method::GET)
+    .uri("https://m1abcdefgh.mrap.accesspoint.s3-global.amazonaws.com/my-object")
+    .body(())?
+    .into_parts()
+    .0;
+
+// Sign in place, then send with the HTTP client you already use.
+signer.sign(&mut req, None).await?;
+```
+
+<ProviderDetails id="aws-sigv4a" />

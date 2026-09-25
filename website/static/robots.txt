@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://reqsign.apache.org/sitemap.xml
